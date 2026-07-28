@@ -1,113 +1,203 @@
-# Parrot — Implementation Plan
+# Parrot product roadmap
 
-A minimal macOS dictation daemon. CLI-launched, push-to-talk on Fn hold, on-device transcription via WhisperKit/Parakeet, text injected at cursor.
+This fork is building a full local macOS dictation app, not preserving
+upstream's minimal daemon scope. See `docs/architecture.md` for the product
+contract and target boundaries.
 
-See [../docs/architecture.md](../docs/architecture.md) for the full design.
+## Rules for every phase
 
-## Approach
+- End with a usable vertical slice.
+- Add an automated check before or with new pure logic.
+- Drive the real user flow before calling runtime behavior shipped.
+- Record exact verification commands, gestures, targets, observations, and
+  measured latency where relevant.
+- Keep audio, transcripts, dictionary entries, and history on-device.
+- Commit each completed phase. Do not mix unfinished features into a phase
+  commit.
+- Update this roadmap when evidence changes the order.
 
-Phased, each milestone produces something testable end-to-end. Linear order — each phase de-risks the next. M4 (WhisperKit transcription) is the load-bearing de-risk: if ANE latency is insufficient there, the rest of the plan is moot.
+## P0: ground truth
 
-## Milestones
+Status: in progress.
 
-### M0 — Project skeleton
+Goal: establish what the current fork actually does on this Mac.
 
-Goal: builds, runs, exits cleanly. No behavior.
+- Build debug and release configurations.
+- Run `parrot doctor` and record TCC state for the exact development binary.
+- Warm the recommended model and record model/download behavior.
+- Dictate for several minutes through the actual hotkey.
+- Exercise one native app, one browser field, and one Electron app.
+- Record missed presses, dropped releases, transcript errors, injection
+  failures, overlay state errors, and post-release latency.
+- Separate product failures from permission identity failures.
 
-- `Package.swift` — SPM exec target, `swift-argument-parser` dep
-- `Sources/parrot/main.swift` — argument parsing, `setActivationPolicy(.accessory)`, `NSApp.run()`, SIGINT handler
-- Empty subfolder stubs (`Audio/`, `Input/`, `Transcription/`, `Models/`, `UI/`)
+Exit receipt: a dated local verification report with observed results and open
+defects. A passing build alone does not complete P0.
 
-**Test:** `swift run parrot` starts and stops cleanly. `parrot --help` works. No dock icon, no menubar.
+## P1: foundation and product charter
 
-### M1 — Doctor + permissions surface
+Status: in progress.
 
-Goal: actionable feedback on permission state before anything tries to use the perms.
+Goal: make the codebase safe to grow and stop inherited docs from steering the
+fork toward the wrong product.
 
-- `Doctor.swift` — checks: microphone (`AVCaptureDevice.authorizationStatus`), accessibility (`AXIsProcessTrusted`), Fn-key system mapping
-- `parrot doctor` subcommand prints status + remediation steps
+- Replace the inherited architecture and plan with this fork's product
+  contract.
+- Add a `ParrotCore` library target and `ParrotCoreTests`.
+- Move or wrap model registry and transcript sanitization as pure logic.
+- Add versioned settings types with testable storage.
+- Put audio capture, transcription, hotkey monitoring, text insertion,
+  pasteboard access, filesystem, active-app lookup, and clock behind protocols.
+- Add a coordinator state machine exercised with fakes.
+- Add macOS CI for `swift test` and release build.
+- Preserve the current executable behavior while extracting seams.
 
-**Test:** Run before granting perms — see red Xs and instructions. Grant perms, re-run — see green checks.
+Exit receipt:
 
-### M2 — Hotkey monitor (Fn hold)
+```text
+swift test
+swift build -c release
+```
 
-Goal: clean `.pressed` / `.released` events for Fn.
+Both commands must finish successfully from a clean checkout. The current
+daemon must still launch to its permission/model boundary.
 
-- `HotkeyMonitor.swift` — `CGEventTap` on `flagsChanged`, detect `kCGEventFlagMaskSecondaryFn` edges
-- Wire into `main.swift` — log "fn down" / "fn up" to stderr
+## P2: custom dictionary
 
-**Test:** Hold Fn, see "fn down". Release, see "fn up". No double-fires; no missed releases when switching apps mid-hold.
+Status: planned.
 
-### M3 — Audio capture
+Goal: fix names, acronyms, product terms, and technical language locally.
 
-Goal: clean PCM buffer for the duration of the hold.
+- Store versioned local dictionary entries.
+- Apply deterministic longest-first replacements with Unicode-safe boundaries.
+- Add dictionary management UI.
+- Add an action from the most recent transcript to create a correction in one
+  gesture.
+- Show a preview before committing ambiguous replacements.
+- Cover precedence, casing, punctuation adjacency, Unicode, persistence,
+  deletion, and migration in tests.
 
-- `AudioCapture.swift` — `AVAudioEngine` input tap, 16 kHz mono Float32, ring buffer
-- Start on `.pressed`, stop on `.released`, log buffer length + RMS to stderr
-- (Optional) write captured PCM to `/tmp/parrot-last.wav` for QuickTime inspection
+Exit receipt: dictate a known failure, add its correction from the latest
+transcript, repeat the phrase in three targets, and observe the corrected term.
 
-**Test:** Hold Fn, talk, release. stderr shows `captured 3.2s, RMS 0.08`. WAV plays back as clean speech.
+## P3: transcript history
 
-### M4 — WhisperKit transcription (de-risk milestone)
+Status: planned.
 
-Goal: end-to-end audio → text in the terminal. Validates that ANE latency hits target.
+Goal: make every transcript visible and recoverable.
 
-- Add WhisperKit dep
-- `TranscriptionModel.swift` + `ModelRegistry.swift` + `Resources/models.json` (3 entries)
-- `ModelDownloader.swift` with stderr progress
-- `Transcriber.swift` protocol + `WhisperKitTranscriber.swift`
-- `parrot models list` and `parrot models download <id>`
-- Wire end-to-end: `.released` → transcribe → log to stderr
+- Save transcript records before insertion.
+- Add a searchable native history window with timestamps.
+- Support copy, re-insert, create dictionary correction, delete, and clear-all.
+- Record raw/final text, model, language, duration, latency, target app, mode,
+  and insertion result.
+- Add retention and migration behavior.
+- Test search, ordering, persistence, retention, deletion, and failed-insertion
+  recovery.
 
-**Test:** `parrot models download whisper-base.en`. Hold Fn, say "hello world", release — transcript on stderr. Measure latency for 5s and 10s utterances. Target: <500ms post-release for <10s clips.
+Exit receipt: create several transcripts, force one insertion failure, restart
+the app, search for the failed transcript, copy it, and re-insert it.
 
-### M5 — Text injection
+## P4: reliable paste and clipboard modes
 
-Goal: the actual product loop.
+Status: planned.
 
-- `TextInjector.swift` — `CGEvent` + `CGEventKeyboardSetUnicodeString`
-- Replace stderr log with cursor injection
+Goal: make insertion work in apps that reject synthetic Unicode input without
+destroying the user's clipboard.
 
-**Test:** TextEdit, Slack, Safari address bar, VS Code, fish prompt — text appears at cursor in each.
+- Add paste as the default mode.
+- Snapshot and conditionally restore all pasteboard item types.
+- Do not overwrite clipboard changes made by another app during insertion.
+- Keep direct Unicode as a fallback and add copy-only mode.
+- Detect or infer secure-input/inaccessible-target failures and surface them.
+- Add an immediate undo/revert action for the last insertion.
+- Test clipboard races, empty pasteboards, rich content, fallback routing,
+  copy-only, and undo state.
 
-### M6 — Recording overlay
+Exit receipt: paste into native, browser, and Electron targets while preserving
+a preloaded rich clipboard item; verify secure-input failure leaves transcript
+recoverable.
 
-Goal: visual feedback that mic is hot.
+## P5: configurable hotkeys
 
-- `RecordingOverlay.swift` — borderless `NSWindow`, `.statusBar` level, `ignoresMouseEvents`, `NSHostingView` + SwiftUI pill (pulsing dot + "listening")
-- States: hidden → recording → transcribing → hidden, driven by hotkey + transcription lifecycle
-- (Optional) mic-level animation from `AudioCapture`
+Status: planned.
 
-**Test:** Pill appears bottom-center on Fn down, animates, switches to spinner on release, disappears after injection. Clicks pass through to the app underneath.
+Goal: remove the hard dependency on `fn` and support daily workflows.
 
-### M7 — Parakeet engine + Config TOML
+- Represent bindings as versioned settings.
+- Support push-to-talk and toggle recording without requiring `fn`.
+- Support multiple action bindings.
+- Add capture/edit UI, validation, conflict detection, and macOS-reserved
+  shortcut warnings.
+- Recover cleanly from missed release, app deactivation, sleep, and settings
+  changes during a hold.
+- Test parsing, serialization, conflicts, state edges, and live rebinding.
 
-Goal: second engine, persistent config.
+Exit receipt: configure a non-`fn` binding, restart, dictate in three targets,
+then change the binding while running and observe only the new binding fire.
 
-- `ParakeetTranscriber.swift` (FluidAudio)
-- Add `parakeet-tdt-0.6b-v3` to registry
-- `Config.swift` — TOML loader at `~/.config/parrot/config.toml`, CLI flags override
-- `--model`, `--hotkey`, `--no-overlay` flags
+## P6: daily-use gap
 
-**Test:** Switch engines via flag and config; both produce reasonable transcripts. Benchmark latency on identical 5s clip.
+Status: planned; order must be validated after P0-P5 usage data.
 
-### M8 — Polish
+Current ranking:
 
-Goal: shippable to a second user.
+1. conservative auto-formatting and filler-word cleanup;
+2. onboarding, permission repair, and model-download recovery;
+3. app-aware formatting for prose, chat, and code-comment contexts;
+4. undo/revert of the last insertion if not completed in P4;
+5. text snippets and explicit voice commands;
+6. multilingual selection and language auto-detect;
+7. streaming or partial results where measurements show perceived latency needs
+   it.
 
-- Resumable downloads, size validation
-- Error UX: missing model, perm denied, tap registration failure
-- Release build, install instructions in README
-- Decide: code signing for stable accessibility grant
+Why this order: formatting and recovery affect nearly every dictation. App-aware
+output and editing commands save repeated cleanup. Multilingual and streaming
+are valuable only after the core insertion path is trustworthy and measured.
 
-**Test:** Fresh-clone simulation — clone, build, doctor, download, dictate. Time-to-first-transcript < 5 minutes.
+All processing remains local. App-aware behavior may use the frontmost bundle
+identifier and text-field role, but must not transmit or silently store
+surrounding document content.
 
-## Commit boundaries
+Exit receipts are defined per slice before implementation and include both unit
+checks and the real affected flow.
 
-One milestone ≈ one commit (or a small linear series). Don't fold M5 into M4 — keeping the audio→text loop separate from injection makes regressions bisectable.
+## P7: ship quality
 
-## Open questions (deferred)
+Status: planned; certificate and public-release actions are Aaron-gated.
 
-- Parakeet via FluidAudio vs. direct CoreML — decide at M7 after benchmarking
-- Bundle `whisper-base.en` for first-run UX, or always download — decide at M8
-- Code signing for stable TCC grants — decide at M8
+Goal: install and update like a normal trusted Mac app.
+
+- Produce a stable `.app` bundle and bundle identifier.
+- Sign with hardened runtime.
+- Notarize and staple.
+- Package without stripping quarantine.
+- Add release CI, checksums, changelog, and rollback instructions.
+- Add an update mechanism whose metadata contains no transcript content.
+- Test a fresh install, first-run permissions, model failure/retry, login start,
+  update, rollback, and uninstall.
+
+Exit receipt: install the notarized artifact on a clean macOS user account,
+complete onboarding, dictate into all three target classes, restart, update,
+and verify settings/history survive.
+
+## Decision gates
+
+The lane may implement, test, refactor, commit, and push ordinary changes to
+Aaron's fork. Surface before:
+
+- selecting or using a code-signing identity or certificate;
+- spending money;
+- publishing a public release;
+- adding any paid API or service;
+- sending audio, transcripts, history, dictionary entries, or surrounding text
+  off-device.
+
+Recommended defaults:
+
+- SQLite for searchable transcript history.
+- versioned JSON for settings and dictionary until scale or query needs justify
+  a database migration.
+- paste-first insertion with direct Unicode fallback.
+- native AppKit/SwiftUI windows.
+- no remote analytics or crash reporting.

@@ -1,273 +1,339 @@
 # Architecture
 
-## Goals
-
-1. **CLI executable.** Single binary, launched from the terminal. No menubar, no dock icon, no settings window.
-2. **Push-to-talk.** Hold Fn, speak, release — transcript appears at the cursor.
-3. **Minimal recording feedback.** A small floating pill at the bottom of the screen while recording, so the user knows the mic is hot. Click-through, borderless, hidden when idle.
-4. **On-device.** No network calls for transcription. Audio never leaves the machine.
-5. **Pluggable models.** Whisper out of the box; Parakeet (or future engines) via a JSON-driven registry.
-6. **Native and lean.** One Swift Package executable target. No sidecar processes. No HTTP servers.
-
-## Non-goals
-
-- Cross-platform (macOS only)
-- Menubar, dock icon, settings window, preferences UI
-- Cloud transcription providers
-- AI post-processing, summarization, agents
-- Speaker diarization, meeting recording, semantic search
-- Auto-launch at login (user wires this themselves with `launchd` if desired)
-
-## Why Swift
-
-- **CoreML / ANE access.** WhisperKit and FluidAudio are Swift-native and run inference on the Apple Neural Engine — lower power, lower latency than CPU/GPU paths in Rust.
-- **No FFI for platform APIs.** `AVAudioEngine`, `CGEventTap`, `CGEvent`, `AXIsProcessTrusted`, `NSWindow` — all first-party, no bindings to maintain.
-- **Permissions plumbing** (microphone, accessibility) is dramatically smoother in a Swift binary than via Rust crates.
-- **AppKit overlay for free.** The recording indicator (see below) is a borderless `NSWindow` — trivial in Swift, awkward in Rust.
-
-The binary is a Swift Package executable — `swift build`, `swift run`, ship a single binary. Even with the overlay window, there is no `.app` bundle, no menubar entry, no dock icon.
-
-## High-level shape
-
-```
-$ parrot
-                                    ┌──────────────────┐
-                                    │   ParrotCLI      │
-                                    │   (main.swift)   │
-                                    └────────┬─────────┘
-                                             │ wires modules, runs RunLoop
-                                             ▼
-┌──────────────────┐  hotkey down   ┌──────────────────┐
-│   HotkeyMonitor  │ ─────────────▶ │  AudioCapture    │
-│  (CGEventTap)    │  hotkey up     │ (AVAudioEngine)  │
-└──────────────────┘ ◀───────────── └────────┬─────────┘
-                                             │ [Float] PCM
-                                             ▼
-                                    ┌──────────────────┐
-                                    │   Transcriber    │
-                                    │   (protocol)     │
-                                    │  ┌────────────┐  │
-                                    │  │ WhisperKit │  │
-                                    │  └────────────┘  │
-                                    │  ┌────────────┐  │
-                                    │  │  Parakeet  │  │
-                                    │  └────────────┘  │
-                                    └────────┬─────────┘
-                                             │ String
-                                             ▼
-                                    ┌──────────────────┐
-                                    │  TextInjector    │
-                                    │   (CGEvent)      │
-                                    └──────────────────┘
-```
-
-## Modules
-
-### `main.swift` (ParrotCLI)
-
-Argument parsing (via `swift-argument-parser`), config loading, module wiring. Calls `NSApplication.shared.setActivationPolicy(.accessory)` so the process has no dock icon and no menu bar entry, then runs `NSApp.run()` to keep the process alive and drive the AppKit run loop (needed for `NSWindow`, `CGEventTap`, and AVFoundation). Exits cleanly on SIGINT. Logs status to stderr so a user running it in a terminal can see what's happening.
-
-Subcommands:
-- `parrot` (default) — run the daemon
-- `parrot models list` — show registered models, mark which are downloaded
-- `parrot models download <id>` — pre-fetch a model
-- `parrot doctor` — check microphone and accessibility permissions, print remediation steps
-
-### `HotkeyMonitor`
-
-Global hotkey via `CGEventTap` (requires Accessibility permission). Default: **hold Fn**. Detected via `flagsChanged` events with `NSEvent.ModifierFlags.function` / `kCGEventFlagMaskSecondaryFn`. Emits `.pressed` / `.released`. Configurable via `--hotkey` flag or config file.
-
-**Fn key caveat:** macOS by default maps the Fn (🌐) key to "Show Emoji & Symbols" or "Start Dictation" depending on the user's setting in System Settings → Keyboard → Press 🌐 key to. The CGEventTap sees the keypress regardless, but the system action also fires. `parrot doctor` will detect this setting and instruct the user to change it to "Do Nothing" so Fn becomes a clean modifier.
-
-### `AudioCapture`
-
-`AVAudioEngine` tap on the input node. Streams 16 kHz mono `Float32` buffers into a ring buffer while the hotkey is held. On release, hands the full buffer to the active `Transcriber`.
-
-### `Transcriber` (protocol)
-
-```swift
-protocol Transcriber {
-    func transcribe(_ audio: [Float]) async throws -> String
-    var modelID: String { get }
-}
-```
-
-Concrete implementations:
-
-- `WhisperKitTranscriber` — wraps the `WhisperKit` package. CoreML, ANE-accelerated.
-- `ParakeetTranscriber` — wraps `FluidAudio` (or direct CoreML) for NVIDIA Parakeet TDT.
-
-Adding an engine = one new file conforming to `Transcriber`.
-
-### `TextInjector`
-
-`CGEventCreateKeyboardEvent` + `CGEventKeyboardSetUnicodeString` — pastes the transcript at the current cursor position. Works in nearly every text field on macOS (some Electron apps and secure fields are flaky; platform constraint).
-
-### `RecordingOverlay`
-
-A single borderless `NSWindow` displayed at the bottom-center of the active screen while recording. Provides visual feedback that the mic is hot — the only piece of UI in the app.
-
-Window configuration:
-- `styleMask: .borderless`
-- `backgroundColor: .clear`, `isOpaque: false`, `hasShadow: true`
-- `level: .statusBar` (or `.floating`) — sits above all other windows
-- `ignoresMouseEvents = true` — clicks pass through to whatever is underneath
-- `collectionBehavior: [.canJoinAllSpaces, .stationary, .ignoresCycle]` — visible across Spaces, doesn't appear in window switcher
-
-Content: a small SwiftUI view hosted via `NSHostingView`, showing a pulsing dot + "listening" text, optionally a live mic level meter fed from `AudioCapture`. Total footprint: ~120pt wide, ~40pt tall, positioned 60pt above the bottom of the screen.
-
-States:
-- **Hidden** — idle. No window on screen.
-- **Recording** — shown on `.pressed`, mic level animated.
-- **Transcribing** — brief spinner state between hotkey release and text injection (usually <500 ms).
-- **Hidden** — back to idle after injection.
-
-This is the only reason the process needs an `NSApplication` run loop instead of a bare `CFRunLoop`.
-
-### `ModelRegistry`
-
-JSON-driven, mirrors OpenWhispr's pattern:
-
-```swift
-struct TranscriptionModel: Codable {
-    let id: String              // "whisper-large-v3-turbo"
-    let displayName: String
-    let engine: Engine          // .whisperKit | .parakeet
-    let sizeMB: Int
-    let downloadURL: URL
-    let languages: [String]
-    let recommended: Bool
-}
-
-enum Engine: String, Codable { case whisperKit, parakeet }
-```
-
-Backed by a bundled `models.json` resource. Adding a model = appending an entry. Adding an engine = one new `Transcriber` conformance + one entry in the `Engine` enum.
-
-The registry is the single source of truth for: download URLs, file names, sizes, recommended flags, what shows up in `parrot models list`.
-
-### `ModelDownloader`
-
-On first selection (or via `parrot models download <id>`), downloads to `~/Library/Application Support/parrot/models/<engine>/<id>/`. Progress bar to stderr (using `\r` overwrites). Resumable, validates size. Refuses to start the daemon if the selected model isn't present.
-
-### `Config`
-
-Plain `Codable` struct. Loaded from (in order): CLI flags > `~/.config/parrot/config.toml` > defaults.
-
-```toml
-model = "whisper-large-v3-turbo"
-hotkey = "fn"
-inject_mode = "paste"   # or "type-unicode"
-overlay = true          # show recording pill at bottom of screen
-```
-
-CLI flags override the file. No settings UI; you edit the TOML.
-
-## Permissions
-
-Two prompts on first run, both surfaced via `parrot doctor`:
-
-1. **Microphone** — standard `AVCaptureDevice` request, fires on first audio engine start.
-2. **Accessibility** — required for `CGEventTap` (hotkey) and `CGEvent` posting (text injection). User toggles in System Settings → Privacy & Security → Accessibility, granting the *terminal* (or whatever launched parrot) permission, since the binary inherits its parent's TCC identity.
-
-`parrot doctor` checks both and prints actionable next steps if either is missing. Without these, the daemon refuses to start.
-
-### TCC quirk worth knowing
-
-When you launch `parrot` from `Terminal.app`, accessibility permission is granted to *Terminal*, not parrot itself. This means:
-- Switching terminals (Terminal → iTerm → Ghostty) requires re-granting permission.
-- Running under `launchd` requires granting permission to whatever spawns it.
-
-This is a macOS platform behavior, not a parrot bug. `parrot doctor` will identify the parent process and tell the user which app needs the permission.
-
-## Models — what ships
-
-Initial registry:
-
-| Engine | Model | Size | Notes |
-|---|---|---|---|
-| WhisperKit | `whisper-base.en` | ~80 MB | Fast, English only, low resource |
-| WhisperKit | `whisper-large-v3-turbo` | ~800 MB | Recommended for daily use |
-| Parakeet | `parakeet-tdt-0.6b-v3` | ~600 MB | English, fastest on ANE |
-
-Models live in `~/Library/Application Support/parrot/models/`. Not bundled — fetched on first selection or via `parrot models download`.
-
-## Data flow, end-to-end
-
-1. User runs `parrot` in a terminal.
-2. `ParrotCLI` validates permissions (`parrot doctor` logic), loads config, instantiates modules.
-3. Sets `.accessory` activation policy and enters `NSApp.run()`. Status: `listening`. Overlay hidden.
-4. User holds Fn.
-5. `HotkeyMonitor` fires `.pressed`. `RecordingOverlay` shows. Status: `recording`.
-6. `AudioCapture` starts the AVAudioEngine tap. Buffers fill. Overlay animates mic level.
-7. User releases Fn.
-8. `HotkeyMonitor` fires `.released`. Overlay switches to spinner. Status: `transcribing`.
-9. `AudioCapture` stops, hands buffer to active `Transcriber`.
-10. `Transcriber` runs CoreML inference. Returns string.
-11. `TextInjector` posts the string at the cursor.
-12. Overlay hides. Status: `listening`. Loop.
-13. User hits `^C`. Process exits cleanly.
-
-End-to-end latency target: <500 ms after hotkey release for utterances under 10 seconds, on Apple Silicon.
-
-## What we are deliberately NOT building
-
-- No streaming partial transcripts in v1. Press, speak, release, get full text.
-- No VAD-based hands-free mode. Push-to-talk is more reliable and uses zero idle CPU.
-- No history, transcript log, or clipboard manager. Output goes to the cursor and that's it.
-- No custom vocabulary, prompts, or post-processing.
-- No menubar, no settings window, no preferences panel. The only UI is the recording overlay. Configuration is flags + TOML.
-
-These are deliberate cuts. Each can be revisited if real usage demands it.
-
-## Project layout (planned)
-
-Organized by feature area. These are folders within a single SPM executable target — Swift sees them as one module, but the directory grouping keeps related code together. If a group later earns its keep as a reusable library (e.g. `Transcription` consumed by another tool), it can be promoted to its own SPM target with no rewriting.
-
-```
-parrot/
-  Package.swift                 # SPM, single executable target
-  Sources/parrot/
-    main.swift                  # entry point, argument parsing, NSApp.run()
-    Config.swift
-    Doctor.swift
-
-    Transcription/              # the inference layer
-      Transcriber.swift         # protocol
-      WhisperKitTranscriber.swift
-      ParakeetTranscriber.swift
-
-    Models/                     # registry + download pipeline
-      ModelRegistry.swift
-      ModelDownloader.swift
-      TranscriptionModel.swift  # Codable types
-
+## Product contract
+
+This repository is Aaron's fork of `digimata/parrot`. It deliberately diverges
+from upstream's ultra-minimal dictation-daemon charter. Merge compatibility is
+not a design goal.
+
+The product is a daily-use macOS dictation app in the Wispr Flow class, with one
+defining advantage: microphone audio and transcript text stay on the Mac.
+
+Done means a signed, installable app that:
+
+1. records from a configurable push-to-talk shortcut;
+2. transcribes locally with Core ML on Apple silicon;
+3. inserts reliable, well-formatted text at the active cursor;
+4. learns user terms through a custom dictionary;
+5. keeps a searchable, reusable local transcript history;
+6. supports paste, copy-only, and direct Unicode insertion modes;
+7. exposes understandable settings, permissions, model state, and failures;
+8. has automated tests plus receipts from real use in native, browser, and
+   Electron targets.
+
+This file describes the intended architecture for that product. Features marked
+"planned" are not claims about the current binary.
+
+## Product principles
+
+- Local by default and by promise. Audio and transcript content must not leave
+  the machine. Any future network behavior affecting either requires Aaron's
+  explicit approval.
+- Reliability beats cleverness. Losing a transcript or silently failing to
+  insert it is worse than a visible delay.
+- Every transcript is recoverable. The app stores the final local transcript
+  before attempting insertion.
+- Failures are legible. Permission, secure-input, model-download, hotkey, audio,
+  transcription, and insertion failures need distinct user-facing states.
+- Each phase ships a usable vertical slice. Do not leave four features half
+  connected.
+- Hardware APIs sit behind narrow protocols. Pure text, settings, dictionary,
+  history, and routing logic remain deterministic and testable.
+- macOS is the only supported platform. Native AppKit and SwiftUI are preferred
+  over web shells or sidecar services.
+
+## Explicit non-goals
+
+- Cross-platform support.
+- Cloud transcription or cloud post-processing.
+- Uploading audio, transcripts, dictionary entries, history, or surrounding
+  application text.
+- Meeting recording, speaker diarization, or team collaboration in the core
+  dictation product.
+- Preserving a small diff from upstream.
+
+## Current implementation baseline
+
+Verified by source inspection on 2026-07-28:
+
+- Swift Package Manager executable target, macOS 14+.
+- WhisperKit transcription with three registered Whisper models.
+- `AVAudioEngine` capture converted to 16 kHz mono Float32.
+- global `fn` press and release detection through `CGEventTap`.
+- direct Unicode cursor insertion through `CGEvent`.
+- recording and transcribing overlay.
+- menu bar status item.
+- permission doctor and setup commands.
+- LaunchAgent installation command.
+
+Not present in the inspected baseline:
+
+- any Swift test target or test files;
+- persistent app settings;
+- custom dictionary;
+- transcript history;
+- paste-based insertion with clipboard restoration;
+- configurable hotkeys in the live command implementation;
+- a preferences or history window;
+- signed app bundle, notarization, update mechanism, or release CI.
+
+The README and older plans contain unverified latency and compatibility claims.
+Only measured receipts from the current session may promote those claims.
+
+## Target structure
+
+The package should separate testable product logic from macOS adapters:
+
+```text
+Package.swift
+Sources/
+  ParrotCore/                 pure and persistence-facing product logic
+    Models/
+    Settings/
+    TextProcessing/
+    Dictionary/
+    History/
+    Insertion/
+    Hotkeys/
+  ParrotMac/                  AppKit, AVFoundation, CoreGraphics adapters
     Audio/
-      AudioCapture.swift        # AVAudioEngine tap + ring buffer
-
+    Transcription/
     Input/
-      HotkeyMonitor.swift       # CGEventTap
-      TextInjector.swift        # CGEvent posting
-
+    Permissions/
     UI/
-      RecordingOverlay.swift    # borderless NSWindow + SwiftUI pill
-
-  Resources/
-    models.json
-  docs/
-    architecture.md
-  README.md
+  parrot/                     executable wiring and CLI compatibility
+Tests/
+  ParrotCoreTests/
+  ParrotMacTests/             adapter contract tests with fakes where possible
 ```
 
-Build: `swift build -c release`. Resulting binary at `.build/release/parrot`. Install: copy to `~/.local/bin/` or `/usr/local/bin/`.
+Migration may happen incrementally. The important boundary is behavioral: core
+logic must not require a microphone, Accessibility permission, an active text
+field, or a loaded Whisper model to run its tests.
 
-### On Swift "modules"
+## End-to-end data flow
 
-Swift's module unit is the **SPM target** (one target = one module = one `import` namespace). For parrot v1 we use a single executable target with the folder structure above; everything is in the same module so no `import` statements between files. If we ever want enforced boundaries (e.g. `Transcription` and `UI` shouldn't reach into `Audio` internals), we promote folders to separate targets in `Package.swift` — a structural change, not a semantic one.
+```text
+shortcut event
+  -> recording coordinator
+  -> audio capture
+  -> local transcriber
+  -> transcript processor
+       sanitize model tokens
+       apply dictionary
+       format for active application
+       apply local voice commands
+  -> history store (before insertion)
+  -> insertion router
+       paste with clipboard preservation
+       direct Unicode fallback
+       copy-only
+  -> result/undo state
+  -> overlay, menu bar, history, and preferences UI
+```
 
-## Open questions
+The coordinator owns one explicit state machine:
 
-- **Parakeet via FluidAudio vs. direct CoreML?** FluidAudio is faster to integrate but adds a dependency. Decide once we benchmark both.
-- **Hotkey conflicts.** Right-Option is unused on most keyboards but some users remap it. Print a clear error if `CGEventTap` registration fails.
-- **First-run UX.** Bundle `whisper-base.en` so `parrot` works out of the box, or always require an explicit download? Probably the latter — keeps the binary small and the model directory clean.
-- **Code signing.** A self-built unsigned binary works fine locally but accessibility permission persistence is more reliable for signed binaries. Decide if we sign for personal distribution.
+```text
+idle -> recording -> transcribing -> processing -> inserting -> idle
+                         \-> failed/recoverable -> idle
+```
+
+Repeated presses, a release without a matching press, overlapping transcription,
+and shutdown during work must have defined behavior and tests.
+
+## Core contracts
+
+The hardware-touching paths should conform to protocols:
+
+```swift
+protocol AudioCapturing {
+    func start() throws
+    func stop() -> [Float]
+}
+
+protocol Transcribing {
+    var modelID: String { get }
+    func transcribe(_ audio: [Float]) async throws -> String
+}
+
+protocol TextInserting {
+    func insert(_ text: String, mode: InsertionMode) async throws
+}
+
+protocol HotkeyMonitoring {
+    func start(handler: @escaping (HotkeyEvent) -> Void) throws
+    func stop()
+}
+
+protocol TranscriptStoring {
+    func save(_ transcript: Transcript) throws
+    func search(_ query: String) throws -> [Transcript]
+}
+```
+
+Concrete adapters use AVFoundation, WhisperKit, CoreGraphics, AppKit,
+`NSPasteboard`, and local file persistence. Tests use deterministic fakes.
+
+## Transcript processing
+
+Processing is an ordered pipeline of pure transformations. Each stage receives
+text plus a small context value and returns text plus optional diagnostics.
+
+Initial order:
+
+1. sanitize model control and non-speech tokens;
+2. normalize whitespace;
+3. apply custom dictionary replacements;
+4. apply conservative punctuation and capitalization;
+5. apply application-specific formatting when enabled;
+6. interpret explicitly supported voice commands;
+7. produce the final transcript stored in history.
+
+The raw model output may be retained inside the same local history record for
+debugging and future reprocessing. Nothing in this pipeline may call a remote
+model.
+
+## Custom dictionary
+
+Dictionary entries are local, ordered, and deterministic:
+
+- spoken form;
+- replacement text;
+- match mode such as word, phrase, or case-insensitive;
+- enabled state;
+- created and updated timestamps.
+
+Longer phrases win before shorter phrases. Word entries respect Unicode word
+boundaries. Replacements must not recursively reprocess their own output.
+
+The UI includes normal add/edit/delete management and a one-gesture action that
+uses the most recent transcript to create a correction while the error is still
+fresh.
+
+## Transcript history
+
+History is a local append-first store with stable identifiers, timestamps,
+model/language metadata, raw output, processed output, insertion mode, target
+application identifier when available, duration, latency, and result status.
+
+The history window supports:
+
+- newest-first browsing;
+- text search;
+- copy;
+- re-insert into the current target;
+- create dictionary correction;
+- delete one record and clear all with confirmation;
+- configurable retention.
+
+The transcript is saved before insertion, so an Accessibility or secure-input
+failure never loses the words.
+
+## Insertion and clipboard behavior
+
+Paste is the default insertion strategy because Electron and Java applications
+often mishandle synthetic Unicode key events.
+
+Paste insertion:
+
+1. snapshot all current pasteboard items and change count;
+2. place transcript text on the pasteboard;
+3. send Command-V;
+4. wait for the target to consume the paste;
+5. restore the previous pasteboard only if no third party changed it in the
+   meantime;
+6. report a recoverable failure instead of silently discarding text.
+
+Direct Unicode insertion remains a fallback. Copy-only intentionally leaves the
+transcript on the clipboard. The last successful insertion keeps enough local
+state for an immediate undo/revert command.
+
+When secure input or an inaccessible target is detected, the app keeps the
+transcript in history, copies it if safe, and tells the user what happened.
+
+## Hotkeys
+
+Bindings are data, not hard-coded `fn` checks. A binding contains modifiers,
+key code or supported modifier-only key, trigger mode, and action.
+
+The initial actions are push-to-talk, toggle recording, copy last transcript,
+open history, and undo last insertion. Settings must allow more than one
+binding, reject invalid combinations, detect conflicts the app can observe, and
+warn when macOS owns the selected shortcut.
+
+`fn` remains a supported default for continuity, never a requirement.
+
+## User interface
+
+The app runs as a menu bar application with no ordinary dock icon. Its native
+windows are:
+
+- onboarding and permission repair;
+- preferences;
+- custom dictionary;
+- transcript history;
+- model download and language state.
+
+The existing overlay remains the immediate recording/transcribing/error
+surface. Menu and window copy must describe recovery actions rather than expose
+internal errors.
+
+## Settings and persistence
+
+Settings use a versioned `Codable` schema stored under the app's Application
+Support directory. Writes are atomic. Invalid or newer schemas preserve the
+original file and fall back visibly rather than overwriting user data.
+
+User data stays under:
+
+```text
+~/Library/Application Support/Parrot/
+  settings.json
+  dictionary.json
+  history.sqlite
+  Models/
+```
+
+The final app bundle and bundle identifier will determine the stable TCC
+identity. Development builds must not pretend their permission grants prove the
+signed release identity works.
+
+## Testing strategy
+
+`swift test` is the minimum local gate. CI runs it on a supported macOS runner
+and builds the release configuration.
+
+Pure tests cover:
+
+- model registry invariants;
+- sanitizer and formatting stages;
+- dictionary matching, precedence, Unicode boundaries, and persistence;
+- settings defaults, migrations, validation, and atomic-write recovery;
+- history insertion, search, retention, and deletion;
+- insertion routing and clipboard restoration decisions;
+- hotkey parsing, serialization, validation, conflicts, and coordinator states.
+
+Adapter tests use fakes for pasteboard, event posting, active application,
+clock, filesystem, transcriber, capture, and hotkey monitor. Hardware behavior
+still requires manual receipts.
+
+Release verification includes real dictation into:
+
+1. a native AppKit text field;
+2. a browser text field;
+3. an Electron application.
+
+Each receipt records the command or gesture, target app, observed text, and
+post-release latency measured from a monotonic clock.
+
+## Distribution
+
+The shipping form is a signed and notarized `.app`, distributed in an
+installable disk image or package. A stable bundle identifier and signing
+identity are required for reliable TCC permissions. The release path must not
+strip quarantine attributes.
+
+Release automation will build, test, sign, notarize, staple, publish checksums,
+and produce an update feed. Publishing, certificate selection, and any paid
+service remain Aaron-gated actions.
