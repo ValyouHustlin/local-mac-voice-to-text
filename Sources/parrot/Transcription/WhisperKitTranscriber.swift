@@ -1,7 +1,8 @@
 import Foundation
+import ParrotCore
 import WhisperKit
 
-actor WhisperKitTranscriber: Transcriber {
+actor WhisperKitTranscriber: Transcribing {
     let modelID: String
     private let model: TranscriptionModel
     private var pipeline: WhisperKit?
@@ -30,26 +31,7 @@ actor WhisperKitTranscriber: Transcriber {
         guard let pipeline else { throw TranscriberError.notLoaded }
 
         let results = try await pipeline.transcribe(audioArray: audio)
-        let raw = results.map(\.text).joined(separator: " ")
-        return Self.sanitize(raw)
-    }
-
-    /// Strip Whisper's non-speech bracket tokens ([BLANK_AUDIO], [MUSIC],
-    /// (silence), <|nospeech|>, etc.) and collapse whitespace. When the model
-    /// hears silence it emits these literally; we don't want to paste them.
-    static func sanitize(_ text: String) -> String {
-        let patterns = [
-            #"\[[^\]]*\]"#,        // [BLANK_AUDIO], [MUSIC], [Applause]
-            #"\([^)]*\)"#,          // (silence), (music playing)
-            #"<\|[^|]*\|>"#,        // <|nospeech|>, <|endoftext|>
-            #"\*[^*]*\*"#,          // *background noise*
-        ]
-        var out = text
-        for p in patterns {
-            out = out.replacingOccurrences(of: p, with: " ", options: .regularExpression)
-        }
-        out = out.replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
-        return out.trimmingCharacters(in: .whitespacesAndNewlines)
+        return results.map(\.text).joined(separator: " ")
     }
 }
 

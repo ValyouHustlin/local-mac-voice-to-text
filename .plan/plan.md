@@ -18,7 +18,8 @@ contract and target boundaries.
 
 ## P0: ground truth
 
-Status: in progress.
+Status: complete for the initial baseline. Browser end-to-end and LaunchAgent
+TCC remain explicit open receipts.
 
 Goal: establish what the current fork actually does on this Mac.
 
@@ -33,6 +34,8 @@ Goal: establish what the current fork actually does on this Mac.
 
 Exit receipt: a dated local verification report with observed results and open
 defects. A passing build alone does not complete P0.
+
+Receipt: `docs/verification/2026-07-28-baseline.md`.
 
 ## P1: foundation and product charter
 

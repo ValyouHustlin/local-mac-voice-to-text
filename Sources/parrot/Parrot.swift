@@ -1,6 +1,7 @@
 import AppKit
 import ArgumentParser
 import Foundation
+import ParrotCore
 import WhisperKit
 
 @main
@@ -83,75 +84,69 @@ struct Run: ParsableCommand {
 
         let monitor = HotkeyMonitor(debug: debugHotkey)
         let capture = AudioCapture()
+        let processor = TranscriptProcessor()
+        let inserter = UnicodeTextInserter()
         let dumpWav = self.dumpWav
         let overlay: RecordingOverlay? = noOverlay ? nil : MainActor.assumeIsolated { RecordingOverlay() }
         if let overlay {
             capture.onLevel = { level in overlay.pushLevel(level) }
         }
         let menuBar = MainActor.assumeIsolated { MenuBarController(modelID: chosenModel.id) }
+        let coordinator = MainActor.assumeIsolated {
+            DictationCoordinator(
+                capture: capture,
+                transcriber: transcriber,
+                processor: processor,
+                inserter: inserter,
+                insertionMode: .unicode
+            )
+        }
+        MainActor.assumeIsolated {
+            coordinator.onStateChange = { state in
+                switch state {
+                case .idle:
+                    overlay?.hide()
+                    menuBar.setRecording(false)
+                case .recording:
+                    FileHandle.standardError.write(Data("● recording\n".utf8))
+                    overlay?.show(.recording)
+                    menuBar.setRecording(true)
+                case .transcribing, .processing, .inserting:
+                    overlay?.show(.transcribing)
+                    menuBar.setTranscribing()
+                case .failed(let failure):
+                    FileHandle.standardError.write(Data("dictation failed: \(failure)\n".utf8))
+                    overlay?.hide()
+                    menuBar.setRecording(false)
+                }
+            }
+            coordinator.onCapture = { samples in
+                let seconds = Double(samples.count) / AudioCapture.targetSampleRate
+                let rms = computeRMS(samples)
+                FileHandle.standardError.write(Data(
+                    String(format: "○ captured %.2fs · rms %.3f\n", seconds, rms).utf8
+                ))
+                if dumpWav, !samples.isEmpty {
+                    let path = "/tmp/parrot-last.wav"
+                    do {
+                        try WAVWriter.write(samples: samples, sampleRate: 16_000, to: path)
+                        FileHandle.standardError.write(Data("  wrote \(path)\n".utf8))
+                    } catch {
+                        FileHandle.standardError.write(Data("  wav write failed: \(error)\n".utf8))
+                    }
+                }
+            }
+            coordinator.onTranscript = { text, elapsed in
+                FileHandle.standardError.write(Data(
+                    String(format: "→ %.2fs · %@\n", elapsed, text).utf8
+                ))
+            }
+        }
 
         do {
             try monitor.start { event in
-                switch event {
-                case .pressed:
-                    do {
-                        try capture.start()
-                        FileHandle.standardError.write(Data("● recording\n".utf8))
-                        MainActor.assumeIsolated {
-                            overlay?.show(.recording)
-                            menuBar.setRecording(true)
-                        }
-                    } catch {
-                        FileHandle.standardError.write(Data("capture failed: \(error)\n".utf8))
-                    }
-                case .released:
-                    let samples = capture.stop()
-                    MainActor.assumeIsolated {
-                        overlay?.show(.transcribing)
-                        menuBar.setTranscribing()
-                    }
-                    let seconds = Double(samples.count) / AudioCapture.targetSampleRate
-                    let rms = computeRMS(samples)
-                    FileHandle.standardError.write(Data(
-                        String(format: "○ captured %.2fs · rms %.3f\n", seconds, rms).utf8
-                    ))
-                    if dumpWav, !samples.isEmpty {
-                        let path = "/tmp/parrot-last.wav"
-                        do {
-                            try WAVWriter.write(samples: samples, sampleRate: 16_000, to: path)
-                            FileHandle.standardError.write(Data("  wrote \(path)\n".utf8))
-                        } catch {
-                            FileHandle.standardError.write(Data("  wav write failed: \(error)\n".utf8))
-                        }
-                    }
-                    guard !samples.isEmpty else {
-                        MainActor.assumeIsolated {
-                            overlay?.hide()
-                            menuBar.setRecording(false)
-                        }
-                        return
-                    }
-                    Task {
-                        let started = Date()
-                        do {
-                            let text = try await transcriber.transcribe(samples)
-                            let elapsed = Date().timeIntervalSince(started)
-                            FileHandle.standardError.write(Data(
-                                String(format: "→ %.2fs · %@\n", elapsed, text).utf8
-                            ))
-                            await MainActor.run {
-                                TextInjector.inject(text)
-                                overlay?.hide()
-                                menuBar.setRecording(false)
-                            }
-                        } catch {
-                            FileHandle.standardError.write(Data("transcription failed: \(error)\n".utf8))
-                            await MainActor.run {
-                                overlay?.hide()
-                                menuBar.setRecording(false)
-                            }
-                        }
-                    }
+                Task { @MainActor in
+                    await coordinator.handle(event)
                 }
             }
         } catch {

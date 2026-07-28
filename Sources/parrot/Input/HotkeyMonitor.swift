@@ -2,18 +2,18 @@ import AppKit
 import ApplicationServices
 import CoreGraphics
 import Foundation
+import ParrotCore
 
 /// Watches a single modifier key (default: Fn) and emits press/release edges.
 /// Requires Accessibility permission. If the tap fails to register, callers
 /// will see an error from `start()`.
-final class HotkeyMonitor {
-    enum Event { case pressed, released }
+final class HotkeyMonitor: HotkeyMonitoring {
     enum HotkeyError: Error { case tapCreateFailed }
 
     /// Mask of the modifier we treat as the hotkey. Fn = `.maskSecondaryFn`.
     private let mask: CGEventFlags
     private let debug: Bool
-    private var onEvent: ((Event) -> Void)?
+    private var onEvent: ((HotkeyEvent) -> Void)?
     private var tap: CFMachPort?
     private var runLoopSource: CFRunLoopSource?
     private var isPressed = false
@@ -23,7 +23,7 @@ final class HotkeyMonitor {
         self.debug = debug
     }
 
-    func start(onEvent: @escaping (Event) -> Void) throws {
+    func start(onEvent: @escaping (HotkeyEvent) -> Void) throws {
         self.onEvent = onEvent
 
         let promptKey = kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String

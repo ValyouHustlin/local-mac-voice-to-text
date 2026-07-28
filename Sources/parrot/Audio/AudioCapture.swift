@@ -1,10 +1,11 @@
 import AVFoundation
 import Foundation
+import ParrotCore
 
 /// Captures microphone audio while recording is active and returns a 16 kHz
 /// mono Float32 buffer when stopped. Format-converts on the fly so callers
 /// don't have to worry about the input device's native rate.
-final class AudioCapture {
+final class AudioCapture: AudioCapturing {
     enum CaptureError: Error {
         case engineStartFailed(Error)
         case converterCreationFailed

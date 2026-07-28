@@ -1,5 +1,6 @@
 import CoreGraphics
 import Foundation
+import ParrotCore
 
 /// Posts a string of text at the current cursor location by synthesizing
 /// keyboard events with `CGEventKeyboardSetUnicodeString`. Works in nearly
@@ -36,4 +37,17 @@ enum TextInjector {
         up?.keyboardSetUnicodeString(stringLength: length, unicodeString: &chunk)
         up?.post(tap: .cgSessionEventTap)
     }
+}
+
+struct UnicodeTextInserter: TextInserting {
+    func insert(_ text: String, mode: InsertionMode) async throws {
+        guard mode == .unicode else {
+            throw TextInsertionError.unsupportedMode(mode)
+        }
+        TextInjector.inject(text)
+    }
+}
+
+enum TextInsertionError: Error {
+    case unsupportedMode(InsertionMode)
 }
