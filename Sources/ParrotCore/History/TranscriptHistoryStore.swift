@@ -130,10 +130,6 @@ public final class TranscriptHistoryStore: TranscriptRecording, @unchecked Senda
                     audio_duration, transcription_duration, insertion_mode,
                     target_bundle_id, target_app_name, insertion_status, failure_reason
                 FROM transcripts
-                WHERE ? = ''
-                   OR instr(lower(processed_text), lower(?)) > 0
-                   OR instr(lower(raw_text), lower(?)) > 0
-                   OR instr(lower(COALESCE(target_app_name, '')), lower(?)) > 0
                 ORDER BY created_at DESC, rowid DESC
                 LIMIT ?
                 """
@@ -141,10 +137,9 @@ public final class TranscriptHistoryStore: TranscriptRecording, @unchecked Senda
             defer { sqlite3_finalize(statement) }
 
             let trimmedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
-            for index in 1...4 {
-                bind(trimmedQuery, to: Int32(index), in: statement)
-            }
-            sqlite3_bind_int(statement, 5, Int32(max(1, min(limit, 5_000))))
+            let requestedLimit = max(1, min(limit, 5_000))
+            let fetchLimit = trimmedQuery.isEmpty ? requestedLimit : 5_000
+            sqlite3_bind_int(statement, 1, Int32(fetchLimit))
 
             var records: [TranscriptRecord] = []
             while true {
@@ -153,7 +148,11 @@ public final class TranscriptHistoryStore: TranscriptRecording, @unchecked Senda
                 guard result == SQLITE_ROW else {
                     throw databaseError(result)
                 }
-                records.append(try decodeRecord(from: statement))
+                let record = try decodeRecord(from: statement)
+                if trimmedQuery.isEmpty || Self.matches(record, query: trimmedQuery) {
+                    records.append(record)
+                    if records.count == requestedLimit { break }
+                }
             }
             return records
         }
@@ -210,29 +209,36 @@ public final class TranscriptHistoryStore: TranscriptRecording, @unchecked Senda
             }
             guard version == 0 else { return }
 
-            try execute(
-                """
-                CREATE TABLE transcripts (
-                    id TEXT PRIMARY KEY NOT NULL,
-                    created_at REAL NOT NULL,
-                    raw_text TEXT NOT NULL,
-                    processed_text TEXT NOT NULL,
-                    model_id TEXT NOT NULL,
-                    language TEXT,
-                    audio_duration REAL NOT NULL,
-                    transcription_duration REAL NOT NULL,
-                    insertion_mode TEXT NOT NULL,
-                    target_bundle_id TEXT,
-                    target_app_name TEXT,
-                    insertion_status TEXT NOT NULL,
-                    failure_reason TEXT
+            try execute("BEGIN IMMEDIATE")
+            do {
+                try execute(
+                    """
+                    CREATE TABLE transcripts (
+                        id TEXT PRIMARY KEY NOT NULL,
+                        created_at REAL NOT NULL,
+                        raw_text TEXT NOT NULL,
+                        processed_text TEXT NOT NULL,
+                        model_id TEXT NOT NULL,
+                        language TEXT,
+                        audio_duration REAL NOT NULL,
+                        transcription_duration REAL NOT NULL,
+                        insertion_mode TEXT NOT NULL,
+                        target_bundle_id TEXT,
+                        target_app_name TEXT,
+                        insertion_status TEXT NOT NULL,
+                        failure_reason TEXT
+                    )
+                    """
                 )
-                """
-            )
-            try execute(
-                "CREATE INDEX transcripts_created_at ON transcripts(created_at DESC)"
-            )
-            try execute("PRAGMA user_version = \(Self.currentSchemaVersion)")
+                try execute(
+                    "CREATE INDEX transcripts_created_at ON transcripts(created_at DESC)"
+                )
+                try execute("PRAGMA user_version = \(Self.currentSchemaVersion)")
+                try execute("COMMIT")
+            } catch {
+                try? execute("ROLLBACK")
+                throw error
+            }
         }
     }
 
@@ -297,6 +303,18 @@ public final class TranscriptHistoryStore: TranscriptRecording, @unchecked Senda
             return .insertionFailed(reason ?? "Insertion failed.")
         default:
             throw TranscriptHistoryError.database("Unknown history status: \(value)")
+        }
+    }
+
+    private static func matches(_ record: TranscriptRecord, query: String) -> Bool {
+        let options: String.CompareOptions = [.caseInsensitive, .diacriticInsensitive]
+        let candidates = [
+            record.text,
+            record.rawText,
+            record.target.applicationName ?? "",
+        ]
+        return candidates.contains {
+            $0.range(of: query, options: options, locale: .current) != nil
         }
     }
 

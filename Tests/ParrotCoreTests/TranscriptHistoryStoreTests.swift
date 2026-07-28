@@ -1,4 +1,5 @@
 import Foundation
+import SQLite3
 import Testing
 @testable import ParrotCore
 
@@ -10,8 +11,8 @@ struct TranscriptHistoryStoreTests {
         let older = fixture.record(
             id: UUID(uuidString: "00000000-0000-0000-0000-000000000001")!,
             createdAt: Date(timeIntervalSince1970: 100),
-            rawText: "send this to air on",
-            text: "Send this to Aaron."
+            rawText: "send this résumé to air on",
+            text: "Send this résumé to Aaron."
         )
         let newer = fixture.record(
             id: UUID(uuidString: "00000000-0000-0000-0000-000000000002")!,
@@ -26,6 +27,7 @@ struct TranscriptHistoryStoreTests {
         #expect(try fixture.store.records().map(\.id) == [newer.id, older.id])
         #expect(try fixture.store.records(matching: "PARROT").map(\.id) == [newer.id])
         #expect(try fixture.store.records(matching: "air on").map(\.id) == [older.id])
+        #expect(try fixture.store.records(matching: "RÉSUMÉ").map(\.id) == [older.id])
 
         let reopened = try TranscriptHistoryStore(fileURL: fixture.databaseURL)
         #expect(try reopened.records().map(\.id) == [newer.id, older.id])
@@ -92,9 +94,36 @@ struct TranscriptHistoryStoreTests {
             try fixture.store.updateStatus(id: missing, status: .inserted)
         }
     }
+
+    @Test
+    func rejectsNewerSchemaWithoutOverwritingIt() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("parrot-history-schema-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try FileManager.default.createDirectory(
+            at: directory,
+            withIntermediateDirectories: true
+        )
+        let databaseURL = directory.appendingPathComponent("history.sqlite")
+
+        var database: OpaquePointer?
+        #expect(sqlite3_open(databaseURL.path, &database) == SQLITE_OK)
+        defer { sqlite3_close(database) }
+        #expect(sqlite3_exec(database, "PRAGMA user_version = 99", nil, nil, nil) == SQLITE_OK)
+
+        #expect(throws: TranscriptHistoryError.unsupportedSchema(99)) {
+            _ = try TranscriptHistoryStore(fileURL: databaseURL)
+        }
+
+        var statement: OpaquePointer?
+        #expect(sqlite3_prepare_v2(database, "PRAGMA user_version", -1, &statement, nil) == SQLITE_OK)
+        defer { sqlite3_finalize(statement) }
+        #expect(sqlite3_step(statement) == SQLITE_ROW)
+        #expect(sqlite3_column_int(statement, 0) == 99)
+    }
 }
 
-private struct HistoryFixture {
+private final class HistoryFixture {
     let directory: URL
     let databaseURL: URL
     let store: TranscriptHistoryStore
@@ -104,6 +133,10 @@ private struct HistoryFixture {
             .appendingPathComponent("parrot-history-tests-\(UUID().uuidString)", isDirectory: true)
         databaseURL = directory.appendingPathComponent("history.sqlite")
         store = try TranscriptHistoryStore(fileURL: databaseURL)
+    }
+
+    deinit {
+        try? FileManager.default.removeItem(at: directory)
     }
 
     func record(

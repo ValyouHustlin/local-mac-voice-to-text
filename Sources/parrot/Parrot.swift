@@ -35,6 +35,9 @@ struct Run: ParsableCommand {
     @Option(name: .long, help: "Model id to use. Defaults to the recommended model.")
     var model: String?
 
+    @Option(name: .long, help: "Override the local data directory for development.")
+    var dataDirectory: String?
+
     func run() throws {
         if !skipDoctor {
             let checks = DoctorReport.run()
@@ -80,13 +83,49 @@ struct Run: ParsableCommand {
         }
 
         let app = NSApplication.shared
-        app.setActivationPolicy(.accessory)
+        MainActor.assumeIsolated {
+            AppIdentity.configure(app)
+        }
+
+        let customDataDirectory = dataDirectory.map {
+            URL(fileURLWithPath: $0, isDirectory: true)
+        }
+        let dictionaryURL = customDataDirectory?.appendingPathComponent("dictionary.json")
+            ?? DictionaryStore.defaultFileURL()
+        let historyURL = customDataDirectory?.appendingPathComponent("history.sqlite")
+            ?? TranscriptHistoryStore.defaultFileURL()
+        let settingsURL = customDataDirectory?.appendingPathComponent("settings.json")
+            ?? SettingsStore.defaultFileURL()
 
         let monitor = HotkeyMonitor(debug: debugHotkey)
         let capture = AudioCapture()
-        let dictionary = MainActor.assumeIsolated { DictionaryController() }
+        let dictionary = MainActor.assumeIsolated {
+            DictionaryController(store: DictionaryStore(fileURL: dictionaryURL))
+        }
         let processor = dictionary.processor
         let inserter = UnicodeTextInserter()
+        let historyStore = try TranscriptHistoryStore(fileURL: historyURL)
+        let retentionDays: Int?
+        do {
+            retentionDays = try SettingsStore(fileURL: settingsURL).load().historyRetentionDays
+        } catch {
+            retentionDays = nil
+            FileHandle.standardError.write(Data(
+                "settings load failed; history retention was not applied: \(error)\n".utf8
+            ))
+        }
+        if let retentionDays,
+           let retentionCutoff = Calendar.current.date(
+               byAdding: .day,
+               value: -retentionDays,
+               to: Date()
+           )
+        {
+            try historyStore.prune(before: retentionCutoff)
+        }
+        let history = MainActor.assumeIsolated {
+            HistoryController(store: historyStore, dictionary: dictionary, inserter: inserter)
+        }
         let dumpWav = self.dumpWav
         let overlay: RecordingOverlay? = noOverlay ? nil : MainActor.assumeIsolated { RecordingOverlay() }
         if let overlay {
@@ -95,9 +134,16 @@ struct Run: ParsableCommand {
         let menuBar = MainActor.assumeIsolated {
             MenuBarController(
                 modelID: chosenModel.id,
+                onOpenHistory: { history.showHistory() },
                 onOpenDictionary: { dictionary.showDictionary() },
                 onCorrectLast: { dictionary.correctLatestTranscript() }
             )
+        }
+        let appDelegate = MainActor.assumeIsolated {
+            ParrotAppDelegate(onOpenHistory: { history.showHistory() })
+        }
+        MainActor.assumeIsolated {
+            app.delegate = appDelegate
         }
         let coordinator = MainActor.assumeIsolated {
             DictationCoordinator(
@@ -105,7 +151,11 @@ struct Run: ParsableCommand {
                 transcriber: transcriber,
                 processor: processor,
                 inserter: inserter,
-                insertionMode: .unicode
+                history: historyStore,
+                insertionMode: .unicode,
+                language: chosenModel.languages.first,
+                audioSampleRate: AudioCapture.targetSampleRate,
+                currentTarget: currentTranscriptTarget
             )
         }
         MainActor.assumeIsolated {
@@ -125,6 +175,16 @@ struct Run: ParsableCommand {
                     FileHandle.standardError.write(Data("dictation failed: \(failure)\n".utf8))
                     overlay?.hide()
                     menuBar.setRecording(false)
+                    switch failure {
+                    case .history:
+                        menuBar.setFailure("history unavailable · text not inserted")
+                    case .historyStatus:
+                        menuBar.setFailure("inserted · history status needs attention")
+                    case .insertion:
+                        menuBar.setFailure("not inserted · saved in history")
+                    case .capture, .transcription:
+                        menuBar.setFailure("dictation failed · try again")
+                    }
                 }
             }
             coordinator.onCapture = { samples in
@@ -149,6 +209,9 @@ struct Run: ParsableCommand {
                 ))
                 dictionary.rememberLatestTranscript(text)
                 menuBar.setHasLatestTranscript(true)
+            }
+            coordinator.onHistoryChange = {
+                history.reloadIfVisible()
             }
         }
 

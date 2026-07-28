@@ -9,6 +9,7 @@ public enum DictationFailure: Equatable, Sendable {
     case capture(String)
     case transcription(String)
     case history(String)
+    case historyStatus(String)
     case insertion(String)
 }
 
@@ -178,7 +179,7 @@ public final class DictationCoordinator {
                     try history.updateStatus(id: record.id, status: .inserted)
                     onHistoryChange?()
                 } catch {
-                    state = .failed(.history(String(describing: error)))
+                    state = .failed(.historyStatus(String(describing: error)))
                     return
                 }
             }

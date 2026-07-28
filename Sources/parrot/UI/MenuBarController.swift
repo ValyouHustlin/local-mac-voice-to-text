@@ -10,15 +10,18 @@ final class MenuBarController {
     private let stateLabel: NSMenuItem
     private let correctLastItem: NSMenuItem
     private let modelID: String
+    private let onOpenHistory: () -> Void
     private let onOpenDictionary: () -> Void
     private let onCorrectLast: () -> Void
 
     init(
         modelID: String,
+        onOpenHistory: @escaping () -> Void,
         onOpenDictionary: @escaping () -> Void,
         onCorrectLast: @escaping () -> Void
     ) {
         self.modelID = modelID
+        self.onOpenHistory = onOpenHistory
         self.onOpenDictionary = onOpenDictionary
         self.onCorrectLast = onCorrectLast
         self.statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
@@ -40,6 +43,15 @@ final class MenuBarController {
         menu.addItem(modelLabel)
 
         menu.addItem(.separator())
+
+        let history = NSMenuItem(
+            title: "Transcript History…",
+            action: #selector(historyClicked),
+            keyEquivalent: "h"
+        )
+        history.keyEquivalentModifierMask = [.command, .shift]
+        history.target = self
+        menu.addItem(history)
 
         let dictionary = NSMenuItem(
             title: "Custom Dictionary…",
@@ -80,6 +92,10 @@ final class MenuBarController {
         correctLastItem.isEnabled = available
     }
 
+    func setFailure(_ message: String) {
+        stateLabel.title = message
+    }
+
     private func configureButton(recording: Bool) {
         guard let button = statusItem.button else { return }
         let image = Self.birdImage()
@@ -117,6 +133,10 @@ final class MenuBarController {
 
     @objc private func dictionaryClicked() {
         onOpenDictionary()
+    }
+
+    @objc private func historyClicked() {
+        onOpenHistory()
     }
 
     @objc private func correctLastClicked() {

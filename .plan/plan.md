@@ -92,7 +92,8 @@ Partial receipt: `docs/verification/2026-07-28-dictionary.md`.
 
 ## P3: transcript history
 
-Status: planned.
+Status: implementation complete; isolated native UI receipt complete. Fresh
+microphone and forced live-insertion exit receipt remains open.
 
 Goal: make every transcript visible and recoverable.
 
@@ -107,6 +108,12 @@ Goal: make every transcript visible and recoverable.
 
 Exit receipt: create several transcripts, force one insertion failure, restart
 the app, search for the failed transcript, copy it, and re-insert it.
+
+Partial receipt: `docs/verification/2026-07-28-history.md`. The SQLite store,
+save-before-insert coordinator path, restart persistence, search, copy,
+reinsert, correction prefill, delete, clear-all, Dock reopen behavior, and
+native UI were observed with isolated fixture records. A microphone-created
+failed record still needs the full native/browser/Electron lane receipt.
 
 ## P4: reliable paste and clipboard modes
 

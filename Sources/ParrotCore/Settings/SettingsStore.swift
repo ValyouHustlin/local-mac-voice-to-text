@@ -7,6 +7,14 @@ public struct SettingsStore {
         self.fileURL = fileURL
     }
 
+    public static func defaultFileURL(
+        homeDirectory: URL = FileManager.default.homeDirectoryForCurrentUser
+    ) -> URL {
+        homeDirectory
+            .appendingPathComponent("Library/Application Support/Parrot", isDirectory: true)
+            .appendingPathComponent("settings.json")
+    }
+
     public func load() throws -> AppSettings {
         guard FileManager.default.fileExists(atPath: fileURL.path) else {
             return AppSettings()

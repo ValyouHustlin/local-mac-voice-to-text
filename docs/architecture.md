@@ -84,7 +84,7 @@ Only measured receipts from the current session may promote those claims.
 
 P0 ground truth and P1 foundation are complete as of 2026-07-28. The package
 now has `ParrotCore`, protocol-backed coordinator seams, versioned settings,
-19+ deterministic tests, and macOS CI.
+28 deterministic tests, and macOS CI.
 
 P2 custom dictionary is implemented but not yet through its live three-target
 exit gate. Its current runtime path is:
@@ -102,6 +102,18 @@ processor without a restart. Phrase entries show their replacement preview
 before being committed. See
 `docs/verification/2026-07-28-dictionary.md` for observed behavior and the
 remaining receipt.
+
+P3 transcript history is implemented behind a local SQLite store. The
+coordinator saves processed and raw transcript text before attempting
+insertion, then records success or the recoverable failure reason. A native
+split history window supports Unicode-aware search, copy, reinsert, correction
+creation, delete, clear-all, metadata, and visible failure states.
+
+The app now has a regular Dock presence as well as its menu bar item. Clicking
+the Dock item with no visible windows opens History. Its minimal app icon
+extends the existing vector bird mark so the Dock and menu bar share one
+identity. See `docs/verification/2026-07-28-history.md` for the isolated live
+UI receipt and the remaining microphone exit gate.
 
 ## Target structure
 
@@ -289,8 +301,8 @@ warn when macOS owns the selected shortcut.
 
 ## User interface
 
-The app runs as a menu bar application with no ordinary dock icon. Its native
-windows are:
+The app runs as a Dock-present macOS application and retains its menu bar
+control. Its native windows are:
 
 - onboarding and permission repair;
 - preferences;
@@ -321,6 +333,10 @@ User data stays under:
 The final app bundle and bundle identifier will determine the stable TCC
 identity. Development builds must not pretend their permission grants prove the
 signed release identity works.
+
+For isolated development and verification, `parrot run --data-directory`
+redirects settings, dictionary, and history persistence to an explicit local
+directory.
 
 ## Testing strategy
 
