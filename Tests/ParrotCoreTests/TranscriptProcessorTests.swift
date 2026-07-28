@@ -33,4 +33,22 @@ struct TranscriptProcessorTests {
         ])
         #expect(matcher.apply(to: "cat scatter bobcat cat.") == "dog scatter bobcat dog.")
     }
+
+    @Test
+    func caseSensitiveAndDisabledEntriesAreHonored() {
+        let matcher = DictionaryMatcher(entries: [
+            DictionaryEntry(
+                spokenForm: "api",
+                replacement: "API",
+                matchMode: .word,
+                isCaseSensitive: true
+            ),
+            DictionaryEntry(
+                spokenForm: "secret",
+                replacement: "visible",
+                isEnabled: false
+            ),
+        ])
+        #expect(matcher.apply(to: "api API secret") == "API API secret")
+    }
 }

@@ -80,6 +80,29 @@ Not present in the inspected baseline:
 The README and older plans contain unverified latency and compatibility claims.
 Only measured receipts from the current session may promote those claims.
 
+## Current delivery state
+
+P0 ground truth and P1 foundation are complete as of 2026-07-28. The package
+now has `ParrotCore`, protocol-backed coordinator seams, versioned settings,
+19+ deterministic tests, and macOS CI.
+
+P2 custom dictionary is implemented but not yet through its live three-target
+exit gate. Its current runtime path is:
+
+```text
+~/Library/Application Support/Parrot/dictionary.json
+  -> versioned DictionaryStore
+  -> MutableTranscriptProcessor
+  -> coordinator processing stage
+```
+
+The menu-bar app exposes a native management window and a
+`Correct Last Transcript…` action. Management changes update the running
+processor without a restart. Phrase entries show their replacement preview
+before being committed. See
+`docs/verification/2026-07-28-dictionary.md` for observed behavior and the
+remaining receipt.
+
 ## Target structure
 
 The package should separate testable product logic from macOS adapters:

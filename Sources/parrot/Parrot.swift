@@ -8,7 +8,7 @@ import WhisperKit
 struct Parrot: ParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "parrot",
-        abstract: "Minimal macOS dictation daemon. Hold Fn, speak, release.",
+        abstract: "Private, on-device macOS dictation. Hold Fn, speak, release.",
         subcommands: [Run.self, Setup.self, Doctor.self, Models.self, Install.self],
         defaultSubcommand: Run.self
     )
@@ -84,14 +84,21 @@ struct Run: ParsableCommand {
 
         let monitor = HotkeyMonitor(debug: debugHotkey)
         let capture = AudioCapture()
-        let processor = TranscriptProcessor()
+        let dictionary = MainActor.assumeIsolated { DictionaryController() }
+        let processor = dictionary.processor
         let inserter = UnicodeTextInserter()
         let dumpWav = self.dumpWav
         let overlay: RecordingOverlay? = noOverlay ? nil : MainActor.assumeIsolated { RecordingOverlay() }
         if let overlay {
             capture.onLevel = { level in overlay.pushLevel(level) }
         }
-        let menuBar = MainActor.assumeIsolated { MenuBarController(modelID: chosenModel.id) }
+        let menuBar = MainActor.assumeIsolated {
+            MenuBarController(
+                modelID: chosenModel.id,
+                onOpenDictionary: { dictionary.showDictionary() },
+                onCorrectLast: { dictionary.correctLatestTranscript() }
+            )
+        }
         let coordinator = MainActor.assumeIsolated {
             DictationCoordinator(
                 capture: capture,
@@ -140,6 +147,8 @@ struct Run: ParsableCommand {
                 FileHandle.standardError.write(Data(
                     String(format: "→ %.2fs · %@\n", elapsed, text).utf8
                 ))
+                dictionary.rememberLatestTranscript(text)
+                menuBar.setHasLatestTranscript(true)
             }
         }
 

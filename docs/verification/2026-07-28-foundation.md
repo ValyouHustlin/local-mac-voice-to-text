@@ -87,17 +87,18 @@ Workflow: `.github/workflows/ci.yml`
 Observed run:
 
 ```text
-CI run 30402726088
-head 0978f5fac0770c7219ed35a476d737dac0542c9c
+CI run 30403026663
+head dc3493bc9e994ade05f251edfc3f44b55345b950
 macos-26 / Xcode 26.4.1
+actions/checkout@v5
 Run tests       success
 Build release   success
-job duration    3m43s
+job duration    3m59s
 conclusion      success
 ```
 
 Run URL:
-`https://github.com/ValyouHustlin/local-mac-voice-to-text/actions/runs/30402726088`
+`https://github.com/ValyouHustlin/local-mac-voice-to-text/actions/runs/30403026663`
 
 The first attempted run failed before checkout because a generic Swift setup
 action did not offer Swift 6.3.1. The workflow now selects the Xcode 26.4.1

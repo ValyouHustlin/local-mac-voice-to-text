@@ -8,11 +8,25 @@ final class MenuBarController {
     private let statusItem: NSStatusItem
     private let modelLabel: NSMenuItem
     private let stateLabel: NSMenuItem
+    private let correctLastItem: NSMenuItem
     private let modelID: String
+    private let onOpenDictionary: () -> Void
+    private let onCorrectLast: () -> Void
 
-    init(modelID: String) {
+    init(
+        modelID: String,
+        onOpenDictionary: @escaping () -> Void,
+        onCorrectLast: @escaping () -> Void
+    ) {
         self.modelID = modelID
+        self.onOpenDictionary = onOpenDictionary
+        self.onCorrectLast = onCorrectLast
         self.statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+        self.correctLastItem = NSMenuItem(
+            title: "Correct Last Transcript…",
+            action: #selector(correctLastClicked),
+            keyEquivalent: ""
+        )
 
         let menu = NSMenu()
         menu.autoenablesItems = false
@@ -24,6 +38,21 @@ final class MenuBarController {
         modelLabel = NSMenuItem(title: "model: \(modelID)", action: nil, keyEquivalent: "")
         modelLabel.isEnabled = false
         menu.addItem(modelLabel)
+
+        menu.addItem(.separator())
+
+        let dictionary = NSMenuItem(
+            title: "Custom Dictionary…",
+            action: #selector(dictionaryClicked),
+            keyEquivalent: ","
+        )
+        dictionary.keyEquivalentModifierMask = [.command]
+        dictionary.target = self
+        menu.addItem(dictionary)
+
+        correctLastItem.target = self
+        correctLastItem.isEnabled = false
+        menu.addItem(correctLastItem)
 
         menu.addItem(.separator())
 
@@ -45,6 +74,10 @@ final class MenuBarController {
 
     func setTranscribing() {
         stateLabel.title = "transcribing…"
+    }
+
+    func setHasLatestTranscript(_ available: Bool) {
+        correctLastItem.isEnabled = available
     }
 
     private func configureButton(recording: Bool) {
@@ -80,5 +113,13 @@ final class MenuBarController {
 
     @objc private func quitClicked() {
         NSApp.terminate(nil)
+    }
+
+    @objc private func dictionaryClicked() {
+        onOpenDictionary()
+    }
+
+    @objc private func correctLastClicked() {
+        onCorrectLast()
     }
 }

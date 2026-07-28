@@ -70,7 +70,9 @@ release build, live daemon launch, and remote CI all passed on 2026-07-28.
 
 ## P2: custom dictionary
 
-Status: planned.
+Status: in progress. Persistence, hot-reloadable processing, management UI,
+latest-transcript action, and phrase preview are implemented. The required
+three-target live dictation receipt is still open.
 
 Goal: fix names, acronyms, product terms, and technical language locally.
 
@@ -85,6 +87,8 @@ Goal: fix names, acronyms, product terms, and technical language locally.
 
 Exit receipt: dictate a known failure, add its correction from the latest
 transcript, repeat the phrase in three targets, and observe the corrected term.
+
+Partial receipt: `docs/verification/2026-07-28-dictionary.md`.
 
 ## P3: transcript history
 
