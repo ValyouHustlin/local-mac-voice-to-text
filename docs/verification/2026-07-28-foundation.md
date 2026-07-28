@@ -2,7 +2,10 @@
 
 Date: 2026-07-28
 
-Commit: pending at time of first write.
+Commits:
+
+- `0573811` — testable core, protocol seams, tests, and initial CI;
+- `0978f5f` — CI toolchain correction for GitHub's current macOS image.
 
 ## Automated tests
 
@@ -77,6 +80,31 @@ This proves the rebuilt executable reaches its live ready state and exits
 cleanly. A second ambient microphone run was deliberately not performed after
 the baseline captured unrelated room speech.
 
+## Remote CI
+
+Workflow: `.github/workflows/ci.yml`
+
+Observed run:
+
+```text
+CI run 30402726088
+head 0978f5fac0770c7219ed35a476d737dac0542c9c
+macos-26 / Xcode 26.4.1
+Run tests       success
+Build release   success
+job duration    3m43s
+conclusion      success
+```
+
+Run URL:
+`https://github.com/ValyouHustlin/local-mac-voice-to-text/actions/runs/30402726088`
+
+The first attempted run failed before checkout because a generic Swift setup
+action did not offer Swift 6.3.1. The workflow now selects the Xcode 26.4.1
+already installed on GitHub's `macos-26` runner and invokes Swift through
+`xcrun`. This is recorded as a corrected CI configuration, not hidden as a
+passing first attempt.
+
 ## Review
 
 First-pass diff review result: no blocking findings after moving the recording
@@ -90,4 +118,5 @@ Residual runtime risks:
 - event-tap re-enablement, secure input, paste, history, dictionary UI, and
   configurable hotkeys remain later phases;
 - browser end-to-end insertion remains unverified;
-- CI is configured but its first remote run is pending the foundation push.
+- the suite does not measure source coverage or exercise hardware and TCC
+  behavior on GitHub's runner.

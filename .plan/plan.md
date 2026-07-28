@@ -39,7 +39,7 @@ Receipt: `docs/verification/2026-07-28-baseline.md`.
 
 ## P1: foundation and product charter
 
-Status: in progress.
+Status: complete.
 
 Goal: make the codebase safe to grow and stop inherited docs from steering the
 fork toward the wrong product.
@@ -64,6 +64,9 @@ swift build -c release
 
 Both commands must finish successfully from a clean checkout. The current
 daemon must still launch to its permission/model boundary.
+
+Receipt: `docs/verification/2026-07-28-foundation.md`. Local tests, local
+release build, live daemon launch, and remote CI all passed on 2026-07-28.
 
 ## P2: custom dictionary
 
