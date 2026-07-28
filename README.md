@@ -1,29 +1,38 @@
-# parrot
+# Parrot
 
-A minimal macOS dictation daemon. Push-to-talk, on-device transcription, text inserted at the cursor.
+A fully local macOS dictation app: hold a shortcut, speak, and get private
+on-device transcription at the cursor.
 
-## Install
+## Try the source build
 
 ```sh
-curl -fsSL https://digimata.github.io/parrot/install.sh | sh
-parrot setup                       # grants mic + accessibility, downloads the model
-parrot install --launch-at-login   # optional — runs in the background on login
+git clone https://github.com/ValyouHustlin/local-mac-voice-to-text.git
+cd local-mac-voice-to-text
+swift build -c release
+.build/release/parrot setup
+.build/release/parrot run
 ```
 
-**Requires:** macOS 14+ on Apple Silicon (M1 or newer). Transcription runs on the Apple Neural Engine via CoreML — so the installer refuses to run on Intel.
-
-The installer drops the binary in `/usr/local/bin/parrot`. Builds are unsigned for now, so the installer strips the quarantine xattr — once you've inspected the script you'll see exactly what it does.
+**Requires:** macOS 14+, Apple silicon (M1 or newer), and the Xcode command-line
+tools. Transcription runs locally through WhisperKit and Core ML. A signed,
+notarized public installer is still on the roadmap; the source build is the
+honest preview path today.
 
 ## How to use
 
-1. **Run it.** Either `parrot install --launch-at-login` (daemonized, runs forever, lives in the menu bar), or `parrot` in any terminal tab.
+1. **Run it.** Start `.build/release/parrot run`, or register that build with
+   `.build/release/parrot install --launch-at-login`.
 2. **Click into the text field you want to dictate into** — Messages, the address bar, a Slack thread, anywhere a cursor blinks.
-3. **Hold the `fn` key, speak, release.** A small pill appears at the bottom of the screen while the mic is hot.
-4. **The transcript types itself in at the cursor** when you release. Usually within 200-300ms.
+3. **Hold `Control-Space`, speak, release.** A small pill appears at the bottom of the screen while the mic is hot.
+4. **The transcript types itself in at the cursor** after local transcription
+   finishes.
 
-That's it. There is no record button, no stop button, no "send" — `fn` is the whole interface.
+That's it. There is no record button, no stop button, no "send" — hold
+`Control-Space` while you speak, then release it.
 
-> **Note:** on most modern Macs the `fn` key is the bottom-left key. If yours is set to "Change input source" or "Show emoji & symbols," `parrot setup` will tell you how to flip it back to plain `fn`.
+> **Shortcut conflict:** macOS can reserve `Control-Space` for switching input
+> sources. Disable “Select the previous input source” under System Settings →
+> Keyboard → Keyboard Shortcuts → Input Sources if Parrot reports a conflict.
 
 ## CLI
 
@@ -32,11 +41,10 @@ parrot                                 # run in the foreground (^C to quit)
 parrot setup                           # one-time setup: permissions + model download
 parrot install --launch-at-login       # register a LaunchAgent (background daemon)
 parrot install --uninstall             # remove the LaunchAgent
-parrot doctor                          # check permissions + fn key setting
+parrot doctor                          # check permissions + Control-Space
 parrot models list                     # list available models
 parrot models download <id>            # pre-download a model
 parrot --model whisper-large-v3-turbo  # bigger, multilingual, slower first-run
-parrot --hotkey right-option           # change the push-to-talk key
 parrot --no-overlay                    # disable the bottom-of-screen pill
 ```
 

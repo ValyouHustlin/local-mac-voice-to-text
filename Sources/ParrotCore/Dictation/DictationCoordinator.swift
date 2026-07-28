@@ -1,6 +1,6 @@
 import Foundation
 
-public enum HotkeyEvent: Sendable {
+public enum HotkeyEvent: Equatable, Sendable {
     case pressed
     case released
 }

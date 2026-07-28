@@ -4,22 +4,19 @@ import CoreGraphics
 import Foundation
 import ParrotCore
 
-/// Watches a single modifier key (default: Fn) and emits press/release edges.
+/// Watches Control-Space globally and emits push-to-talk press/release edges.
 /// Requires Accessibility permission. If the tap fails to register, callers
 /// will see an error from `start()`.
 final class HotkeyMonitor: HotkeyMonitoring {
     enum HotkeyError: Error { case tapCreateFailed }
 
-    /// Mask of the modifier we treat as the hotkey. Fn = `.maskSecondaryFn`.
-    private let mask: CGEventFlags
     private let debug: Bool
     private var onEvent: ((HotkeyEvent) -> Void)?
     private var tap: CFMachPort?
     private var runLoopSource: CFRunLoopSource?
-    private var isPressed = false
+    private var stateMachine = PushToTalkStateMachine()
 
-    init(mask: CGEventFlags = .maskSecondaryFn, debug: Bool = false) {
-        self.mask = mask
+    init(debug: Bool = false) {
         self.debug = debug
     }
 
@@ -86,11 +83,34 @@ final class HotkeyMonitor: HotkeyMonitoring {
                         .utf8
                 ))
         }
-        guard type == .flagsChanged else { return }
-        let pressed = event.flags.contains(mask)
-        guard pressed != isPressed else { return }
-        isPressed = pressed
-        onEvent?(pressed ? .pressed : .released)
+        guard let kind = Self.inputKind(for: type) else { return }
+        let input = HotkeyInput(
+            kind: kind,
+            keyCode: UInt16(event.getIntegerValueField(.keyboardEventKeycode)),
+            modifiers: Self.modifiers(from: event.flags)
+        )
+        if let edge = stateMachine.handle(input) {
+            onEvent?(edge)
+        }
+    }
+
+    private static func inputKind(for type: CGEventType) -> HotkeyInputKind? {
+        switch type {
+        case .keyDown: return .keyDown
+        case .keyUp: return .keyUp
+        case .flagsChanged: return .flagsChanged
+        default: return nil
+        }
+    }
+
+    private static func modifiers(from flags: CGEventFlags) -> Set<HotkeyModifier> {
+        var modifiers = Set<HotkeyModifier>()
+        if flags.contains(.maskControl) { modifiers.insert(.control) }
+        if flags.contains(.maskAlternate) { modifiers.insert(.option) }
+        if flags.contains(.maskShift) { modifiers.insert(.shift) }
+        if flags.contains(.maskCommand) { modifiers.insert(.command) }
+        if flags.contains(.maskSecondaryFn) { modifiers.insert(.function) }
+        return modifiers
     }
 }
 

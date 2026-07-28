@@ -1,8 +1,7 @@
 import AppKit
 
 /// Status bar item in the top-right of the menu bar. Shows recording state at
-/// a glance and provides the only persistent control surface for the daemon
-/// (since we run as `.accessory` — no dock icon, no main window).
+/// a glance and provides quick access alongside the Dock and native windows.
 @MainActor
 final class MenuBarController {
     private let statusItem: NSStatusItem
@@ -34,7 +33,11 @@ final class MenuBarController {
         let menu = NSMenu()
         menu.autoenablesItems = false
 
-        stateLabel = NSMenuItem(title: "idle · hold fn to dictate", action: nil, keyEquivalent: "")
+        stateLabel = NSMenuItem(
+            title: "idle · hold ⌃Space to dictate",
+            action: nil,
+            keyEquivalent: ""
+        )
         stateLabel.isEnabled = false
         menu.addItem(stateLabel)
 
@@ -81,7 +84,7 @@ final class MenuBarController {
     }
 
     func setRecording(_ recording: Bool) {
-        stateLabel.title = recording ? "● recording" : "idle · hold fn to dictate"
+        stateLabel.title = recording ? "● recording" : "idle · hold ⌃Space to dictate"
     }
 
     func setTranscribing() {

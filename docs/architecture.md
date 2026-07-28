@@ -84,7 +84,7 @@ Only measured receipts from the current session may promote those claims.
 
 P0 ground truth and P1 foundation are complete as of 2026-07-28. The package
 now has `ParrotCore`, protocol-backed coordinator seams, versioned settings,
-28 deterministic tests, and macOS CI.
+32 deterministic tests, and macOS CI.
 
 P2 custom dictionary is implemented but not yet through its live three-target
 exit gate. Its current runtime path is:
@@ -114,6 +114,13 @@ the Dock item with no visible windows opens History. Its minimal app icon
 extends the existing vector bird mark so the Dock and menu bar share one
 identity. See `docs/verification/2026-07-28-history.md` for the isolated live
 UI receipt and the remaining microphone exit gate.
+
+Control-Space is the current push-to-talk default. Its press/release edge logic
+is isolated in `ParrotCore`, rejects unintended modifier combinations, and
+recovers if Control is released before Space. Full live rebinding and multiple
+bindings remain P5 work. See
+`docs/verification/2026-07-28-control-space.md` for the automated and live Dock
+receipt plus the remaining physical dictation check.
 
 ## Target structure
 

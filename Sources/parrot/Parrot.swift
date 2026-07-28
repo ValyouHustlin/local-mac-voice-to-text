@@ -8,7 +8,7 @@ import WhisperKit
 struct Parrot: ParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "parrot",
-        abstract: "Private, on-device macOS dictation. Hold Fn, speak, release.",
+        abstract: "Private, on-device macOS dictation. Hold Control-Space, speak, release.",
         subcommands: [Run.self, Setup.self, Doctor.self, Models.self, Install.self],
         defaultSubcommand: Run.self
     )
@@ -236,14 +236,16 @@ struct Run: ParsableCommand {
         sigint.resume()
         signal(SIGINT, SIG_IGN)
 
-        FileHandle.standardError.write(Data("listening on fn hold · model: \(chosenModel.id) · ^C to quit\n".utf8))
+        FileHandle.standardError.write(Data(
+            "listening on Control-Space hold · model: \(chosenModel.id) · ^C to quit\n".utf8
+        ))
         app.run()
     }
 }
 
 struct Doctor: ParsableCommand {
     static let configuration = CommandConfiguration(
-        abstract: "Check microphone, accessibility, and Fn key configuration."
+        abstract: "Check microphone, accessibility, and Control-Space availability."
     )
 
     func run() throws {

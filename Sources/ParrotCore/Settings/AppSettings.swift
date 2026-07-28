@@ -43,7 +43,7 @@ public struct AppSettings: Codable, Equatable, Sendable {
         showOverlay: Bool = true,
         historyRetentionDays: Int = 30,
         hotkeys: [HotkeyBinding] = [
-            HotkeyBinding(key: "fn", action: .pushToTalk),
+            HotkeyBinding(key: "space", modifiers: ["control"], action: .pushToTalk),
         ]
     ) {
         self.schemaVersion = schemaVersion

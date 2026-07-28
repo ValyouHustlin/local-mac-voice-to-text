@@ -6,7 +6,12 @@ import Testing
 struct SettingsTests {
     @Test
     func defaultsValidate() throws {
-        _ = try AppSettings().validated()
+        let settings = try AppSettings().validated()
+        #expect(
+            settings.hotkeys == [
+                HotkeyBinding(key: "space", modifiers: ["control"], action: .pushToTalk),
+            ]
+        )
     }
 
     @Test

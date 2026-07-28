@@ -20,7 +20,7 @@ enum DoctorReport {
         [
             checkMicrophone(),
             checkAccessibility(),
-            checkFnKeyMapping(),
+            checkControlSpaceAvailability(),
         ]
     }
 
@@ -33,7 +33,7 @@ enum DoctorReport {
             return Check(
                 name: "microphone",
                 status: .warn("not yet requested — will prompt on first recording"),
-                remediation: "run parrot and hold Fn once; macOS will prompt"
+                remediation: "run parrot and hold Control-Space once; macOS will prompt"
             )
         case .denied, .restricted:
             return Check(
@@ -58,63 +58,31 @@ enum DoctorReport {
         )
     }
 
-    /// macOS routes Fn (🌐) to one of: Do Nothing / Change Input Source / Show Emoji / Start Dictation.
-    /// We need "Do Nothing" so Fn is a clean modifier.
-    static func checkFnKeyMapping() -> Check {
-        let raw = readDefault(domain: "com.apple.HIToolbox", key: "AppleFnUsageType")
-        guard let raw, let value = Int(raw) else {
+    /// Shortcut 60 is macOS's "Select the previous input source" binding,
+    /// whose default key combination is Control-Space.
+    static func checkControlSpaceAvailability() -> Check {
+        guard
+            let domain = UserDefaults.standard.persistentDomain(
+                forName: "com.apple.symbolichotkeys"
+            ),
+            let shortcuts = domain["AppleSymbolicHotKeys"] as? [String: Any],
+            let inputSource = shortcuts["60"] as? [String: Any],
+            let enabled = inputSource["enabled"] as? Bool
+        else {
             return Check(
-                name: "fn key mapping",
-                status: .warn("unset — system default may intercept Fn"),
-                remediation: "System Settings → Keyboard → Press 🌐 key to → Do Nothing"
+                name: "Control-Space",
+                status: .warn("could not inspect the macOS input-source shortcut"),
+                remediation: "System Settings → Keyboard → Keyboard Shortcuts → Input Sources"
             )
         }
-        switch value {
-        case 0:
-            return Check(name: "fn key mapping", status: .ok, remediation: nil)
-        case 1:
-            return Check(
-                name: "fn key mapping",
-                status: .fail("set to Change Input Source"),
-                remediation: "System Settings → Keyboard → Press 🌐 key to → Do Nothing"
-            )
-        case 2:
-            return Check(
-                name: "fn key mapping",
-                status: .fail("set to Show Emoji & Symbols"),
-                remediation: "System Settings → Keyboard → Press 🌐 key to → Do Nothing"
-            )
-        case 3:
-            return Check(
-                name: "fn key mapping",
-                status: .fail("set to Start Dictation"),
-                remediation: "System Settings → Keyboard → Press 🌐 key to → Do Nothing"
-            )
-        default:
-            return Check(
-                name: "fn key mapping",
-                status: .warn("unknown value \(value)"),
-                remediation: "System Settings → Keyboard → Press 🌐 key to → Do Nothing"
-            )
+        guard enabled else {
+            return Check(name: "Control-Space", status: .ok, remediation: nil)
         }
-    }
-
-    private static func readDefault(domain: String, key: String) -> String? {
-        let task = Process()
-        task.launchPath = "/usr/bin/defaults"
-        task.arguments = ["read", domain, key]
-        let pipe = Pipe()
-        task.standardOutput = pipe
-        task.standardError = Pipe()
-        do {
-            try task.run()
-        } catch {
-            return nil
-        }
-        task.waitUntilExit()
-        guard task.terminationStatus == 0 else { return nil }
-        let data = pipe.fileHandleForReading.readDataToEndOfFile()
-        return String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines)
+        return Check(
+            name: "Control-Space",
+            status: .fail("reserved by the macOS input-source shortcut"),
+            remediation: "System Settings → Keyboard → Keyboard Shortcuts → Input Sources → disable Select the previous input source"
+        )
     }
 
     private static func parentProcessName() -> String? {

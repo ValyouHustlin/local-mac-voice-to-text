@@ -137,7 +137,8 @@ recoverable.
 
 ## P5: configurable hotkeys
 
-Status: planned.
+Status: in progress. Control-Space is now the tested fixed default; preferences,
+multiple bindings, conflict UI, and live rebinding remain planned.
 
 Goal: remove the hard dependency on `fn` and support daily workflows.
 
