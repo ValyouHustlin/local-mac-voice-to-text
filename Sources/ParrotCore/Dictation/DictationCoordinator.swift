@@ -8,6 +8,7 @@ public enum HotkeyEvent: Sendable {
 public enum DictationFailure: Equatable, Sendable {
     case capture(String)
     case transcription(String)
+    case history(String)
     case insertion(String)
 }
 
@@ -53,12 +54,18 @@ public final class DictationCoordinator {
     public var onStateChange: ((DictationState) -> Void)?
     public var onCapture: (([Float]) -> Void)?
     public var onTranscript: ((String, TimeInterval) -> Void)?
+    public var onHistoryChange: (() -> Void)?
 
     private let capture: AudioCapturing
     private let transcriber: Transcribing
     private let processor: TranscriptProcessing
     private let inserter: TextInserting
+    private let history: TranscriptRecording?
     private let insertionMode: InsertionMode
+    private let language: String?
+    private let audioSampleRate: Double
+    private let currentTarget: () -> TranscriptTarget
+    private let date: () -> Date
     private let now: () -> TimeInterval
 
     public init(
@@ -66,14 +73,24 @@ public final class DictationCoordinator {
         transcriber: Transcribing,
         processor: TranscriptProcessing,
         inserter: TextInserting,
+        history: TranscriptRecording? = nil,
         insertionMode: InsertionMode = .unicode,
+        language: String? = nil,
+        audioSampleRate: Double = 16_000,
+        currentTarget: @escaping () -> TranscriptTarget = { .unknown },
+        date: @escaping () -> Date = Date.init,
         now: @escaping () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }
     ) {
         self.capture = capture
         self.transcriber = transcriber
         self.processor = processor
         self.inserter = inserter
+        self.history = history
         self.insertionMode = insertionMode
+        self.language = language
+        self.audioSampleRate = audioSampleRate
+        self.currentTarget = currentTarget
+        self.date = date
         self.now = now
     }
 
@@ -101,27 +118,71 @@ public final class DictationCoordinator {
             }
 
             state = .transcribing
+            let transcriptionStarted = now()
+            let raw: String
             do {
-                let transcriptionStarted = now()
-                let raw = try await transcriber.transcribe(samples)
-                let transcriptionElapsed = now() - transcriptionStarted
-                state = .processing
-                let text = processor.process(raw)
-                guard !text.isEmpty else {
-                    state = .idle
+                raw = try await transcriber.transcribe(samples)
+            } catch {
+                state = .failed(.transcription(String(describing: error)))
+                return
+            }
+
+            let transcriptionElapsed = now() - transcriptionStarted
+            state = .processing
+            let text = processor.process(raw)
+            guard !text.isEmpty else {
+                state = .idle
+                return
+            }
+
+            let record = TranscriptRecord(
+                createdAt: date(),
+                rawText: raw,
+                text: text,
+                modelID: transcriber.modelID,
+                language: language,
+                audioDuration: Double(samples.count) / audioSampleRate,
+                transcriptionDuration: transcriptionElapsed,
+                insertionMode: insertionMode,
+                target: currentTarget(),
+                status: .pendingInsertion
+            )
+            if let history {
+                do {
+                    try history.save(record)
+                    onHistoryChange?()
+                } catch {
+                    state = .failed(.history(String(describing: error)))
                     return
                 }
-                state = .inserting
+            }
+            onTranscript?(text, transcriptionElapsed)
+
+            state = .inserting
+            do {
                 try await inserter.insert(text, mode: insertionMode)
-                onTranscript?(text, transcriptionElapsed)
-                state = .idle
             } catch {
-                if state == .inserting {
-                    state = .failed(.insertion(String(describing: error)))
-                } else {
-                    state = .failed(.transcription(String(describing: error)))
+                if let history {
+                    try? history.updateStatus(
+                        id: record.id,
+                        status: .insertionFailed(String(describing: error))
+                    )
+                    onHistoryChange?()
+                }
+                state = .failed(.insertion(String(describing: error)))
+                return
+            }
+
+            if let history {
+                do {
+                    try history.updateStatus(id: record.id, status: .inserted)
+                    onHistoryChange?()
+                } catch {
+                    state = .failed(.history(String(describing: error)))
+                    return
                 }
             }
+            state = .idle
         }
     }
 

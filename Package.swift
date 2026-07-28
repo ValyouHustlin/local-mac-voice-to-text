@@ -40,7 +40,12 @@ let package = Package(
         ),
     ],
     targets: [
-        .target(name: "ParrotCore"),
+        .target(
+            name: "ParrotCore",
+            linkerSettings: [
+                .linkedLibrary("sqlite3"),
+            ]
+        ),
         .executableTarget(
             name: "parrot",
             dependencies: [

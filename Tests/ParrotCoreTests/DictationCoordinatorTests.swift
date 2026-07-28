@@ -139,7 +139,9 @@ struct DictationCoordinatorTests {
         #expect(saved.transcriptionDuration == 0.75)
         #expect(saved.insertionMode == .unicode)
         #expect(saved.target.applicationName == "TextEdit")
-        #expect(history.updates == [(saved.id, .inserted)])
+        #expect(history.updates.count == 1)
+        #expect(history.updates[0].0 == saved.id)
+        #expect(history.updates[0].1 == .inserted)
     }
 
     @Test
