@@ -1,0 +1,132 @@
+import Foundation
+import Testing
+@testable import ParrotCore
+
+@Suite
+struct TranscriptHistoryStoreTests {
+    @Test
+    func persistsNewestFirstAndSearchesRawAndProcessedText() throws {
+        let fixture = try HistoryFixture()
+        let older = fixture.record(
+            id: UUID(uuidString: "00000000-0000-0000-0000-000000000001")!,
+            createdAt: Date(timeIntervalSince1970: 100),
+            rawText: "send this to air on",
+            text: "Send this to Aaron."
+        )
+        let newer = fixture.record(
+            id: UUID(uuidString: "00000000-0000-0000-0000-000000000002")!,
+            createdAt: Date(timeIntervalSince1970: 200),
+            rawText: "ship the parrot window",
+            text: "Ship the Parrot window."
+        )
+
+        try fixture.store.save(older)
+        try fixture.store.save(newer)
+
+        #expect(try fixture.store.records().map(\.id) == [newer.id, older.id])
+        #expect(try fixture.store.records(matching: "PARROT").map(\.id) == [newer.id])
+        #expect(try fixture.store.records(matching: "air on").map(\.id) == [older.id])
+
+        let reopened = try TranscriptHistoryStore(fileURL: fixture.databaseURL)
+        #expect(try reopened.records().map(\.id) == [newer.id, older.id])
+    }
+
+    @Test
+    func updatesInsertionStatusWithoutLosingTranscript() throws {
+        let fixture = try HistoryFixture()
+        let record = fixture.record(text: "Recover this transcript.")
+        try fixture.store.save(record)
+
+        try fixture.store.updateStatus(
+            id: record.id,
+            status: .insertionFailed("Accessibility permission is missing.")
+        )
+
+        let loaded = try #require(try fixture.store.records().first)
+        #expect(loaded.text == record.text)
+        #expect(loaded.status == .insertionFailed("Accessibility permission is missing."))
+
+        try fixture.store.updateStatus(id: record.id, status: .inserted)
+        #expect(try fixture.store.records().first?.status == .inserted)
+    }
+
+    @Test
+    func deletesPrunesAndClearsRecords() throws {
+        let fixture = try HistoryFixture()
+        let old = fixture.record(
+            id: UUID(uuidString: "00000000-0000-0000-0000-000000000003")!,
+            createdAt: Date(timeIntervalSince1970: 100),
+            text: "Old transcript"
+        )
+        let recent = fixture.record(
+            id: UUID(uuidString: "00000000-0000-0000-0000-000000000004")!,
+            createdAt: Date(timeIntervalSince1970: 300),
+            text: "Recent transcript"
+        )
+        try fixture.store.save(old)
+        try fixture.store.save(recent)
+
+        #expect(try fixture.store.prune(before: Date(timeIntervalSince1970: 200)) == 1)
+        #expect(try fixture.store.records().map(\.id) == [recent.id])
+
+        try fixture.store.delete(id: recent.id)
+        #expect(try fixture.store.records().isEmpty)
+
+        try fixture.store.save(old)
+        try fixture.store.save(recent)
+        #expect(try fixture.store.clear() == 2)
+        #expect(try fixture.store.records().isEmpty)
+    }
+
+    @Test
+    func rejectsDuplicateAndMissingRecords() throws {
+        let fixture = try HistoryFixture()
+        let record = fixture.record(text: "Only once")
+        try fixture.store.save(record)
+
+        #expect(throws: TranscriptHistoryError.duplicateRecord(record.id)) {
+            try fixture.store.save(record)
+        }
+        let missing = UUID(uuidString: "00000000-0000-0000-0000-000000000099")!
+        #expect(throws: TranscriptHistoryError.missingRecord(missing)) {
+            try fixture.store.updateStatus(id: missing, status: .inserted)
+        }
+    }
+}
+
+private struct HistoryFixture {
+    let directory: URL
+    let databaseURL: URL
+    let store: TranscriptHistoryStore
+
+    init() throws {
+        directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("parrot-history-tests-\(UUID().uuidString)", isDirectory: true)
+        databaseURL = directory.appendingPathComponent("history.sqlite")
+        store = try TranscriptHistoryStore(fileURL: databaseURL)
+    }
+
+    func record(
+        id: UUID = UUID(),
+        createdAt: Date = Date(timeIntervalSince1970: 1_000),
+        rawText: String = "raw transcript",
+        text: String
+    ) -> TranscriptRecord {
+        TranscriptRecord(
+            id: id,
+            createdAt: createdAt,
+            rawText: rawText,
+            text: text,
+            modelID: "whisper-base.en",
+            language: "en",
+            audioDuration: 2.4,
+            transcriptionDuration: 0.8,
+            insertionMode: .unicode,
+            target: TranscriptTarget(
+                bundleIdentifier: "com.apple.TextEdit",
+                applicationName: "TextEdit"
+            ),
+            status: .pendingInsertion
+        )
+    }
+}
