@@ -4,17 +4,29 @@ import FoundationModels
 #endif
 import WordhandCore
 
+protocol LocalTranscriptRewriting: Sendable {
+    func rewrite(
+        _ text: String,
+        instructions: String,
+        maximumResponseTokens: Int,
+        timeoutSeconds: UInt64
+    ) async throws -> String
+}
+
 final class AppAwareTranscriptProcessor: TranscriptProcessing, @unchecked Sendable {
     private let dictionaryProcessor: MutableTranscriptProcessor
+    private let rewriter: any LocalTranscriptRewriting
     private let lock = NSLock()
     private var profile: TranscriptFormattingProfile
 
     init(
         dictionaryProcessor: MutableTranscriptProcessor,
-        profile: TranscriptFormattingProfile
+        profile: TranscriptFormattingProfile,
+        rewriter: any LocalTranscriptRewriting = FoundationModelTranscriptRewriter()
     ) {
         self.dictionaryProcessor = dictionaryProcessor
         self.profile = profile
+        self.rewriter = rewriter
     }
 
     func update(profile: TranscriptFormattingProfile) {
@@ -25,83 +37,195 @@ final class AppAwareTranscriptProcessor: TranscriptProcessing, @unchecked Sendab
 
     func process(_ text: String, target: TranscriptTarget) async -> String {
         let cleaned = await dictionaryProcessor.process(text, target: target)
-        let resolved = lock.withLock { profile }.resolved(for: target)
+        let selectedProfile = lock.withLock { profile }
 
-        switch resolved {
-        case .verbatim:
-            return cleaned
-        case .polished, .automatic:
+        switch selectedProfile {
+        case .casual:
             return TranscriptProcessor.polish(cleaned)
-        case .aiPrompt:
-            return await rewriteForAI(cleaned, target: target)
+        case .formatted:
+            return await rewrite(cleaned, intent: .formatted, target: target)
+        case .professional:
+            return await rewrite(cleaned, intent: .professional, target: target)
+        case .aiCommunication:
+            return await rewrite(cleaned, intent: .aiCommunication, target: target)
         }
     }
 
-    private func rewriteForAI(_ text: String, target: TranscriptTarget) async -> String {
+    private func rewrite(
+        _ text: String,
+        intent: TranscriptRewriteIntent,
+        target: TranscriptTarget
+    ) async -> String {
         guard !text.isEmpty else { return text }
-#if canImport(FoundationModels)
-        guard #available(macOS 26.0, *) else {
-            return TranscriptProcessor.polish(text)
-        }
-        guard case .available = SystemLanguageModel.default.availability else {
-            return TranscriptProcessor.polish(text)
+        let wordCount = text.split(whereSeparator: \.isWhitespace).count
+        let responseTokens = min(768, max(128, wordCount * 3))
+        let meaningMarkers = TranscriptRewriteValidator.requiredMeaningMarkers(in: text)
+            .sorted()
+            .joined(separator: ", ")
+        var instructions = intent.instructions(for: target)
+        if !meaningMarkers.isEmpty {
+            instructions += """
+
+            The source contains these meaning markers: \(meaningMarkers).
+            Retain every one in the rewrite. They encode speaker perspective, modality, or requested action.
+            """
         }
 
-        let application = target.applicationName ?? "an AI coding application"
-        let instructions = """
-        You edit voice dictation into excellent input for an AI coding assistant.
-        The user is dictating into \(application).
-        Preserve every request, constraint, example, uncertainty, and technical term.
-        Do not answer the request and do not add facts or recommendations.
-        Remove only speech fillers and accidental repetition.
-        Fix capitalization, punctuation, and run-on sentences.
-        Use short paragraphs and bullets when they make multiple requirements easier to scan.
-        Return only the rewritten dictation with no preamble, label, quote, or code fence.
+        do {
+            let candidate = try await rewriter.rewrite(
+                text,
+                instructions: instructions,
+                maximumResponseTokens: responseTokens,
+                timeoutSeconds: 8
+            )
+            if TranscriptRewriteValidator.isAcceptable(
+                candidate: candidate,
+                original: text
+            ) {
+                return finalized(candidate, for: intent)
+            }
+
+            let conservativeInstructions = """
+            \(instructions)
+
+            Make a conservative second pass by editing the source in place.
+            Keep every original clause and keep each required meaning marker in its original clause and grammatical role.
+            Do not change a personal task into a command or a statement into a message addressed to someone.
+            """
+            let conservativeCandidate = try await rewriter.rewrite(
+                text,
+                instructions: conservativeInstructions,
+                maximumResponseTokens: responseTokens,
+                timeoutSeconds: 8
+            )
+            guard TranscriptRewriteValidator.isAcceptable(
+                candidate: conservativeCandidate,
+                original: text
+            ) else {
+                return fallback(text, for: intent)
+            }
+            return finalized(conservativeCandidate, for: intent)
+        } catch {
+            FileHandle.standardError.write(
+                Data("local formatting unavailable; used safe cleanup: \(error)\n".utf8)
+            )
+            return fallback(text, for: intent)
+        }
+    }
+
+    private func finalized(_ text: String, for intent: TranscriptRewriteIntent) -> String {
+        switch intent {
+        case .formatted:
+            return text
+        case .professional:
+            return TranscriptProcessor.professionalize(text)
+        case .aiCommunication:
+            return TranscriptProcessor.structureForAI(text)
+        }
+    }
+
+    private func fallback(_ text: String, for intent: TranscriptRewriteIntent) -> String {
+        finalized(TranscriptProcessor.polish(text), for: intent)
+    }
+}
+
+private enum TranscriptRewriteIntent: Equatable {
+    case formatted
+    case professional
+    case aiCommunication
+
+    func instructions(for target: TranscriptTarget) -> String {
+        let application = target.applicationName ?? "the current application"
+        let shared = """
+        You edit voice dictation before it is inserted into \(application).
+        Preserve every fact, request, constraint, example, uncertainty, negation, number, name, and technical term.
+        Preserve who is speaking, who must act, and who receives each action.
+        Preserve modality and speech act: a personal task, observation, question, or draft message must remain that same kind of statement.
+        Never turn a statement about someone into text addressed to that person.
+        Never answer the message. Never add facts, recommendations, claims, or intent.
+        Remove speech fillers, false starts, and accidental repetition only when meaning is unchanged.
+        Return only the rewritten text with no preamble, label, quotation, or code fence.
         """
+
+        switch self {
+        case .formatted:
+            return """
+            \(shared)
+            Keep the speaker's natural tone and vocabulary.
+            Fix grammar, capitalization, punctuation, sentence boundaries, and run-on thoughts.
+            Use short paragraphs. Use bullets only when the speaker clearly gives a list or several separate requirements.
+            Prefer clarity and scanability over formality.
+            """
+        case .professional:
+            return """
+            \(shared)
+            Produce polished professional communication that is concise, confident, and precise.
+            Remove conversational throat-clearing such as "okay" and "so."
+            Improve awkward wording and organization when it makes the intended meaning clearer.
+            Preserve the speaker's level of certainty and do not inflate claims.
+            Preserve qualifiers such as "I think," "probably," and "maybe" when they express real uncertainty.
+            Use coherent paragraphs and purposeful bullets when appropriate.
+            Sound like an excellent human editor, not corporate boilerplate.
+            Do more than add punctuation, but keep edits conservative enough that every sentence still has the speaker's intended meaning.
+            """
+        case .aiCommunication:
+            return """
+            \(shared)
+            Structure the message as excellent input for an AI agent.
+            Make the goal, context, requirements, constraints, examples, and requested output easy to identify.
+            Use short sections or bullets when they help the agent execute correctly.
+            When the source contains three or more separate actions or requirements, use a concise lead sentence followed by bullets instead of one flat paragraph.
+            Keep prohibitions and non-negotiable constraints visibly distinct from optional ideas.
+            Preserve open questions and ambiguity instead of deciding them for the speaker.
+            Do not add headings mechanically when a short message is already clear.
+            """
+        }
+    }
+}
+
+struct FoundationModelTranscriptRewriter: LocalTranscriptRewriting {
+    enum RewriterError: Error {
+        case unavailable
+        case timedOut
+    }
+
+    func rewrite(
+        _ text: String,
+        instructions: String,
+        maximumResponseTokens: Int,
+        timeoutSeconds: UInt64
+    ) async throws -> String {
+#if canImport(FoundationModels)
+        guard #available(macOS 26.0, *) else {
+            throw RewriterError.unavailable
+        }
+        guard case .available = SystemLanguageModel.default.availability else {
+            throw RewriterError.unavailable
+        }
+
         let prompt = """
         Rewrite this dictated message without answering it. Return only the rewritten message:
 
         \(text)
         """
-        let wordCount = text.split(whereSeparator: \.isWhitespace).count
-        let responseTokens = min(384, max(96, wordCount * 2))
-
-        do {
-            let session = LanguageModelSession(instructions: instructions)
-            let options = GenerationOptions(
-                sampling: .greedy,
-                temperature: 0,
-                maximumResponseTokens: responseTokens
-            )
-            let candidate = try await Self.respond(
-                session: session,
-                prompt: prompt,
-                options: options,
-                timeoutSeconds: 4
-            )
-            guard TranscriptRewriteValidator.isAcceptable(
-                candidate: candidate,
-                original: text
-            ) else {
-                return TranscriptProcessor.polish(text)
-            }
-            return candidate
-        } catch {
-            FileHandle.standardError.write(
-                Data("local formatting unavailable; used safe cleanup: \(error)\n".utf8)
-            )
-            return TranscriptProcessor.polish(text)
-        }
+        let session = LanguageModelSession(instructions: instructions)
+        let options = GenerationOptions(
+            sampling: .greedy,
+            temperature: 0,
+            maximumResponseTokens: maximumResponseTokens
+        )
+        return try await Self.respond(
+            session: session,
+            prompt: prompt,
+            options: options,
+            timeoutSeconds: timeoutSeconds
+        )
 #else
-        return TranscriptProcessor.polish(text)
+        throw RewriterError.unavailable
 #endif
     }
 
 #if canImport(FoundationModels)
-    private enum FormattingError: Error {
-        case timedOut
-    }
-
     @available(macOS 26.0, *)
     private static func respond(
         session: LanguageModelSession,
@@ -116,11 +240,11 @@ final class AppAwareTranscriptProcessor: TranscriptProcessing, @unchecked Sendab
             }
             group.addTask {
                 try await Task.sleep(for: .seconds(timeoutSeconds))
-                throw FormattingError.timedOut
+                throw RewriterError.timedOut
             }
             defer { group.cancelAll() }
             guard let first = try await group.next() else {
-                throw FormattingError.timedOut
+                throw RewriterError.timedOut
             }
             return first
         }

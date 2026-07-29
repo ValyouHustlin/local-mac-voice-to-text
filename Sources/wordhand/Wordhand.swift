@@ -9,7 +9,14 @@ struct Wordhand: ParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "wordhand",
         abstract: "Private, on-device macOS dictation. Hold Control-Space, speak, release.",
-        subcommands: [Run.self, Setup.self, Doctor.self, Models.self, Install.self],
+        subcommands: [
+            Run.self,
+            Format.self,
+            Setup.self,
+            Doctor.self,
+            Models.self,
+            Install.self,
+        ],
         defaultSubcommand: Run.self
     )
 }
@@ -445,6 +452,52 @@ struct Run: ParsableCommand {
         )) {
             app.run()
         }
+    }
+}
+
+struct Format: ParsableCommand {
+    static let configuration = CommandConfiguration(
+        commandName: "format",
+        abstract: "Preview Wordhand's local writing styles without recording audio."
+    )
+
+    @Argument(help: "Dictated text to format.")
+    var text: String
+
+    @Option(
+        name: .long,
+        help: "casual, formatted, professional, or aiCommunication."
+    )
+    var style: String = TranscriptFormattingProfile.formatted.rawValue
+
+    @Option(name: .long, help: "Application context used by the local formatter.")
+    var application: String = "the current application"
+
+    func run() throws {
+        guard let profile = TranscriptFormattingProfile(rawValue: style) else {
+            FileHandle.standardError.write(Data(
+                "unknown style: \(style)\nuse casual, formatted, professional, or aiCommunication\n"
+                    .utf8
+            ))
+            throw ExitCode(1)
+        }
+
+        let processor = AppAwareTranscriptProcessor(
+            dictionaryProcessor: MutableTranscriptProcessor(),
+            profile: profile
+        )
+        let target = TranscriptTarget(
+            bundleIdentifier: nil,
+            applicationName: application
+        )
+        let semaphore = DispatchSemaphore(value: 0)
+        var output = ""
+        Task {
+            output = await processor.process(text, target: target)
+            semaphore.signal()
+        }
+        semaphore.wait()
+        print(output)
     }
 }
 

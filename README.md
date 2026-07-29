@@ -34,7 +34,7 @@ and inserts the result into ordinary Mac apps.
 | **Accuracy-first local model** | Optimized Whisper Large v3 is the default on capable Macs. Balanced and smaller Whisper models remain selectable. |
 | **Reliable insertion** | Paste-first insertion works across native, browser, and Electron targets while restoring the previous rich clipboard. Direct typing and copy-only modes are available. |
 | **Flow-focused feedback** | Quiet start/stop tones, an expressive live waveform, a display-following recording control, and one-click cancellation keep dictation legible without demanding attention. |
-| **App-aware writing** | Automatic mode turns spoken thought streams into structured AI prompts in terminal and coding apps using Apple's on-device model when available, with safe local fallback plus polished and verbatim profiles. |
+| **Four writing styles** | Choose Casual, Formatted, Professional, or AI Communication. The three richer modes use Apple’s on-device model with meaning-preservation checks and safe local fallback. |
 
 <p align="center">
   <img src="docs/assets/wordhand-history.png" width="920" alt="Wordhand transcript history window">
@@ -109,6 +109,7 @@ wordhand doctor                          # diagnose permissions and shortcut con
 wordhand models list                     # list local transcription models
 wordhand models download <id>            # download a model before first use
 wordhand models benchmark <audio> --model <id>
+wordhand format "dictated text" --style professional
 wordhand install --launch-at-login       # register Wordhand at login
 wordhand install --uninstall             # remove launch-at-login registration
 wordhand --model whisper-large-v3-turbo  # use a larger multilingual model
@@ -155,7 +156,7 @@ dedicated to the test. The immediate kill command is
 ## Roadmap
 
 The next daily-use slices are immediate undo/revert, fresh-account onboarding,
-deeper prose/chat/code-comment profiles, and a signed release path. See
+and a signed release path. See
 [the product roadmap](.plan/plan.md) and
 [architecture](docs/architecture.md).
 

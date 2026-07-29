@@ -2,11 +2,11 @@ import Foundation
 
 public struct TranscriptProcessor: TranscriptProcessing, Sendable {
     private let dictionary: DictionaryMatcher
-    private let formattingProfile: TranscriptFormattingProfile
+    private let formattingProfile: TranscriptFormattingProfile?
 
     public init(
         dictionaryEntries: [DictionaryEntry] = [],
-        formattingProfile: TranscriptFormattingProfile = .verbatim
+        formattingProfile: TranscriptFormattingProfile? = nil
     ) {
         dictionary = DictionaryMatcher(entries: dictionaryEntries)
         self.formattingProfile = formattingProfile
@@ -14,12 +14,9 @@ public struct TranscriptProcessor: TranscriptProcessing, Sendable {
 
     public func process(_ text: String, target: TranscriptTarget = .unknown) async -> String {
         let cleaned = dictionary.apply(to: Self.sanitize(text))
-        switch formattingProfile.resolved(for: target) {
-        case .verbatim:
-            return cleaned
-        case .automatic:
-            return cleaned
-        case .polished, .aiPrompt:
+        guard let formattingProfile else { return cleaned }
+        switch formattingProfile {
+        case .casual, .formatted, .professional, .aiCommunication:
             return Self.polish(cleaned)
         }
     }
@@ -84,5 +81,28 @@ public struct TranscriptProcessor: TranscriptProcessing, Sendable {
             output.append(".")
         }
         return output
+    }
+
+    public static func structureForAI(_ text: String) -> String {
+        guard !text.contains("\n") else { return text }
+        let separated = text.replacingOccurrences(
+            of: #"(?<=[.!?])\s+"#,
+            with: "\n",
+            options: .regularExpression
+        )
+        let sentences = separated
+            .split(separator: "\n")
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+        guard sentences.count >= 3 else { return text }
+        return sentences.map { "- \($0)" }.joined(separator: "\n")
+    }
+
+    public static func professionalize(_ text: String) -> String {
+        text.replacingOccurrences(
+            of: #"(?i)^\s*(?:okay[, ]+so[, ]*|okay[, ]+|so[, ]+)"#,
+            with: "",
+            options: .regularExpression
+        )
     }
 }

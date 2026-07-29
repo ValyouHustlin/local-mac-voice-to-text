@@ -37,6 +37,28 @@ struct TranscriptRewriteValidatorTests {
     }
 
     @Test
+    func rejectsChangedSpeakerPerspectiveAndModality() {
+        #expect(
+            !TranscriptRewriteValidator.isAcceptable(
+                candidate: "Aaron, please receive the Valyou update.",
+                original: "I need to send Aaron the Valyou update."
+            )
+        )
+        #expect(
+            TranscriptRewriteValidator.isAcceptable(
+                candidate: "I need to provide Aaron with the Valyou update.",
+                original: "I need to send Aaron the Valyou update."
+            )
+        )
+        #expect(
+            !TranscriptRewriteValidator.isAcceptable(
+                candidate: "We need to ship the update.",
+                original: "I think we need to ship the update."
+            )
+        )
+    }
+
+    @Test
     func acceptsEquivalentNegationSpelling() {
         #expect(TranscriptRewriteValidator.isAcceptable(
             candidate: "You cannot upload it.",

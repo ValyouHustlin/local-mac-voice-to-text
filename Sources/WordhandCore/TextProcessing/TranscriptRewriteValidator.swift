@@ -13,6 +13,16 @@ public enum TranscriptRewriteValidator {
         "shouldn't", "shouldnt", "wouldn't", "wouldnt",
         "mustn't", "mustnt", "isn't", "isnt", "aren't", "arent",
     ]
+    private static let meaningMarkers: Set<String> = [
+        "i", "i'm", "i'll", "i've",
+        "we", "we're", "we'll", "we've",
+        "my", "our", "you", "your",
+        "need", "needs", "needed", "want", "wants", "wanted",
+        "must", "should", "could", "would", "may", "might",
+        "plan", "plans", "planned", "ask", "asks", "asked",
+        "think", "believe", "guess", "seem", "seems",
+        "likely", "probably", "maybe", "perhaps",
+    ]
 
     public static func isAcceptable(candidate: String, original: String) -> Bool {
         let candidate = candidate.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -35,9 +45,22 @@ public enum TranscriptRewriteValidator {
             guard candidateFolded.contains(folded) else { return false }
         }
 
+        let candidateMeaningMarkers = Set(
+            candidateWords.map { $0.lowercased() }
+        ).intersection(meaningMarkers)
+        guard requiredMeaningMarkers(in: original).isSubset(
+            of: candidateMeaningMarkers
+        ) else {
+            return false
+        }
+
         let originalNegations = originalWords.count(where: isNegation)
         let candidateNegations = candidateWords.count(where: isNegation)
         return candidateNegations >= originalNegations
+    }
+
+    public static func requiredMeaningMarkers(in text: String) -> Set<String> {
+        Set(words(in: text).map { $0.lowercased() }).intersection(meaningMarkers)
     }
 
     private static func words(in text: String) -> [String] {

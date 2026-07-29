@@ -1,27 +1,35 @@
 import Foundation
 
 public enum TranscriptFormattingProfile: String, Codable, CaseIterable, Sendable {
-    case automatic
-    case polished
-    case aiPrompt
-    case verbatim
+    case casual
+    case formatted
+    case professional
+    case aiCommunication
 
-    public func resolved(for target: TranscriptTarget) -> TranscriptFormattingProfile {
-        guard self == .automatic else { return self }
-
-        let identifier = target.bundleIdentifier?.lowercased() ?? ""
-        let name = target.applicationName?.lowercased() ?? ""
-        let aiAndDevelopmentTargets = [
-            "terminal", "iterm", "warp", "ghostty", "alacritty", "kitty",
-            "wezterm", "hyper", "tabby", "rio", "cursor", "windsurf",
-            "visual studio code", "vscode", "xcode", "zed", "chatgpt", "claude",
-        ]
-        if aiAndDevelopmentTargets.contains(where: {
-            identifier.contains($0.replacingOccurrences(of: " ", with: ""))
-                || name.contains($0)
-        }) {
-            return .aiPrompt
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.singleValueContainer()
+        let storedValue = try container.decode(String.self)
+        switch storedValue {
+        case Self.casual.rawValue:
+            self = .casual
+        case Self.formatted.rawValue, "automatic", "polished":
+            self = .formatted
+        case Self.professional.rawValue:
+            self = .professional
+        case Self.aiCommunication.rawValue, "aiPrompt":
+            self = .aiCommunication
+        case "verbatim":
+            self = .casual
+        default:
+            throw DecodingError.dataCorruptedError(
+                in: container,
+                debugDescription: "Unknown writing style: \(storedValue)"
+            )
         }
-        return .polished
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.singleValueContainer()
+        try container.encode(rawValue)
     }
 }

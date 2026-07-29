@@ -117,9 +117,9 @@ Verified by source inspection and dated receipts on 2026-07-28:
 - quiet local start/stop/cancel cues, an expressive eleven-bar waveform, a
   pointer-display-following overlay, and one-click cancellation that discards
   work before insertion;
-- writing profiles for verbatim, polished, AI-prompt, and automatic app-aware
-  output; on macOS 26 the AI-prompt path uses Apple's on-device system language
-  model and falls back to deterministic cleanup when unavailable;
+- four explicit writing profiles: Casual, Formatted, Professional, and AI
+  Communication; richer profiles use Apple's on-device system language model
+  and fall back to deterministic cleanup when unavailable;
 - duplicate-process prevention, a 10-minute recording safety stop, active
   Whisper cancellation, and rewrite validation that rejects dropped numbers,
   technical tokens, or negated constraints;
@@ -144,7 +144,7 @@ receipts may promote latency or compatibility claims.
 
 P0 ground truth and P1 foundation are complete as of 2026-07-28. The package
 now has `WordhandCore`, protocol-backed coordinator seams, versioned settings,
-74 deterministic tests across core and macOS adapter targets, and macOS CI.
+79 deterministic tests across core and macOS adapter targets, and macOS CI.
 
 The daily-driver bundle is built by `scripts/build-app.sh` and installed by
 `scripts/install-app.sh`. Installed builds use `SMAppService.mainApp` for native
@@ -231,20 +231,23 @@ between displays, so the state stays visible on the screen being used.
 Cancellation invalidates the current coordinator operation before insertion
 and resets tap-toggle routing so the next shortcut starts immediately.
 
-Automatic writing style now resolves Terminal, iTerm2, Warp, Ghostty, other
-common terminal applications, development tools, and AI applications to one
-shared AI-prompt profile. Ghostty is not special-cased, and no terminal receives
-product-specific behavior. That profile sends only the current local transcript
-to Apple's on-device Foundation Models framework, with instructions to
-preserve meaning, restructure run-ons, and never answer the request. It does not
-read surrounding document content. Generation has a proportional response
-budget and a four-second deadline; either validation or runtime failure falls
-back to deterministic cleanup. Validation preserves digit-bearing values,
-technical tokens, acronyms, and negated constraints in addition to bounding
-rewrite length. Non-AI targets receive deterministic capitalization,
-punctuation, and conservative filler cleanup. Users can force
-automatic, polished, AI-prompt, or verbatim behavior in Settings. See
-`docs/verification/2026-07-28-flow-formatting.md`.
+Writing style is an explicit user choice rather than inferred from the active
+application. Casual performs fast deterministic cleanup. Formatted preserves
+natural tone while fixing structure. Professional improves organization and
+wording conservatively. AI Communication makes goals and multiple requirements
+scannable, including deterministic bullet structure for three or more distinct
+sentences. The latter three send only the current local transcript to Apple's
+on-device Foundation Models framework. They do not read surrounding document
+content.
+
+Generation has a proportional response budget and an eight-second deadline.
+An invalid first rewrite receives one stricter conservative retry; runtime
+failure or a second rejection falls back to deterministic local cleanup.
+Validation preserves digit-bearing values, technical tokens, acronyms,
+negations, speaker perspective, modality, uncertainty, and requested-action
+markers in addition to bounding rewrite length. Legacy Automatic, Polished,
+AI-prompt, and Verbatim settings migrate to the closest new style. See
+`docs/verification/2026-07-29-writing-modes.md`.
 
 The runtime now holds a per-data-directory process lock so a duplicate launch
 cannot create two competing microphone, hotkey, or insertion owners. Toggle
@@ -365,9 +368,10 @@ Initial order:
 1. sanitize model control and non-speech tokens;
 2. normalize whitespace;
 3. apply custom dictionary replacements;
-4. resolve the user-selected writing profile against the active application;
-5. apply conservative punctuation and capitalization, or an on-device
-   AI-prompt rewrite with strict output validation and deterministic fallback;
+4. apply the explicit Casual, Formatted, Professional, or AI Communication
+   writing style;
+5. validate on-device rewrites for facts, constraints, perspective, modality,
+   and uncertainty, retry conservatively once, then use safe local fallback;
 6. interpret explicitly supported voice commands;
 7. produce the final transcript stored in history.
 

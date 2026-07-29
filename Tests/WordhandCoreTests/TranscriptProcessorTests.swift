@@ -1,3 +1,4 @@
+import Foundation
 import Testing
 @testable import WordhandCore
 
@@ -53,47 +54,16 @@ struct TranscriptProcessorTests {
     }
 
     @Test
-    func automaticProfileSelectsAIPromptForCodingAndTerminalApps() {
-        let developmentTargets = [
-            TranscriptTarget(
-                bundleIdentifier: "com.apple.Terminal",
-                applicationName: "Terminal"
-            ),
-            TranscriptTarget(
-                bundleIdentifier: "com.googlecode.iterm2",
-                applicationName: "iTerm2"
-            ),
-            TranscriptTarget(
-                bundleIdentifier: "dev.warp.Warp-Stable",
-                applicationName: "Warp"
-            ),
-            TranscriptTarget(
-                bundleIdentifier: "com.mitchellh.ghostty",
-                applicationName: "Ghostty"
-            ),
-            TranscriptTarget(
-                bundleIdentifier: "com.microsoft.VSCode",
-                applicationName: "Visual Studio Code"
-            ),
-        ]
-        for target in developmentTargets {
-            #expect(
-                TranscriptFormattingProfile.automatic.resolved(for: target) == .aiPrompt
-            )
-        }
+    func exposesFourExplicitWritingStyles() {
         #expect(
-            TranscriptFormattingProfile.automatic.resolved(
-                for: TranscriptTarget(
-                    bundleIdentifier: "com.apple.TextEdit",
-                    applicationName: "TextEdit"
-                )
-            ) == .polished
+            TranscriptFormattingProfile.allCases
+                == [.casual, .formatted, .professional, .aiCommunication]
         )
     }
 
     @Test
-    func polishedFallbackCleansFillersCasingAndPunctuation() async {
-        let processor = TranscriptProcessor(formattingProfile: .polished)
+    func casualFallbackCleansFillersCasingAndPunctuation() async {
+        let processor = TranscriptProcessor(formattingProfile: .casual)
         let result = await processor.process(
             "um this is a test and then we should ship it",
             target: .unknown
@@ -103,18 +73,52 @@ struct TranscriptProcessorTests {
     }
 
     @Test
-    func verbatimProfileOnlySanitizesAndAppliesDictionary() async {
-        let processor = TranscriptProcessor(
-            dictionaryEntries: [
-                DictionaryEntry(spokenForm: "word hand", replacement: "Wordhand"),
-            ],
-            formattingProfile: .verbatim
-        )
-        let result = await processor.process(
-            "um word hand stays lowercase",
-            target: .unknown
-        )
+    func migratesLegacyWritingStyleValues() throws {
+        let decoder = JSONDecoder()
+        let legacyValues: [(String, TranscriptFormattingProfile)] = [
+            ("automatic", .formatted),
+            ("polished", .formatted),
+            ("aiPrompt", .aiCommunication),
+            ("verbatim", .casual),
+        ]
 
-        #expect(result == "um Wordhand stays lowercase")
+        for (storedValue, expected) in legacyValues {
+            let profile = try decoder.decode(
+                TranscriptFormattingProfile.self,
+                from: Data("\"\(storedValue)\"".utf8)
+            )
+            #expect(profile == expected)
+        }
+    }
+
+    @Test
+    func agentStructureTurnsThreeOrMoreSentencesIntoBullets() {
+        #expect(
+            TranscriptProcessor.structureForAI(
+                "Ship the app. Keep the rollback. Report the result."
+            ) == """
+            - Ship the app.
+            - Keep the rollback.
+            - Report the result.
+            """
+        )
+        #expect(
+            TranscriptProcessor.structureForAI("Ship the app. Report the result.")
+                == "Ship the app. Report the result."
+        )
+    }
+
+    @Test
+    func professionalStyleRemovesOnlyOpeningThroatClearing() {
+        #expect(
+            TranscriptProcessor.professionalize(
+                "Okay, so I think we should ship. Maybe wait for review."
+            ) == "I think we should ship. Maybe wait for review."
+        )
+        #expect(
+            TranscriptProcessor.professionalize(
+                "I think we should ship. Maybe wait for review."
+            ) == "I think we should ship. Maybe wait for review."
+        )
     }
 }

@@ -557,14 +557,14 @@ private struct SettingsView: View {
                         set: { controller.setFormattingProfile($0) }
                     )
                 ) {
-                    Text("Automatic · Recommended")
-                        .tag(TranscriptFormattingProfile.automatic)
-                    Text("Polished")
-                        .tag(TranscriptFormattingProfile.polished)
-                    Text("AI prompt")
-                        .tag(TranscriptFormattingProfile.aiPrompt)
-                    Text("Verbatim")
-                        .tag(TranscriptFormattingProfile.verbatim)
+                    Text("Casual")
+                        .tag(TranscriptFormattingProfile.casual)
+                    Text("Formatted · Recommended")
+                        .tag(TranscriptFormattingProfile.formatted)
+                    Text("Professional")
+                        .tag(TranscriptFormattingProfile.professional)
+                    Text("AI Communication")
+                        .tag(TranscriptFormattingProfile.aiCommunication)
                 }
                 .labelsHidden()
                 .frame(width: 220)
@@ -574,14 +574,14 @@ private struct SettingsView: View {
 
     private var formattingDescription: String {
         switch controller.settings.formattingProfile {
-        case .automatic:
-            return "Structures prompts in AI and coding apps; keeps everyday dictation naturally polished."
-        case .polished:
-            return "Cleans fillers, capitalization, punctuation, and sentence boundaries."
-        case .aiPrompt:
-            return "Uses Apple’s on-device model to turn spoken thoughts into scannable AI instructions."
-        case .verbatim:
-            return "Keeps your wording and structure exactly as transcribed."
+        case .casual:
+            return "Fast cleanup for natural messages: fillers, capitalization, punctuation, and sentence boundaries."
+        case .formatted:
+            return "Uses Apple’s on-device model to organize your words into clear, readable text without changing your tone."
+        case .professional:
+            return "Produces concise, polished communication with stronger wording and organization while preserving your meaning."
+        case .aiCommunication:
+            return "Structures goals, context, requirements, and constraints for clear communication with AI agents."
         }
     }
 

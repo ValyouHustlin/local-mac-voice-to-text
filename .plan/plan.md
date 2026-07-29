@@ -228,7 +228,7 @@ checks and the real affected flow.
 
 ### Flow feedback and app-aware formatting checkpoint
 
-Status: complete for the first vertical slice.
+Status: complete for the second vertical slice.
 
 - [x] Add restrained local start, stop, and cancel tones with a Settings toggle.
 - [x] Replace the passive six-bar indicator with an expressive eleven-bar
@@ -236,18 +236,23 @@ Status: complete for the first vertical slice.
 - [x] Keep the overlay on the display containing the pointer.
 - [x] Add an accessible X that discards capture/transcription before insertion.
 - [x] Reset tap-toggle routing on cancellation so the next tap starts normally.
-- [x] Add Automatic, Polished, AI prompt, and Verbatim writing profiles.
-- [x] Route Ghostty, terminals, development tools, and AI apps to AI-prompt
-  formatting in Automatic mode.
-- [x] Verify the same automatic profile across Apple Terminal, iTerm2, Warp,
-  Ghostty, and VS Code; keep the prompt category-based rather than app-specific.
+- [x] Replace inferred Automatic behavior with four explicit choices: Casual,
+  Formatted, Professional, and AI Communication.
+- [x] Keep the profiles application-neutral so Terminal, Ghostty, coding tools,
+  browsers, native apps, and Electron apps receive the same selected behavior.
 - [x] Use Apple's on-device system language model when available, with safe
-  output bounds, a four-second deadline, and deterministic local fallback.
+  output bounds, an eight-second deadline, one conservative retry, and
+  deterministic local fallback.
+- [x] Reject rewrites that change speaker perspective, actor/recipient roles,
+  modality, uncertainty, technical tokens, numbers, or negated constraints.
+- [x] Give multi-requirement AI Communication output deterministic bullet
+  structure when the local model returns a flat paragraph.
 - [x] Keep surrounding application text out of the formatter.
 - [x] Keep formatting instructions, user vocabulary, audio, and transcript
   content on-device with no cloud fallback.
 
-Receipt: `docs/verification/2026-07-28-flow-formatting.md`.
+Receipts: `docs/verification/2026-07-28-flow-formatting.md` and
+`docs/verification/2026-07-29-writing-modes.md`.
 
 ### Decode-time vocabulary checkpoint
 

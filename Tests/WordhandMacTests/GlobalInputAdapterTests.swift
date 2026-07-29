@@ -153,6 +153,65 @@ struct GlobalInputAdapterTests {
             ) == nil
         )
     }
+
+    @Test
+    func writingStylesUseDistinctLocalRewriteInstructions() async {
+        let rewriter = RecordingLocalTranscriptRewriter(
+            responses: [
+                "Formatted Valyou request with 3 requirements.",
+                "Professional Valyou request with 3 requirements.",
+                "AI-ready Valyou request with 3 requirements.",
+            ]
+        )
+        let processor = AppAwareTranscriptProcessor(
+            dictionaryProcessor: MutableTranscriptProcessor(),
+            profile: .formatted,
+            rewriter: rewriter
+        )
+        let original = "Valyou request with 3 requirements"
+        let target = TranscriptTarget(
+            bundleIdentifier: "com.apple.Terminal",
+            applicationName: "Terminal"
+        )
+
+        let formatted = await processor.process(original, target: target)
+        processor.update(profile: .professional)
+        let professional = await processor.process(original, target: target)
+        processor.update(profile: .aiCommunication)
+        let aiCommunication = await processor.process(original, target: target)
+        let calls = await rewriter.recordedCalls()
+
+        #expect(formatted == "Formatted Valyou request with 3 requirements.")
+        #expect(professional == "Professional Valyou request with 3 requirements.")
+        #expect(aiCommunication == "AI-ready Valyou request with 3 requirements.")
+        #expect(calls.count == 3)
+        #expect(calls[0].instructions.contains("natural tone"))
+        #expect(calls[1].instructions.contains("professional communication"))
+        #expect(calls[2].instructions.contains("excellent input for an AI agent"))
+        #expect(calls.allSatisfy { $0.instructions.contains("Never answer") })
+        #expect(calls.allSatisfy { $0.instructions.contains("who must act") })
+        #expect(calls.allSatisfy { $0.instructions.contains("modality") })
+        #expect(calls.allSatisfy { $0.timeoutSeconds == 8 })
+    }
+
+    @Test
+    func unsafeProfessionalRewriteFallsBackWithoutDroppingConstraints() async {
+        let rewriter = RecordingLocalTranscriptRewriter(
+            responses: ["Ship it.", "Ship it."]
+        )
+        let processor = AppAwareTranscriptProcessor(
+            dictionaryProcessor: MutableTranscriptProcessor(),
+            profile: .professional,
+            rewriter: rewriter
+        )
+
+        let output = await processor.process(
+            "Do not remove API v2 or the 30-day rollback",
+            target: .unknown
+        )
+
+        #expect(output == "Do not remove API v2 or the 30-day rollback.")
+    }
 }
 
 private final class FakeHotkeyTapController: HotkeyTapControlling {
@@ -194,6 +253,41 @@ private final class FakeTextEventPoster: TextEventPosting, @unchecked Sendable {
         lock.withLock {
             pasteShortcutCount += 1
         }
+    }
+}
+
+private actor RecordingLocalTranscriptRewriter: LocalTranscriptRewriting {
+    struct Call: Sendable {
+        var text: String
+        var instructions: String
+        var maximumResponseTokens: Int
+        var timeoutSeconds: UInt64
+    }
+
+    private var responses: [String]
+    private var calls: [Call] = []
+
+    init(responses: [String]) {
+        self.responses = responses
+    }
+
+    func rewrite(
+        _ text: String,
+        instructions: String,
+        maximumResponseTokens: Int,
+        timeoutSeconds: UInt64
+    ) async throws -> String {
+        calls.append(Call(
+            text: text,
+            instructions: instructions,
+            maximumResponseTokens: maximumResponseTokens,
+            timeoutSeconds: timeoutSeconds
+        ))
+        return responses.removeFirst()
+    }
+
+    func recordedCalls() -> [Call] {
+        calls
     }
 }
 

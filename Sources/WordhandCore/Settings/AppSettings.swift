@@ -120,7 +120,7 @@ public struct AppSettings: Codable, Equatable, Sendable {
         insertionMode: InsertionMode = .paste,
         showOverlay: Bool = true,
         soundEffectsEnabled: Bool = true,
-        formattingProfile: TranscriptFormattingProfile = .automatic,
+        formattingProfile: TranscriptFormattingProfile = .formatted,
         historyRetentionDays: Int = 30,
         hotkeys: [HotkeyBinding] = [
             HotkeyBinding(key: "space", modifiers: ["control"], action: .pushToTalk),
@@ -160,7 +160,7 @@ public struct AppSettings: Codable, Equatable, Sendable {
         formattingProfile = try container.decodeIfPresent(
             TranscriptFormattingProfile.self,
             forKey: .formattingProfile
-        ) ?? .automatic
+        ) ?? .formatted
         historyRetentionDays = try container.decode(Int.self, forKey: .historyRetentionDays)
         hotkeys = try container.decode([HotkeyBinding].self, forKey: .hotkeys)
     }

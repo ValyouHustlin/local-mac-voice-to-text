@@ -84,7 +84,7 @@ struct SettingsTests {
         var expected = AppSettings()
         expected.showOverlay = false
         expected.soundEffectsEnabled = false
-        expected.formattingProfile = .aiPrompt
+        expected.formattingProfile = .aiCommunication
         expected.insertionMode = .unicode
 
         try store.save(expected)
@@ -134,7 +134,7 @@ struct SettingsTests {
         #expect(settings.hotkeys.first?.keyCode == 49)
         #expect(settings.hotkeys.first?.displayName == "⌃Space")
         #expect(settings.soundEffectsEnabled)
-        #expect(settings.formattingProfile == .automatic)
+        #expect(settings.formattingProfile == .formatted)
     }
 
     @Test
