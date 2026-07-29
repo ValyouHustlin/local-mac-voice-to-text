@@ -61,6 +61,7 @@ public final class DictationCoordinator {
     public var onCapture: (([Float]) -> Void)?
     public var onTranscript: ((String, TimeInterval) -> Void)?
     public var onProcessingDuration: ((TimeInterval) -> Void)?
+    public var onStreamingFinalizationDuration: ((TimeInterval) -> Void)?
     public var onHistoryChange: (() -> Void)?
     public var onRecordingLimitReached: (() -> Void)?
 
@@ -70,6 +71,7 @@ public final class DictationCoordinator {
     private let inserter: TextInserting
     private let history: TranscriptRecording?
     private var insertionMode: InsertionMode
+    private var streamingEnabled: Bool
     private let language: String?
     private let audioSampleRate: Double
     private let currentTarget: () -> TranscriptTarget
@@ -80,6 +82,10 @@ public final class DictationCoordinator {
     private var activeOperationID: UUID?
     private var isCaptureStopping = false
     private var recordingLimitTask: Task<Void, Never>?
+    private var activeStreamingCapture: (any StreamingAudioCapturing)?
+    private var activeStreamingTranscriber: (any StreamingTranscribing)?
+    private var streamingAudioContinuation: AsyncStream<[Float]>.Continuation?
+    private var streamingForwardingTask: Task<Void, Never>?
 
     public init(
         capture: AudioCapturing,
@@ -88,6 +94,7 @@ public final class DictationCoordinator {
         inserter: TextInserting,
         history: TranscriptRecording? = nil,
         insertionMode: InsertionMode = .unicode,
+        streamingEnabled: Bool = false,
         language: String? = nil,
         audioSampleRate: Double = 16_000,
         currentTarget: @escaping () -> TranscriptTarget = { .unknown },
@@ -104,6 +111,7 @@ public final class DictationCoordinator {
         self.inserter = inserter
         self.history = history
         self.insertionMode = insertionMode
+        self.streamingEnabled = streamingEnabled
         self.language = language
         self.audioSampleRate = audioSampleRate
         self.currentTarget = currentTarget
@@ -121,11 +129,34 @@ public final class DictationCoordinator {
             }
             guard state == .idle else { return }
             do {
+                if streamingEnabled,
+                   let streamingCapture = capture as? any StreamingAudioCapturing,
+                   let streamingTranscriber = transcriber as? any StreamingTranscribing
+                {
+                    await streamingTranscriber.beginStreaming(
+                        configuration: StreamingTranscriptionConfiguration()
+                    )
+                    let audioStream = AsyncStream<[Float]>.makeStream(
+                        bufferingPolicy: .unbounded
+                    )
+                    streamingAudioContinuation = audioStream.continuation
+                    streamingForwardingTask = Task {
+                        for await samples in audioStream.stream {
+                            await streamingTranscriber.appendStreamingAudio(samples)
+                        }
+                    }
+                    streamingCapture.setStreamingChunkHandler { samples in
+                        audioStream.continuation.yield(samples)
+                    }
+                    activeStreamingCapture = streamingCapture
+                    activeStreamingTranscriber = streamingTranscriber
+                }
                 try capture.start()
                 activeOperationID = UUID()
                 state = .recording
                 scheduleRecordingLimit()
             } catch {
+                await stopActiveStreaming()
                 state = .failed(.capture(String(describing: error)))
             }
 
@@ -137,6 +168,7 @@ public final class DictationCoordinator {
             isCaptureStopping = true
             let samples = await capture.stop()
             isCaptureStopping = false
+            await finishStreamingAudioForwarding()
             guard activeOperationID == operationID else {
                 if activeOperationID == nil {
                     state = .idle
@@ -145,6 +177,8 @@ public final class DictationCoordinator {
             }
             onCapture?(samples)
             guard !samples.isEmpty else {
+                await activeStreamingTranscriber?.cancelStreaming()
+                activeStreamingTranscriber = nil
                 activeOperationID = nil
                 state = .idle
                 return
@@ -152,17 +186,34 @@ public final class DictationCoordinator {
 
             let transcriptionStarted = now()
             let raw: String
+            let transcriptionElapsed: TimeInterval
             do {
-                raw = try await transcriber.transcribe(samples)
+                if let streamingTranscriber = activeStreamingTranscriber {
+                    do {
+                        let result = try await streamingTranscriber.finishStreaming(
+                            finalAudio: samples
+                        )
+                        raw = result.text
+                        transcriptionElapsed = result.totalInferenceDuration
+                        onStreamingFinalizationDuration?(result.finalizationDuration)
+                    } catch {
+                        raw = try await transcriber.transcribe(samples)
+                        transcriptionElapsed = now() - transcriptionStarted
+                    }
+                    activeStreamingTranscriber = nil
+                } else {
+                    raw = try await transcriber.transcribe(samples)
+                    transcriptionElapsed = now() - transcriptionStarted
+                }
             } catch {
                 guard activeOperationID == operationID else { return }
+                await stopActiveStreaming()
                 activeOperationID = nil
                 state = .failed(.transcription(String(describing: error)))
                 return
             }
             guard activeOperationID == operationID else { return }
 
-            let transcriptionElapsed = now() - transcriptionStarted
             state = .processing
             let target = currentTarget()
             let processingStarted = now()
@@ -235,10 +286,12 @@ public final class DictationCoordinator {
         case .recording:
             cancelRecordingLimit()
             activeOperationID = nil
+            await stopActiveStreaming()
             _ = await capture.stop()
             state = .idle
         case .transcribing, .processing:
             activeOperationID = nil
+            await stopActiveStreaming()
             if !isCaptureStopping {
                 if state == .transcribing {
                     await transcriber.cancel()
@@ -257,6 +310,10 @@ public final class DictationCoordinator {
 
     public func updateInsertionMode(_ insertionMode: InsertionMode) {
         self.insertionMode = insertionMode
+    }
+
+    public func updateStreamingEnabled(_ enabled: Bool) {
+        streamingEnabled = enabled
     }
 
     private func scheduleRecordingLimit() {
@@ -280,5 +337,22 @@ public final class DictationCoordinator {
     private func cancelRecordingLimit() {
         recordingLimitTask?.cancel()
         recordingLimitTask = nil
+    }
+
+    private func stopActiveStreaming() async {
+        await finishStreamingAudioForwarding()
+        await activeStreamingTranscriber?.cancelStreaming()
+        activeStreamingTranscriber = nil
+    }
+
+    private func finishStreamingAudioForwarding() async {
+        activeStreamingCapture?.setStreamingChunkHandler(nil)
+        activeStreamingCapture = nil
+        streamingAudioContinuation?.finish()
+        streamingAudioContinuation = nil
+        if let streamingForwardingTask {
+            await streamingForwardingTask.value
+        }
+        streamingForwardingTask = nil
     }
 }

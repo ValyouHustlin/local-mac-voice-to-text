@@ -47,6 +47,127 @@ struct DictationCoordinatorTests {
     }
 
     @Test
+    func maximumPerformanceUsesStreamingResultInsteadOfBatchingAtRelease() async {
+        let capture = FakeStreamingCapture(
+            samples: [0.1, 0.2, 0.3],
+            chunks: [[0.1], [0.2, 0.3]]
+        )
+        let transcriber = FakeStreamingTranscriber(
+            streamingResult: StreamingTranscriptionResult(
+                text: "already streamed",
+                totalInferenceDuration: 1.5,
+                finalizationDuration: 0.25
+            )
+        )
+        let inserter = FakeInserter()
+        let coordinator = DictationCoordinator(
+            capture: capture,
+            transcriber: transcriber,
+            processor: TranscriptProcessor(),
+            inserter: inserter,
+            streamingEnabled: true
+        )
+        var finalizationDuration: TimeInterval?
+        coordinator.onStreamingFinalizationDuration = {
+            finalizationDuration = $0
+        }
+
+        await coordinator.handle(.pressed)
+        await Task.yield()
+        await coordinator.handle(.released)
+
+        #expect(inserter.insertions == ["already streamed"])
+        #expect(await transcriber.beginCount == 1)
+        #expect(await transcriber.appendedSamples == [[0.1], [0.2, 0.3]])
+        #expect(await transcriber.finishCount == 1)
+        #expect(await transcriber.batchCount == 0)
+        #expect(finalizationDuration == 0.25)
+        #expect(!capture.hasStreamingHandler)
+    }
+
+    @Test
+    func adaptivePerformanceKeepsTheSingleBatchPath() async {
+        let capture = FakeStreamingCapture(
+            samples: [0.1, 0.2],
+            chunks: [[0.1], [0.2]]
+        )
+        let transcriber = FakeStreamingTranscriber(
+            streamingResult: StreamingTranscriptionResult(
+                text: "unused stream",
+                totalInferenceDuration: 1,
+                finalizationDuration: 0.1
+            ),
+            batchResult: "adaptive batch"
+        )
+        let inserter = FakeInserter()
+        let coordinator = DictationCoordinator(
+            capture: capture,
+            transcriber: transcriber,
+            processor: TranscriptProcessor(),
+            inserter: inserter
+        )
+
+        await coordinator.handle(.pressed)
+        await coordinator.handle(.released)
+
+        #expect(inserter.insertions == ["adaptive batch"])
+        #expect(await transcriber.beginCount == 0)
+        #expect(await transcriber.finishCount == 0)
+        #expect(await transcriber.batchCount == 1)
+        #expect(!capture.hasStreamingHandler)
+    }
+
+    @Test
+    func streamingFailureFallsBackToTheCompleteCapturedBuffer() async {
+        let capture = FakeStreamingCapture(samples: [0.1, 0.2], chunks: [[0.1]])
+        let transcriber = FakeStreamingTranscriber(
+            streamingResult: nil,
+            batchResult: "safe batch fallback"
+        )
+        let inserter = FakeInserter()
+        let coordinator = DictationCoordinator(
+            capture: capture,
+            transcriber: transcriber,
+            processor: TranscriptProcessor(),
+            inserter: inserter,
+            streamingEnabled: true
+        )
+
+        await coordinator.handle(.pressed)
+        await coordinator.handle(.released)
+
+        #expect(inserter.insertions == ["safe batch fallback"])
+        #expect(await transcriber.finishCount == 1)
+        #expect(await transcriber.batchCount == 1)
+    }
+
+    @Test
+    func cancellationStopsStreamingAndClearsTheChunkHandler() async {
+        let capture = FakeStreamingCapture(samples: [0.1], chunks: [])
+        let transcriber = FakeStreamingTranscriber(
+            streamingResult: StreamingTranscriptionResult(
+                text: "unused",
+                totalInferenceDuration: 0,
+                finalizationDuration: 0
+            )
+        )
+        let coordinator = DictationCoordinator(
+            capture: capture,
+            transcriber: transcriber,
+            processor: TranscriptProcessor(),
+            inserter: FakeInserter(),
+            streamingEnabled: true
+        )
+
+        await coordinator.handle(.pressed)
+        await coordinator.cancelCurrent()
+
+        #expect(await transcriber.cancelStreamingCount == 1)
+        #expect(!capture.hasStreamingHandler)
+        #expect(coordinator.state == .idle)
+    }
+
+    @Test
     func ignoresSecondPressWhileRecording() async {
         let capture = FakeCapture(samples: [0.1])
         let coordinator = DictationCoordinator(
@@ -313,6 +434,91 @@ private final class FakeCapture: AudioCapturing {
     func stop() async -> [Float] {
         stopCount += 1
         return samples
+    }
+}
+
+private final class FakeStreamingCapture: StreamingAudioCapturing, @unchecked Sendable {
+    private let samples: [Float]
+    private let chunks: [[Float]]
+    private let lock = NSLock()
+    private var handler: (@Sendable ([Float]) -> Void)?
+
+    init(samples: [Float], chunks: [[Float]]) {
+        self.samples = samples
+        self.chunks = chunks
+    }
+
+    var hasStreamingHandler: Bool {
+        lock.withLock { handler != nil }
+    }
+
+    func setStreamingChunkHandler(
+        _ handler: (@Sendable ([Float]) -> Void)?
+    ) {
+        lock.withLock {
+            self.handler = handler
+        }
+    }
+
+    func start() throws {
+        let callback = lock.withLock { handler }
+        for chunk in chunks {
+            callback?(chunk)
+        }
+    }
+
+    func stop() async -> [Float] {
+        samples
+    }
+}
+
+private actor FakeStreamingTranscriber: StreamingTranscribing {
+    nonisolated let modelID = "fake-streaming"
+    private let streamingResult: StreamingTranscriptionResult?
+    private let batchResult: String
+    private(set) var beginCount = 0
+    private(set) var appendedSamples: [[Float]] = []
+    private(set) var finishCount = 0
+    private(set) var batchCount = 0
+    private(set) var cancelStreamingCount = 0
+
+    init(
+        streamingResult: StreamingTranscriptionResult?,
+        batchResult: String = "batch"
+    ) {
+        self.streamingResult = streamingResult
+        self.batchResult = batchResult
+    }
+
+    func warmUp() async throws {}
+
+    func transcribe(_ audio: [Float]) async throws -> String {
+        batchCount += 1
+        return batchResult
+    }
+
+    func beginStreaming(
+        configuration: StreamingTranscriptionConfiguration
+    ) {
+        beginCount += 1
+    }
+
+    func appendStreamingAudio(_ samples: [Float]) {
+        appendedSamples.append(samples)
+    }
+
+    func finishStreaming(
+        finalAudio: [Float]
+    ) throws -> StreamingTranscriptionResult {
+        finishCount += 1
+        guard let streamingResult else {
+            throw FakeError.failure
+        }
+        return streamingResult
+    }
+
+    func cancelStreaming() {
+        cancelStreamingCount += 1
     }
 }
 

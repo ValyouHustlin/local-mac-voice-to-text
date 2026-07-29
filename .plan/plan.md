@@ -219,16 +219,16 @@ checkpoint is implemented and live-verified.
 Current ranking:
 
 1. [x] conservative auto-formatting and filler-word cleanup;
-2. onboarding and model-download recovery; permission repair now distinguishes
+2. [x] explicit spoken self-corrections plus an accuracy-first Maximum
+   Performance mode with rolling transcription and formatter prewarming;
+3. onboarding and model-download recovery; permission repair now distinguishes
    Microphone, Input Monitoring, and Accessibility, while the broader
    fresh-account onboarding flow remains;
-3. [x] first app-aware AI/coding profile; prose, chat, and code-comment
+4. [x] first app-aware AI/coding profile; prose, chat, and code-comment
    specialization remains;
-4. undo/revert of the last insertion if not completed in P4;
-5. text snippets and explicit voice commands;
-6. multilingual selection and language auto-detect;
-7. streaming or partial results where measurements show perceived latency needs
-   it.
+5. undo/revert of the last insertion if not completed in P4;
+6. text snippets and explicit voice commands;
+7. multilingual selection and language auto-detect.
 
 Why this order: formatting and recovery affect nearly every dictation. App-aware
 output and editing commands save repeated cleanup. Multilingual and streaming
@@ -341,8 +341,9 @@ Receipt: `docs/verification/2026-07-28-global-input-safety.md`.
 
 ### Accuracy and latency checkpoint
 
-Status: complete for the model/capture upgrade; continue measuring Aaron's own
-speech.
+Status: complete for the model/capture upgrade. Maximum-mode rolling
+transcription is implemented and isolated-test verified; its attended
+microphone latency receipt remains open.
 
 - [x] Make optimized Whisper Large v3 (626 MB) the accuracy-first default.
 - [x] Add a repeatable same-audio model benchmark command.
@@ -350,12 +351,43 @@ speech.
 - [x] Reduce microphone tap size from 4096 to 1024 frames.
 - [x] Retain an 80 ms capture tail after shortcut release.
 - [x] Benchmark Base and Large v3 on the same 11.00-second fixture.
-- Keep speculative/partial transcription off by default until Aaron's
-  post-release measurements justify a second pipeline or a streaming
-  architecture. The measured final pass is currently 0.76–1.06 seconds; a
-  naive concurrent preview could delay the authoritative transcript.
+- [x] Keep Adaptive as the public default single-batch path.
+- [x] Add a user-selected Maximum mode that prewarms the local formatter and
+  incrementally decodes ordered audio chunks every two seconds.
+- [x] Stabilize successive rolling results while keeping the last two segments
+  revisable for corrections.
+- [x] Bound the working decode window at 20 seconds and retain the complete
+  capture as a no-data-loss fallback.
+- [ ] Measure stop-to-insertion latency for short and four-minute natural
+  dictation after Aaron is available for attended microphone verification.
 
-Receipt: `docs/verification/2026-07-28-accuracy-paste.md`.
+Receipts: `docs/verification/2026-07-28-accuracy-paste.md` and
+`docs/verification/2026-07-29-corrections-streaming.md`.
+
+### Spoken corrections and Maximum Performance checkpoint
+
+Status: implementation and offline verification complete. The installed app
+was intentionally not replaced or restarted while Aaron was working.
+
+- [x] Resolve explicit `wait, no`, `I meant`, `make that`, `correction`,
+  `scratch that`, and `start over` repairs before formatting.
+- [x] Remove safe immediate false starts without deleting meaningful
+  repetition.
+- [x] Preserve semantic `no` and ordinary `I meant` statements.
+- [x] Keep Whisper Large v3 as the accuracy-first model.
+- [x] Add Adaptive and Maximum performance settings with backward-compatible
+  persistence and live runtime updates.
+- [x] Prewarm the on-device formatter at startup and recording start in
+  Maximum mode, with a bounded prepared-session cache.
+- [x] Feed captured audio through one ordered stream and prevent release from
+  racing another preview decode.
+- [x] Use the complete captured buffer if streaming fails.
+- [x] Exercise the correction path through the real offline CLI formatter and
+  pass the complete 107-test suite, release build, and Thread Sanitizer suite.
+- [ ] Install the new bundle, select Maximum, and record attended short and
+  long natural-voice receipts without interrupting active work.
+
+Receipt: `docs/verification/2026-07-29-corrections-streaming.md`.
 
 ## P7: ship quality
 

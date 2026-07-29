@@ -229,6 +229,7 @@ struct Run: ParsableCommand {
                 inserter: inserter,
                 history: historyStore,
                 insertionMode: settings.insertionMode,
+                streamingEnabled: settings.performanceMode == .maximum,
                 language: chosenModel.languages.first,
                 audioSampleRate: AudioCapture.targetSampleRate,
                 currentTarget: currentTranscriptTarget
@@ -253,6 +254,7 @@ struct Run: ParsableCommand {
             settingsController.onSettingsChange = { updated in
                 monitor.updateBindings(updated.hotkeys)
                 coordinator.updateInsertionMode(updated.insertionMode)
+                coordinator.updateStreamingEnabled(updated.performanceMode == .maximum)
                 processor.update(
                     profile: updated.formattingProfile,
                     performanceMode: updated.performanceMode
@@ -373,6 +375,11 @@ struct Run: ParsableCommand {
             coordinator.onProcessingDuration = { elapsed in
                 FileHandle.standardError.write(Data(
                     String(format: "  local formatting %.2fs\n", elapsed).utf8
+                ))
+            }
+            coordinator.onStreamingFinalizationDuration = { elapsed in
+                FileHandle.standardError.write(Data(
+                    String(format: "  streaming finalization %.2fs\n", elapsed).utf8
                 ))
             }
             coordinator.onRecordingLimitReached = {

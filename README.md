@@ -32,6 +32,8 @@ and inserts the result into ordinary Mac apps.
 | **A real Mac app** | Wordhand lives in both the menu bar and Dock. Clicking its Dock icon opens Settings; history and dictionary are one click away. |
 | **Ready after login** | The installed app can register as a native macOS login item. Its interface and shortcut become available immediately while the selected speech model warms in the background. |
 | **Accuracy-first local model** | Optimized Whisper Large v3 is the default on capable Macs. Balanced and smaller Whisper models remain selectable. |
+| **Natural self-corrections** | Say “wait, no,” “I meant,” “make that,” or “scratch that.” Wordhand removes the abandoned wording locally before formatting. |
+| **Maximum Performance preview** | On high-end Apple silicon, opt into formatter prewarming and rolling local transcription while you speak. Adaptive remains the efficient default; attended latency verification is still open. |
 | **Reliable insertion** | Paste-first insertion works across native, browser, and Electron targets while restoring the previous rich clipboard. Direct typing and copy-only modes are available. |
 | **Flow-focused feedback** | Quiet start/stop tones, an expressive live waveform, a display-following recording control, and one-click cancellation keep dictation legible without demanding attention. |
 | **Four writing styles** | Choose Casual, Formatted, Professional, or AI Communication. The three richer modes use Apple’s on-device model with meaning-preservation checks and safe local fallback. |
@@ -157,7 +159,7 @@ dedicated to the test. The immediate kill command is
 ## Roadmap
 
 The next daily-use slices are immediate undo/revert, fresh-account onboarding,
-and a signed release path. See
+an attended Maximum Performance latency pass, and a signed release path. See
 [the product roadmap](.plan/plan.md) and
 [architecture](docs/architecture.md).
 

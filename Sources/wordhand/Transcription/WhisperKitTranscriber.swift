@@ -2,13 +2,24 @@ import Foundation
 import WordhandCore
 import WhisperKit
 
-actor WhisperKitTranscriber: Transcribing {
+actor WhisperKitTranscriber: Transcribing, StreamingTranscribing {
     let modelID: String
     private let model: TranscriptionModel
     private let vocabulary: DictionaryVocabularySource
     private var pipeline: WhisperKit?
     private var warmupTask: Task<Void, Error>?
     private var cancellationToken: TranscriptionCancellationToken?
+    private var streamingSessionID: UUID?
+    private var streamingConfiguration = StreamingTranscriptionConfiguration()
+    private var streamingAudio: [Float] = []
+    private var streamingStartSample = 0
+    private var streamingLastDecodeSample = 0
+    private var streamingCommittedText: [String] = []
+    private var streamingInferenceDuration: TimeInterval = 0
+    private var streamingStabilizer = StreamingTranscriptStabilizer()
+    private var streamingDecodeTask: Task<Void, Never>?
+    private var streamingFailure: Error?
+    private var streamingIsFinishing = false
 
     init(
         model: TranscriptionModel,
@@ -92,33 +103,243 @@ actor WhisperKitTranscriber: Transcribing {
                 cancellationToken = nil
             }
         }
-        let decodingOptions: DecodingOptions?
-        if let prompt = vocabulary.prompt(),
-           let tokenizer = pipeline.tokenizer
-        {
-            // Whisper tokenizers add special tokens by default. Prompt
-            // conditioning accepts only ordinary text tokens and, like
-            // WhisperKit's own CLI, needs a leading space for word boundaries.
-            let promptTokens = tokenizer
-                .encode(text: " " + prompt.trimmingCharacters(in: .whitespaces))
-                .filter { $0 < tokenizer.specialTokens.specialTokenBegin }
-            decodingOptions = promptTokens.isEmpty
-                ? nil
-                : DecodingOptions(promptTokens: promptTokens)
-        } else {
-            decodingOptions = nil
-        }
-
         let results = try await pipeline.transcribe(
             audioArray: audio,
-            decodeOptions: decodingOptions,
+            decodeOptions: decodingOptions(for: pipeline),
             callback: { _ in token.isCancelled ? false : nil }
         )
         return results.map(\.text).joined(separator: " ")
     }
 
+    func beginStreaming(
+        configuration: StreamingTranscriptionConfiguration
+    ) async {
+        await resetStreamingState(cancelTask: true)
+        streamingSessionID = UUID()
+        streamingConfiguration = configuration
+        streamingStabilizer = StreamingTranscriptStabilizer(
+            correctionHorizonSegments: configuration.correctionHorizonSegments
+        )
+    }
+
+    func appendStreamingAudio(_ samples: [Float]) async {
+        guard streamingSessionID != nil, !samples.isEmpty else { return }
+        streamingAudio.append(contentsOf: samples)
+        scheduleStreamingDecodeIfNeeded()
+    }
+
+    func finishStreaming(
+        finalAudio: [Float]
+    ) async throws -> StreamingTranscriptionResult {
+        let finalizationStarted = ProcessInfo.processInfo.systemUptime
+        streamingIsFinishing = true
+        defer { clearStreamingState() }
+        if let task = streamingDecodeTask {
+            await task.value
+        }
+        streamingDecodeTask = nil
+        streamingAudio = finalAudio
+
+        let remainingStart = min(streamingStartSample, finalAudio.count)
+        let remaining = Array(finalAudio[remainingStart...])
+        var finalText = ""
+        if streamingFailure == nil, !remaining.isEmpty {
+            let decodeStarted = ProcessInfo.processInfo.systemUptime
+            do {
+                finalText = try await transcribeWindow(remaining).text
+            } catch {
+                streamingFailure = error
+            }
+            streamingInferenceDuration +=
+                ProcessInfo.processInfo.systemUptime - decodeStarted
+        }
+
+        if streamingFailure != nil {
+            let decodeStarted = ProcessInfo.processInfo.systemUptime
+            finalText = try await transcribe(finalAudio)
+            streamingInferenceDuration +=
+                ProcessInfo.processInfo.systemUptime - decodeStarted
+            streamingCommittedText = []
+        }
+
+        let text = (streamingCommittedText + [finalText])
+            .filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+            .joined(separator: " ")
+            .replacingOccurrences(
+                of: #"\s+"#,
+                with: " ",
+                options: .regularExpression
+            )
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let result = StreamingTranscriptionResult(
+            text: text,
+            totalInferenceDuration: streamingInferenceDuration,
+            finalizationDuration:
+                ProcessInfo.processInfo.systemUptime - finalizationStarted
+        )
+        return result
+    }
+
+    func cancelStreaming() async {
+        await resetStreamingState(cancelTask: true)
+    }
+
     func cancel() {
         cancellationToken?.cancel()
+    }
+
+    private func scheduleStreamingDecodeIfNeeded() {
+        guard
+            let sessionID = streamingSessionID,
+            streamingDecodeTask == nil,
+            streamingFailure == nil,
+            !streamingIsFinishing
+        else {
+            return
+        }
+        let intervalSamples = Int(
+            streamingConfiguration.decodeIntervalSeconds * Double(WhisperKit.sampleRate)
+        )
+        guard streamingAudio.count - streamingLastDecodeSample >= intervalSamples else {
+            return
+        }
+        streamingDecodeTask = Task.detached(priority: .userInitiated) { [weak self] in
+            await self?.decodeStreamingWindow(sessionID: sessionID)
+        }
+    }
+
+    private func decodeStreamingWindow(sessionID: UUID) async {
+        guard
+            streamingSessionID == sessionID,
+            streamingFailure == nil
+        else {
+            streamingDecodeTask = nil
+            return
+        }
+        let maximumWindowSamples = Int(
+            streamingConfiguration.maximumWindowSeconds * Double(WhisperKit.sampleRate)
+        )
+        let windowEnd = min(
+            streamingAudio.count,
+            streamingStartSample + maximumWindowSamples
+        )
+        guard windowEnd > streamingStartSample else {
+            streamingDecodeTask = nil
+            return
+        }
+        streamingLastDecodeSample = windowEnd
+        let window = Array(streamingAudio[streamingStartSample..<windowEnd])
+        let decodeStarted = ProcessInfo.processInfo.systemUptime
+
+        do {
+            let transcription = try await transcribeWindow(window)
+            streamingInferenceDuration +=
+                ProcessInfo.processInfo.systemUptime - decodeStarted
+            guard streamingSessionID == sessionID else {
+                streamingDecodeTask = nil
+                return
+            }
+            let segments = transcription.segments.map {
+                StreamingTranscriptSegment(
+                    text: $0.text,
+                    startSeconds: Double($0.start),
+                    endSeconds: Double($0.end)
+                )
+            }
+            let update = streamingStabilizer.observe(segments)
+            let reachedWindowLimit = window.count >= maximumWindowSamples
+            let confirmed = !update.newlyConfirmed.isEmpty
+                ? update.newlyConfirmed
+                : (reachedWindowLimit ? update.agreed : [])
+            if let last = confirmed.last {
+                let text = confirmed
+                    .map(\.text)
+                    .joined(separator: " ")
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                if !text.isEmpty {
+                    streamingCommittedText.append(text)
+                }
+                let confirmedSamples = max(
+                    1,
+                    Int(last.endSeconds * Double(WhisperKit.sampleRate))
+                )
+                streamingStartSample = min(
+                    windowEnd,
+                    streamingStartSample + confirmedSamples
+                )
+                streamingStabilizer.reset()
+            }
+        } catch {
+            streamingInferenceDuration +=
+                ProcessInfo.processInfo.systemUptime - decodeStarted
+            streamingFailure = error
+        }
+
+        streamingDecodeTask = nil
+        scheduleStreamingDecodeIfNeeded()
+    }
+
+    private struct WindowTranscription {
+        var text: String
+        var segments: [TranscriptionSegment]
+    }
+
+    private func transcribeWindow(
+        _ audio: [Float]
+    ) async throws -> WindowTranscription {
+        if pipeline == nil { try await warmUp() }
+        guard let pipeline else { throw TranscriberError.notLoaded }
+        let results = try await pipeline.transcribe(
+            audioArray: audio,
+            decodeOptions: decodingOptions(for: pipeline),
+            callback: { _ in Task.isCancelled ? false : nil }
+        )
+        return WindowTranscription(
+            text: results.map(\.text).joined(separator: " "),
+            segments: results.flatMap(\.segments)
+        )
+    }
+
+    private func decodingOptions(for pipeline: WhisperKit) -> DecodingOptions? {
+        guard
+            let prompt = vocabulary.prompt(),
+            let tokenizer = pipeline.tokenizer
+        else {
+            return nil
+        }
+        // Whisper tokenizers add special tokens by default. Prompt
+        // conditioning accepts only ordinary text tokens and, like
+        // WhisperKit's own CLI, needs a leading space for word boundaries.
+        let promptTokens = tokenizer
+            .encode(text: " " + prompt.trimmingCharacters(in: .whitespaces))
+            .filter { $0 < tokenizer.specialTokens.specialTokenBegin }
+        return promptTokens.isEmpty
+            ? nil
+            : DecodingOptions(promptTokens: promptTokens)
+    }
+
+    private func resetStreamingState(cancelTask: Bool) async {
+        streamingIsFinishing = true
+        if cancelTask {
+            streamingDecodeTask?.cancel()
+            if let task = streamingDecodeTask {
+                await task.value
+            }
+        }
+        clearStreamingState()
+    }
+
+    private func clearStreamingState() {
+        streamingDecodeTask = nil
+        streamingSessionID = nil
+        streamingAudio = []
+        streamingStartSample = 0
+        streamingLastDecodeSample = 0
+        streamingCommittedText = []
+        streamingInferenceDuration = 0
+        streamingFailure = nil
+        streamingIsFinishing = false
+        streamingStabilizer.reset()
     }
 }
 

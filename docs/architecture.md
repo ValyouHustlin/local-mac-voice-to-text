@@ -120,6 +120,11 @@ Verified by source inspection and dated receipts on 2026-07-28:
 - four explicit writing profiles: Casual, Formatted, Professional, and AI
   Communication; richer profiles use Apple's on-device system language model
   and fall back to deterministic cleanup when unavailable;
+- deterministic spoken-repair handling for explicit phrases such as
+  `wait, no`, `I meant`, `make that`, and `scratch that`, while preserving
+  ordinary semantic uses of `no` and `I meant`;
+- Adaptive and Maximum processing modes; Maximum keeps the local formatter
+  prepared and incrementally transcribes ordered audio chunks while recording;
 - duplicate-process prevention, a 10-minute recording safety stop, active
   Whisper cancellation, and rewrite validation that rejects dropped numbers,
   technical tokens, or negated constraints;
@@ -147,7 +152,7 @@ receipts may promote latency or compatibility claims.
 
 P0 ground truth and P1 foundation are complete as of 2026-07-28. The package
 now has `WordhandCore`, protocol-backed coordinator seams, versioned settings,
-81 deterministic tests across core and macOS adapter targets, and macOS CI.
+107 deterministic tests across core and macOS adapter targets, and macOS CI.
 
 The daily-driver bundle is built by `scripts/build-app.sh` and installed by
 `scripts/install-app.sh`. The installer prefers `/Applications`, falls back to
@@ -262,6 +267,17 @@ markers in addition to bounding rewrite length. Legacy Automatic, Polished,
 AI-prompt, and Verbatim settings migrate to the closest new style. See
 `docs/verification/2026-07-29-writing-modes.md`.
 
+Explicit self-corrections are resolved deterministically before the selected
+writing style runs. Maximum processing mode prewarms the matching local
+Foundation Models session at startup and recording start, while bounding the
+prepared-session cache. It also enables ordered rolling Whisper decoding every
+two seconds over a maximum 20-second working window. Two trailing segments
+remain revisable so a phrase such as `Friday—wait, no, Monday` is not committed
+prematurely. The complete audio buffer remains authoritative: release decodes
+the uncommitted tail, and any preview failure falls back to a full batch pass.
+Adaptive remains the public default and retains the lower-work single batch
+path. See `docs/verification/2026-07-29-corrections-streaming.md`.
+
 The runtime now holds a per-data-directory process lock so a duplicate launch
 cannot create two competing microphone, hotkey, or insertion owners. Toggle
 recordings automatically stop and process at ten minutes instead of growing an
@@ -306,15 +322,22 @@ field, or a loaded Whisper model to run its tests.
 shortcut event
   -> recording coordinator
   -> audio capture
+       in Maximum mode, forward chunks through one ordered local stream
   -> local transcriber
        snapshot enabled canonical dictionary spellings
        prioritize recent user corrections; cap prompt at 24 terms
        tokenize them into WhisperKit promptTokens
        guard forced prompt prefill from premature completion
        decode locally with Core ML
+       in Maximum mode, stabilize repeated rolling results
+       keep the last two segments revisable
+       finalize only the uncommitted tail at release
+       fall back to the complete captured buffer on preview failure
   -> transcript processor
        sanitize model tokens
        apply dictionary corrections as a fallback
+       remove unambiguous hesitation fillers
+       resolve explicit spoken self-corrections
        resolve writing profile for active application
        optionally rewrite with Apple's on-device system language model
        apply local voice commands
@@ -384,12 +407,15 @@ Initial order:
 4. remove unambiguous hesitation sounds such as `um`, `uh`, `erm`, and `hmm`
    deterministically, including stretched forms and surrounding pause
    punctuation; user dictionary substitutions take precedence;
-5. apply the explicit Casual, Formatted, Professional, or AI Communication
+5. resolve explicit spoken repairs such as `wait, no`, `I meant`, `make that`,
+   `correction`, `scratch that`, and immediate false starts; ambiguous language
+   is preserved rather than guessed;
+6. apply the explicit Casual, Formatted, Professional, or AI Communication
    writing style;
-6. validate on-device rewrites for facts, constraints, perspective, modality,
+7. validate on-device rewrites for facts, constraints, perspective, modality,
    and uncertainty, retry conservatively once, then use safe local fallback;
-7. interpret explicitly supported voice commands;
-8. produce the final transcript stored in history.
+8. interpret explicitly supported voice commands;
+9. produce the final transcript stored in history.
 
 The raw model output may be retained inside the same local history record for
 debugging and future reprocessing. Nothing in this pipeline may call a remote
@@ -530,7 +556,9 @@ Pure tests cover:
 - settings defaults, migrations, validation, and atomic-write recovery;
 - history insertion, search, retention, and deletion;
 - insertion routing and clipboard restoration decisions;
-- hotkey parsing, serialization, validation, conflicts, and coordinator states.
+- hotkey parsing, serialization, validation, conflicts, and coordinator states;
+- rolling-transcript agreement, correction horizon, bounded-window progress,
+  ordered chunk forwarding, cancellation, and complete-buffer fallback.
 
 Adapter tests use fakes for pasteboard, event posting, active application,
 clock, filesystem, transcriber, capture, and hotkey monitor. Hardware behavior

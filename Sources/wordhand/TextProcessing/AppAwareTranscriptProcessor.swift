@@ -228,12 +228,18 @@ actor FoundationModelTranscriptRewriter: LocalTranscriptRewriting {
     }
 
     private var preparedSessions: [String: Any] = [:]
+    private let maximumPreparedSessions = 4
 
     func prewarm(instructions: String) async {
 #if canImport(FoundationModels)
         guard #available(macOS 26.0, *) else { return }
         guard case .available = SystemLanguageModel.default.availability else { return }
         guard preparedSessions[instructions] == nil else { return }
+        if preparedSessions.count >= maximumPreparedSessions,
+           let oldestKey = preparedSessions.keys.first
+        {
+            preparedSessions.removeValue(forKey: oldestKey)
+        }
         let session = LanguageModelSession(instructions: instructions)
         session.prewarm()
         preparedSessions[instructions] = session

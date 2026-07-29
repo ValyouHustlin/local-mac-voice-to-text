@@ -5,7 +5,7 @@ import WordhandCore
 /// Captures microphone audio while recording is active and returns a 16 kHz
 /// mono Float32 buffer when stopped. Format-converts on the fly so callers
 /// don't have to worry about the input device's native rate.
-final class AudioCapture: AudioCapturing {
+final class AudioCapture: StreamingAudioCapturing {
     enum CaptureError: Error {
         case engineStartFailed(Error)
         case converterCreationFailed
@@ -17,12 +17,21 @@ final class AudioCapture: AudioCapturing {
     private let engine = AVAudioEngine()
     private var converter: AVAudioConverter?
     private var samples: [Float] = []
+    private var streamingChunkHandler: (@Sendable ([Float]) -> Void)?
     private var isRecording = false
     private let lock = NSLock()
 
     /// Called for every audio buffer with the buffer's RMS level (0…~1).
     /// Invoked on an arbitrary thread; hop to main if you touch UI.
     var onLevel: ((Float) -> Void)?
+
+    func setStreamingChunkHandler(
+        _ handler: (@Sendable ([Float]) -> Void)?
+    ) {
+        lock.withLock {
+            streamingChunkHandler = handler
+        }
+    }
 
     /// Begin recording. Idempotent — calling while already recording is a no-op.
     func start() throws {
@@ -119,9 +128,11 @@ final class AudioCapture: AudioCapturing {
         let ptr = channelData[0]
         let chunk = Array(UnsafeBufferPointer(start: ptr, count: count))
 
-        lock.lock()
-        samples.append(contentsOf: chunk)
-        lock.unlock()
+        let chunkHandler = lock.withLock {
+            samples.append(contentsOf: chunk)
+            return streamingChunkHandler
+        }
+        chunkHandler?(chunk)
 
         if let onLevel {
             onLevel(computeRMS(chunk))
