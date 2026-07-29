@@ -1,4 +1,5 @@
 import AppKit
+import WordhandCore
 
 /// Status bar item in the top-right of the menu bar. Shows recording state at
 /// a glance and provides quick access alongside the Dock and native windows.
@@ -9,17 +10,23 @@ final class MenuBarController {
     private let stateLabel: NSMenuItem
     private let correctLastItem: NSMenuItem
     private let modelID: String
+    private var settings: AppSettings
+    private let onOpenSettings: () -> Void
     private let onOpenHistory: () -> Void
     private let onOpenDictionary: () -> Void
     private let onCorrectLast: () -> Void
 
     init(
         modelID: String,
+        settings: AppSettings,
+        onOpenSettings: @escaping () -> Void,
         onOpenHistory: @escaping () -> Void,
         onOpenDictionary: @escaping () -> Void,
         onCorrectLast: @escaping () -> Void
     ) {
         self.modelID = modelID
+        self.settings = settings
+        self.onOpenSettings = onOpenSettings
         self.onOpenHistory = onOpenHistory
         self.onOpenDictionary = onOpenDictionary
         self.onCorrectLast = onCorrectLast
@@ -34,7 +41,7 @@ final class MenuBarController {
         menu.autoenablesItems = false
 
         stateLabel = NSMenuItem(
-            title: "idle · hold ⌃Space to dictate",
+            title: Self.idleTitle(for: settings),
             action: nil,
             keyEquivalent: ""
         )
@@ -46,6 +53,15 @@ final class MenuBarController {
         menu.addItem(modelLabel)
 
         menu.addItem(.separator())
+
+        let settingsItem = NSMenuItem(
+            title: "Settings…",
+            action: #selector(settingsClicked),
+            keyEquivalent: ","
+        )
+        settingsItem.keyEquivalentModifierMask = [.command]
+        settingsItem.target = self
+        menu.addItem(settingsItem)
 
         let history = NSMenuItem(
             title: "Transcript History…",
@@ -59,9 +75,9 @@ final class MenuBarController {
         let dictionary = NSMenuItem(
             title: "Custom Dictionary…",
             action: #selector(dictionaryClicked),
-            keyEquivalent: ","
+            keyEquivalent: "d"
         )
-        dictionary.keyEquivalentModifierMask = [.command]
+        dictionary.keyEquivalentModifierMask = [.command, .shift]
         dictionary.target = self
         menu.addItem(dictionary)
 
@@ -84,7 +100,7 @@ final class MenuBarController {
     }
 
     func setRecording(_ recording: Bool) {
-        stateLabel.title = recording ? "● recording" : "idle · hold ⌃Space to dictate"
+        stateLabel.title = recording ? "● recording" : Self.idleTitle(for: settings)
     }
 
     func setTranscribing() {
@@ -99,35 +115,41 @@ final class MenuBarController {
         stateLabel.title = message
     }
 
-    private func configureButton(recording: Bool) {
-        guard let button = statusItem.button else { return }
-        let image = Self.birdImage()
-        image?.isTemplate = true
-        button.image = image
+    func updateSettings(_ settings: AppSettings) {
+        self.settings = settings
+        stateLabel.title = Self.idleTitle(for: settings)
     }
 
-    // Inlined Lucide bird SVG. Keeping it in source means the executable has
-    // no separate resource bundle to install alongside it — true single-binary.
-    private static let birdSVG = """
+    private func configureButton(recording: Bool) {
+        guard let button = statusItem.button else { return }
+        let image = Self.wordhandImage()
+        image?.isTemplate = true
+        button.image = image
+        button.toolTip = "Wordhand"
+    }
+
+    // The Wordhand W plus text cursor, simplified for a monochrome 18pt menu icon.
+    private static let wordhandSVG = """
     <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" \
-    viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" \
+    viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" \
     stroke-linecap="round" stroke-linejoin="round">\
-    <path d="M16 7h.01"/>\
-    <path d="M3.4 18H12a8 8 0 0 0 8-8V7a4 4 0 0 0-7.28-2.3L2 20"/>\
-    <path d="m20 7 2 .5-2 .5"/>\
-    <path d="M10 18v3"/>\
-    <path d="M14 17.75V21"/>\
-    <path d="M7 18a6 6 0 0 0 3.84-10.61"/>\
+    <path d="M2.5 5.5 6.8 18 12 9.5 17.2 18 21.5 5.5"/>\
+    <path d="M22.5 8v8"/>\
     </svg>
     """
 
-    private static func birdImage() -> NSImage? {
-        guard let data = birdSVG.data(using: .utf8),
+    private static func wordhandImage() -> NSImage? {
+        guard let data = wordhandSVG.data(using: .utf8),
               let image = NSImage(data: data)
         else { return nil }
-        // Menu-bar status icons are nominally 18pt tall; size the SVG to match.
-        image.size = NSSize(width: 16, height: 16)
+        image.size = NSSize(width: 18, height: 18)
         return image
+    }
+
+    private static func idleTitle(for settings: AppSettings) -> String {
+        guard let binding = settings.hotkeys.first else { return "idle" }
+        let instruction = binding.action == .toggleRecording ? "tap" : "hold"
+        return "idle · \(instruction) \(binding.displayName) to dictate"
     }
 
     @objc private func quitClicked() {
@@ -136,6 +158,10 @@ final class MenuBarController {
 
     @objc private func dictionaryClicked() {
         onOpenDictionary()
+    }
+
+    @objc private func settingsClicked() {
+        onOpenSettings()
     }
 
     @objc private func historyClicked() {

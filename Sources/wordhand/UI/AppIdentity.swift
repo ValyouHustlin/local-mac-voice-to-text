@@ -84,10 +84,10 @@ enum AppIdentity {
 
 @MainActor
 final class WordhandAppDelegate: NSObject, NSApplicationDelegate {
-    private let onOpenHistory: () -> Void
+    private let onOpenPrimaryWindow: () -> Void
 
-    init(onOpenHistory: @escaping () -> Void) {
-        self.onOpenHistory = onOpenHistory
+    init(onOpenPrimaryWindow: @escaping () -> Void) {
+        self.onOpenPrimaryWindow = onOpenPrimaryWindow
     }
 
     func applicationShouldHandleReopen(
@@ -95,7 +95,7 @@ final class WordhandAppDelegate: NSObject, NSApplicationDelegate {
         hasVisibleWindows flag: Bool
     ) -> Bool {
         if !flag {
-            onOpenHistory()
+            onOpenPrimaryWindow()
         }
         return true
     }

@@ -16,6 +16,19 @@ contract and target boundaries.
   commit.
 - Update this roadmap when evidence changes the order.
 
+## Public checkpoint cadence
+
+Public updates follow product evidence, not a calendar. Each checkpoint groups
+three verified daily-use improvements so the post has a meaningful before and
+after:
+
+- lead with the competitive problem and the user-visible result;
+- show the real Wordhand UI or behavior, never a concept mockup;
+- keep the main post focused on the hook and put the repository link in the
+  first reply;
+- claim only behavior observed in this session;
+- do not publish until Aaron explicitly approves the final copy and media.
+
 ## Public identity
 
 Status: complete.
@@ -151,22 +164,30 @@ recoverable.
 
 ## P5: configurable hotkeys
 
-Status: in progress. Control-Space is now the tested fixed default; preferences,
-multiple bindings, conflict UI, and live rebinding remain planned.
+Status: implementation complete for recording shortcuts and Settings UI.
+Restart persistence and live rebinding are verified. Three-target dictation
+with the rebound shortcut remains open.
 
 Goal: remove the hard dependency on `fn` and support daily workflows.
 
-- Represent bindings as versioned settings.
-- Support push-to-talk and toggle recording without requiring `fn`.
-- Support multiple action bindings.
-- Add capture/edit UI, validation, conflict detection, and macOS-reserved
-  shortcut warnings.
+- [x] Represent bindings as versioned settings with migration from the previous
+  key-name-only shape.
+- [x] Support push-to-talk and tap-to-start/tap-to-stop recording without
+  requiring `fn`.
+- [x] Support multiple recording bindings.
+- [x] Add native capture/edit UI, validation, duplicate detection, and the known
+  macOS Control-Space reservation warning.
 - Recover cleanly from missed release, app deactivation, sleep, and settings
   changes during a hold.
-- Test parsing, serialization, conflicts, state edges, and live rebinding.
+- [x] Test parsing, serialization, duplicate conflicts, state edges, and live
+  rebinding logic.
 
 Exit receipt: configure a non-`fn` binding, restart, dictate in three targets,
 then change the binding while running and observe only the new binding fire.
+
+Partial receipt: `docs/verification/2026-07-28-settings-hotkeys.md`. The native
+Settings window, persisted capture, live rebinding, tap toggle behavior, old
+binding removal, and menu state were observed in the running app.
 
 ## P6: daily-use gap
 

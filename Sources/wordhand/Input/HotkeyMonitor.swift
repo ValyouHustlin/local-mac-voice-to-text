@@ -4,9 +4,8 @@ import CoreGraphics
 import Foundation
 import WordhandCore
 
-/// Watches Control-Space globally and emits push-to-talk press/release edges.
-/// Requires Accessibility permission. If the tap fails to register, callers
-/// will see an error from `start()`.
+/// Watches configured global shortcuts and emits recording press/release edges.
+/// Requires Accessibility permission. Bindings can be replaced while running.
 final class HotkeyMonitor: HotkeyMonitoring {
     enum HotkeyError: Error { case tapCreateFailed }
 
@@ -14,10 +13,36 @@ final class HotkeyMonitor: HotkeyMonitoring {
     private var onEvent: ((HotkeyEvent) -> Void)?
     private var tap: CFMachPort?
     private var runLoopSource: CFRunLoopSource?
-    private var stateMachine = PushToTalkStateMachine()
+    private var bindings: [HotkeyBinding]
+    private var stateMachine: HotkeyRoutingStateMachine
+    private var isSuspended = false
 
-    init(debug: Bool = false) {
+    init(bindings: [HotkeyBinding], debug: Bool = false) {
+        self.bindings = bindings
+        self.stateMachine = HotkeyRoutingStateMachine(bindings: bindings)
         self.debug = debug
+    }
+
+    func updateBindings(_ bindings: [HotkeyBinding]) {
+        guard bindings != self.bindings else { return }
+        self.bindings = bindings
+        if let edge = stateMachine.updateBindings(bindings) {
+            onEvent?(edge)
+        }
+    }
+
+    func setSuspended(_ suspended: Bool) {
+        guard isSuspended != suspended else { return }
+        isSuspended = suspended
+        if suspended, let edge = stateMachine.updateBindings(bindings) {
+            onEvent?(edge)
+        }
+    }
+
+    fileprivate func reenableEventTap() {
+        if let tap {
+            CGEvent.tapEnable(tap: tap, enable: true)
+        }
     }
 
     func start(onEvent: @escaping (HotkeyEvent) -> Void) throws {
@@ -74,6 +99,7 @@ final class HotkeyMonitor: HotkeyMonitoring {
     }
 
     fileprivate func handle(type: CGEventType, event: CGEvent) {
+        guard !isSuspended else { return }
         if debug {
             let flags = event.flags
             let keycode = event.getIntegerValueField(.keyboardEventKeycode)
@@ -87,7 +113,8 @@ final class HotkeyMonitor: HotkeyMonitoring {
         let input = HotkeyInput(
             kind: kind,
             keyCode: UInt16(event.getIntegerValueField(.keyboardEventKeycode)),
-            modifiers: Self.modifiers(from: event.flags)
+            modifiers: Self.modifiers(from: event.flags),
+            isRepeat: event.getIntegerValueField(.keyboardEventAutorepeat) != 0
         )
         if let edge = stateMachine.handle(input) {
             onEvent?(edge)
@@ -124,8 +151,7 @@ private func hotkeyCallback(
     let monitor = Unmanaged<HotkeyMonitor>.fromOpaque(userInfo).takeUnretainedValue()
 
     if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
-        // System disabled our tap; we'll need to re-enable. For now just no-op
-        // and let the user restart wordhand.
+        monitor.reenableEventTap()
         return Unmanaged.passUnretained(event)
     }
 

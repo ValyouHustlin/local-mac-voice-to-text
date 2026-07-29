@@ -22,7 +22,7 @@ preserved as a rollback copy.
 
 Done means a signed, installable app that:
 
-1. records from a configurable push-to-talk shortcut;
+1. records from configurable hold-to-talk or tap-toggle shortcuts;
 2. transcribes locally with Core ML on Apple silicon;
 3. inserts reliable, well-formatted text at the active cursor;
 4. learns user terms through a custom dictionary;
@@ -70,9 +70,11 @@ Verified by source inspection and dated receipts on 2026-07-28:
 - Swift Package Manager library, executable, and test targets for macOS 14+;
 - WhisperKit transcription with three registered local Whisper models;
 - `AVAudioEngine` capture converted to 16 kHz mono Float32;
-- Control-Space push-to-talk through `CGEventTap`;
+- configurable global shortcuts through `CGEventTap`, including hold-to-talk
+  and tap-to-start/tap-to-stop modes;
 - direct Unicode cursor insertion through `CGEvent`;
-- native recording overlay, menu bar control, and Dock presence;
+- native recording overlay, branded menu bar control, Dock presence, and
+  Settings window;
 - persistent custom dictionary with immediate correction flow;
 - searchable SQLite transcript history with copy, reinsert, correction, and
   deletion actions;
@@ -80,15 +82,15 @@ Verified by source inspection and dated receipts on 2026-07-28:
 - permission doctor, setup, and LaunchAgent commands;
 - macOS continuous integration for tests and release builds.
 
-Paste-based insertion, fully configurable hotkeys, a complete preferences
-window, signed app bundle, notarization, and updates remain planned. Only
-measured receipts may promote latency or compatibility claims.
+Paste-based insertion, the remaining preferences surfaces, signed app bundle,
+notarization, and updates remain planned. Only measured receipts may promote
+latency or compatibility claims.
 
 ## Current delivery state
 
 P0 ground truth and P1 foundation are complete as of 2026-07-28. The package
 now has `WordhandCore`, protocol-backed coordinator seams, versioned settings,
-35 deterministic tests, and macOS CI.
+41 deterministic tests, and macOS CI.
 
 P2 custom dictionary is implemented but not yet through its live three-target
 exit gate. Its current runtime path is:
@@ -114,17 +116,21 @@ split history window supports Unicode-aware search, copy, reinsert, correction
 creation, delete, clear-all, metadata, and visible failure states.
 
 The app now has a regular Dock presence as well as its menu bar item. Clicking
-the Dock item with no visible windows opens History. Its minimal app icon pairs
+the Dock item with no visible windows opens Settings. Its minimal app icon pairs
 a monoline `W` with a mint text cursor, giving the Dock and public repository
 one identity. See `docs/verification/2026-07-28-history.md` for the original
 isolated UI receipt and the remaining microphone exit gate.
 
-Control-Space is the current push-to-talk default. Its press/release edge logic
-is isolated in `WordhandCore`, rejects unintended modifier combinations, and
-recovers if Control is released before Space. Full live rebinding and multiple
-bindings remain P5 work. See
-`docs/verification/2026-07-28-control-space.md` for the automated and live Dock
-receipt plus the remaining physical dictation check.
+Control-Space remains the default, but is no longer hard-coded. The native
+Settings window records up to four modified-key bindings, persists them, and
+applies them to the running event tap without a restart. Each recording binding
+can use hold-to-talk or tap-to-start/tap-to-stop behavior. Duplicate and bare
+shortcuts are rejected, and the known macOS Control-Space input-source conflict
+is surfaced. The edge logic is isolated in `WordhandCore`, rejects unintended
+modifier combinations, ignores repeat events, and recovers if a required
+modifier is released first. See
+`docs/verification/2026-07-28-settings-hotkeys.md` for the automated and live
+receipt plus the remaining three-target exit gate.
 
 ## Target structure
 

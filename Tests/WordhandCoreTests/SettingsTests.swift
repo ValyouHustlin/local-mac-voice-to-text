@@ -49,4 +49,60 @@ struct SettingsTests {
             .appendingPathComponent("settings.json")
         #expect(try SettingsStore(fileURL: url).load() == AppSettings())
     }
+
+    @Test
+    func loadsThePreRecorderHotkeyShape() throws {
+        let data = Data(
+            """
+            {
+              "schemaVersion": 1,
+              "modelID": "whisper-base.en",
+              "insertionMode": "unicode",
+              "showOverlay": true,
+              "historyRetentionDays": 30,
+              "hotkeys": [{
+                "key": "space",
+                "modifiers": ["control"],
+                "action": "pushToTalk"
+              }]
+            }
+            """.utf8
+        )
+
+        let settings = try JSONDecoder().decode(AppSettings.self, from: data).validated()
+
+        #expect(settings.hotkeys.first?.keyCode == 49)
+        #expect(settings.hotkeys.first?.displayName == "⌃Space")
+    }
+
+    @Test
+    func rejectsBareAndDuplicateShortcuts() {
+        #expect(throws: SettingsError.invalidHotkey) {
+            _ = try AppSettings(hotkeys: [
+                HotkeyBinding(
+                    key: "d",
+                    keyCode: 2,
+                    modifiers: [],
+                    action: .pushToTalk
+                ),
+            ]).validated()
+        }
+
+        #expect(throws: SettingsError.duplicateHotkey) {
+            _ = try AppSettings(hotkeys: [
+                HotkeyBinding(
+                    key: "space",
+                    keyCode: 49,
+                    modifiers: ["control"],
+                    action: .pushToTalk
+                ),
+                HotkeyBinding(
+                    key: "space",
+                    keyCode: 49,
+                    modifiers: ["control"],
+                    action: .toggleRecording
+                ),
+            ]).validated()
+        }
+    }
 }

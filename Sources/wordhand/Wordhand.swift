@@ -64,21 +64,34 @@ struct Run: ParsableCommand {
             }
         }
 
-        let chosenModel: TranscriptionModel
-        if let id = model {
-            guard let m = ModelRegistry.find(id) else {
-                FileHandle.standardError.write(Data("unknown model: \(id)\n".utf8))
-                FileHandle.standardError.write(Data("run `wordhand models list` to see options.\n".utf8))
-                throw ExitCode(1)
-            }
-            chosenModel = m
-        } else {
-            guard let m = ModelRegistry.recommended() else {
-                FileHandle.standardError.write(Data("no models registered\n".utf8))
-                throw ExitCode(1)
-            }
-            chosenModel = m
+        let customDataDirectory = dataDirectory.map {
+            URL(fileURLWithPath: $0, isDirectory: true)
         }
+        let dictionaryURL = customDataDirectory?.appendingPathComponent("dictionary.json")
+            ?? DictionaryStore.defaultFileURL()
+        let historyURL = customDataDirectory?.appendingPathComponent("history.sqlite")
+            ?? TranscriptHistoryStore.defaultFileURL()
+        let settingsURL = customDataDirectory?.appendingPathComponent("settings.json")
+            ?? SettingsStore.defaultFileURL()
+        let settingsStore = SettingsStore(fileURL: settingsURL)
+        let settings: AppSettings
+        do {
+            settings = try settingsStore.load()
+        } catch {
+            settings = AppSettings()
+            FileHandle.standardError.write(Data(
+                "settings load failed; using defaults without overwriting the file: \(error)\n".utf8
+            ))
+        }
+
+        let chosenModel: TranscriptionModel
+        let chosenModelID = model ?? settings.modelID
+        guard let selectedModel = ModelRegistry.find(chosenModelID) else {
+            FileHandle.standardError.write(Data("unknown model: \(chosenModelID)\n".utf8))
+            FileHandle.standardError.write(Data("run `wordhand models list` to see options.\n".utf8))
+            throw ExitCode(1)
+        }
+        chosenModel = selectedModel
 
         let transcriber = WhisperKitTranscriber(model: chosenModel)
         let warmupSemaphore = DispatchSemaphore(value: 0)
@@ -102,17 +115,7 @@ struct Run: ParsableCommand {
             AppIdentity.configure(app)
         }
 
-        let customDataDirectory = dataDirectory.map {
-            URL(fileURLWithPath: $0, isDirectory: true)
-        }
-        let dictionaryURL = customDataDirectory?.appendingPathComponent("dictionary.json")
-            ?? DictionaryStore.defaultFileURL()
-        let historyURL = customDataDirectory?.appendingPathComponent("history.sqlite")
-            ?? TranscriptHistoryStore.defaultFileURL()
-        let settingsURL = customDataDirectory?.appendingPathComponent("settings.json")
-            ?? SettingsStore.defaultFileURL()
-
-        let monitor = HotkeyMonitor(debug: debugHotkey)
+        let monitor = HotkeyMonitor(bindings: settings.hotkeys, debug: debugHotkey)
         let capture = AudioCapture()
         let dictionary = MainActor.assumeIsolated {
             DictionaryController(store: DictionaryStore(fileURL: dictionaryURL))
@@ -120,15 +123,7 @@ struct Run: ParsableCommand {
         let processor = dictionary.processor
         let inserter = UnicodeTextInserter()
         let historyStore = try TranscriptHistoryStore(fileURL: historyURL)
-        let retentionDays: Int?
-        do {
-            retentionDays = try SettingsStore(fileURL: settingsURL).load().historyRetentionDays
-        } catch {
-            retentionDays = nil
-            FileHandle.standardError.write(Data(
-                "settings load failed; history retention was not applied: \(error)\n".utf8
-            ))
-        }
+        let retentionDays: Int? = settings.historyRetentionDays
         if let retentionDays,
            let retentionCutoff = Calendar.current.date(
                byAdding: .day,
@@ -146,19 +141,34 @@ struct Run: ParsableCommand {
         if let overlay {
             capture.onLevel = { level in overlay.pushLevel(level) }
         }
+        let settingsController = MainActor.assumeIsolated {
+            SettingsController(store: settingsStore, settings: settings)
+        }
         let menuBar = MainActor.assumeIsolated {
             MenuBarController(
                 modelID: chosenModel.id,
+                settings: settings,
+                onOpenSettings: { settingsController.showSettings() },
                 onOpenHistory: { history.showHistory() },
                 onOpenDictionary: { dictionary.showDictionary() },
                 onCorrectLast: { dictionary.correctLatestTranscript() }
             )
         }
         let appDelegate = MainActor.assumeIsolated {
-            WordhandAppDelegate(onOpenHistory: { history.showHistory() })
+            WordhandAppDelegate(onOpenPrimaryWindow: { settingsController.showSettings() })
         }
         MainActor.assumeIsolated {
             app.delegate = appDelegate
+            settingsController.onSettingsChange = { updated in
+                monitor.updateBindings(updated.hotkeys)
+                menuBar.updateSettings(updated)
+                if !updated.showOverlay {
+                    overlay?.hide()
+                }
+            }
+            settingsController.onShortcutCaptureChange = { capturing in
+                monitor.setSuspended(capturing)
+            }
         }
         let coordinator = MainActor.assumeIsolated {
             DictationCoordinator(
@@ -181,10 +191,14 @@ struct Run: ParsableCommand {
                     menuBar.setRecording(false)
                 case .recording:
                     FileHandle.standardError.write(Data("● recording\n".utf8))
-                    overlay?.show(.recording)
+                    if settingsController.settings.showOverlay {
+                        overlay?.show(.recording)
+                    }
                     menuBar.setRecording(true)
                 case .transcribing, .processing, .inserting:
-                    overlay?.show(.transcribing)
+                    if settingsController.settings.showOverlay {
+                        overlay?.show(.transcribing)
+                    }
                     menuBar.setTranscribing()
                 case .failed(let failure):
                     FileHandle.standardError.write(Data("dictation failed: \(failure)\n".utf8))
@@ -251,8 +265,12 @@ struct Run: ParsableCommand {
         sigint.resume()
         signal(SIGINT, SIG_IGN)
 
+        let shortcuts = settings.hotkeys.map {
+            let behavior = $0.action == .toggleRecording ? "tap" : "hold"
+            return "\($0.displayName) \(behavior)"
+        }.joined(separator: ", ")
         FileHandle.standardError.write(Data(
-            "listening on Control-Space hold · model: \(chosenModel.id) · ^C to quit\n".utf8
+            "listening on \(shortcuts) · model: \(chosenModel.id) · ^C to quit\n".utf8
         ))
         app.run()
     }
