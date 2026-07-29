@@ -239,11 +239,40 @@ Status: complete for the first vertical slice.
 - [x] Add Automatic, Polished, AI prompt, and Verbatim writing profiles.
 - [x] Route Ghostty, terminals, development tools, and AI apps to AI-prompt
   formatting in Automatic mode.
+- [x] Verify the same automatic profile across Apple Terminal, iTerm2, Warp,
+  Ghostty, and VS Code; keep the prompt category-based rather than app-specific.
 - [x] Use Apple's on-device system language model when available, with safe
   output bounds, a four-second deadline, and deterministic local fallback.
 - [x] Keep surrounding application text out of the formatter.
+- [x] Keep formatting instructions, user vocabulary, audio, and transcript
+  content on-device with no cloud fallback.
 
 Receipt: `docs/verification/2026-07-28-flow-formatting.md`.
+
+### Decode-time vocabulary checkpoint
+
+Status: implementation and controlled benchmark complete; live correction
+gesture remains.
+
+- [x] Feed enabled canonical dictionary spellings into WhisperKit at decode
+  time instead of relying only on post-hoc replacement.
+- [x] Keep post-hoc `heard as -> replace with` matching as the fallback.
+- [x] Ship starter vocabulary as versioned editable JSON, not source constants.
+- [x] Merge upgraded starter terms without overwriting user entries or
+  resurrecting a user-deleted term at the same seed version.
+- [x] Apply dictionary edits to both paths without restarting Wordhand.
+- [x] Keep dictionary content local to Application Support and in-memory prompt
+  tokens.
+- [x] Upgrade to the official Argmax OSS/WhisperKit 1.0 dependency line.
+- [x] Guard Large v3 prompt prefill from WhisperKit's premature end-token stop.
+- [x] Prioritize custom corrections and cap each decode prompt at 24 terms.
+- [x] Force local dictionary files to owner-only `0600` permissions.
+- [x] Pass the five-term identical-audio before/after benchmark (`2/5` to
+  `5/5` exact terms).
+- [ ] Drive a new correction through the live Dictionary UI, then observe the
+  next transcription use it.
+
+Receipt: `docs/verification/2026-07-28-decode-vocabulary.md`.
 
 ### Application hardening checkpoint
 

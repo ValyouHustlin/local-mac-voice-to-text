@@ -40,6 +40,9 @@ This file describes the intended architecture for that product. Features marked
 - Local by default and by promise. Audio and transcript content must not leave
   the machine. Any future network behavior affecting either requires Aaron's
   explicit approval.
+- Custom vocabulary and formatting instructions are local runtime inputs. They
+  may be persisted only in Wordhand's application-support directory and may
+  never be sent to remote model, analytics, sync, or logging services.
 - Reliability beats cleverness. Losing a transcript or silently failing to
   insert it is worse than a visible delay.
 - Every transcript is recoverable. The app stores the final local transcript
@@ -68,8 +71,8 @@ This file describes the intended architecture for that product. Features marked
 Verified by source inspection and dated receipts on 2026-07-28:
 
 - Swift Package Manager library, executable, and test targets for macOS 14+;
-- WhisperKit transcription with four registered local Whisper models; optimized
-  Large v3 (626 MB) is the accuracy-first default;
+- Argmax OSS/WhisperKit 1.0 transcription with four registered local Whisper
+  models; optimized Large v3 (626 MB) is the accuracy-first default;
 - `AVAudioEngine` capture converted to 16 kHz mono Float32, using 1024-frame
   input buffers and an 80 ms post-release tail to retain final phonemes;
 - configurable global shortcuts through `CGEventTap`, including hold-to-talk
@@ -87,7 +90,8 @@ Verified by source inspection and dated receipts on 2026-07-28:
 - duplicate-process prevention, a 10-minute recording safety stop, active
   Whisper cancellation, and rewrite validation that rejects dropped numbers,
   technical tokens, or negated constraints;
-- persistent custom dictionary with immediate correction flow;
+- persistent custom dictionary with versioned, non-destructive editable
+  defaults and immediate correction flow;
 - searchable SQLite transcript history with copy, reinsert, correction, and
   deletion actions;
 - versioned settings and automatic migration from the legacy product name;
@@ -102,24 +106,38 @@ compatibility claims.
 
 P0 ground truth and P1 foundation are complete as of 2026-07-28. The package
 now has `WordhandCore`, protocol-backed coordinator seams, versioned settings,
-58 deterministic tests, and macOS CI.
+66 deterministic tests, and macOS CI.
 
-P2 custom dictionary is implemented but not yet through its live three-target
-exit gate. Its current runtime path is:
+P2 custom dictionary now drives both transcription stages. Its runtime path is:
 
 ```text
 ~/Library/Application Support/Wordhand/dictionary.json
   -> versioned DictionaryStore
-  -> MutableTranscriptProcessor
+  -> DictionaryVocabularySource
+       -> Whisper tokenizer
+       -> WhisperKit DecodingOptions.promptTokens
+  -> MutableTranscriptProcessor post-decode fallback
   -> coordinator processing stage
 ```
 
 The menu-bar app exposes a native management window and a
 `Correct Last Transcript…` action. Management changes update the running
-processor without a restart. Phrase entries show their replacement preview
-before being committed. See
-`docs/verification/2026-07-28-dictionary.md` for observed behavior and the
-remaining receipt.
+decoder prompt and fallback processor without a restart. The repository's
+starter terms live in an editable JSON resource with an integer seed version.
+On upgrade, missing new defaults merge into the user's local dictionary without
+overwriting custom entries or restoring terms deleted at the current seed
+version. Files are forced to owner-only `0600` permissions. Decode prompts
+prioritize user-created corrections and cap starter fill at 24 terms, the
+measured point that preserved five-term accuracy without the dilution observed
+with the entire starter set.
+
+WhisperKit exposes `DecodingOptions.promptTokens`, but its 1.0 decoder can honor
+an end-of-text sample while it is still forcing those prompt tokens. Large v3
+then returns an empty transcript. Wordhand supplies a narrow `TextDecoding`
+adapter that defers sampled completion and the first-token confidence check
+only until forced prompt prefill ends. The underlying Core ML decoder, token
+sampler, thresholds after prefill, and cancellation path remain unchanged.
+See `docs/verification/2026-07-28-decode-vocabulary.md`.
 
 P3 transcript history is implemented behind a local SQLite store. The
 coordinator saves processed and raw transcript text before attempting
@@ -168,9 +186,11 @@ between displays, so the state stays visible on the screen being used.
 Cancellation invalidates the current coordinator operation before insertion
 and resets tap-toggle routing so the next shortcut starts immediately.
 
-Automatic writing style now resolves terminal, development, and AI application
-targets to an AI-prompt profile. That profile sends only the current local
-transcript to Apple's local Foundation Models framework, with instructions to
+Automatic writing style now resolves Terminal, iTerm2, Warp, Ghostty, other
+common terminal applications, development tools, and AI applications to one
+shared AI-prompt profile. Ghostty is not special-cased, and no terminal receives
+product-specific behavior. That profile sends only the current local transcript
+to Apple's on-device Foundation Models framework, with instructions to
 preserve meaning, restructure run-ons, and never answer the request. It does not
 read surrounding document content. Generation has a proportional response
 budget and a four-second deadline; either validation or runtime failure falls
@@ -226,9 +246,14 @@ shortcut event
   -> recording coordinator
   -> audio capture
   -> local transcriber
+       snapshot enabled canonical dictionary spellings
+       prioritize recent user corrections; cap prompt at 24 terms
+       tokenize them into WhisperKit promptTokens
+       guard forced prompt prefill from premature completion
+       decode locally with Core ML
   -> transcript processor
        sanitize model tokens
-       apply dictionary
+       apply dictionary corrections as a fallback
        resolve writing profile for active application
        optionally rewrite with Apple's on-device system language model
        apply local voice commands

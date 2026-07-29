@@ -12,8 +12,9 @@ public enum TranscriptFormattingProfile: String, Codable, CaseIterable, Sendable
         let identifier = target.bundleIdentifier?.lowercased() ?? ""
         let name = target.applicationName?.lowercased() ?? ""
         let aiAndDevelopmentTargets = [
-            "ghostty", "terminal", "iterm", "warp", "cursor", "windsurf",
-            "visual studio code", "xcode", "zed", "chatgpt", "claude",
+            "terminal", "iterm", "warp", "ghostty", "alacritty", "kitty",
+            "wezterm", "hyper", "tabby", "rio", "cursor", "windsurf",
+            "visual studio code", "vscode", "xcode", "zed", "chatgpt", "claude",
         ]
         if aiAndDevelopmentTargets.contains(where: {
             identifier.contains($0.replacingOccurrences(of: " ", with: ""))

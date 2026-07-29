@@ -96,7 +96,17 @@ struct Run: ParsableCommand {
         }
         chosenModel = selectedModel
 
-        let transcriber = WhisperKitTranscriber(model: chosenModel)
+        let app = NSApplication.shared
+        MainActor.assumeIsolated {
+            AppIdentity.configure(app)
+        }
+        let dictionary = MainActor.assumeIsolated {
+            DictionaryController(store: DictionaryStore(fileURL: dictionaryURL))
+        }
+        let transcriber = WhisperKitTranscriber(
+            model: chosenModel,
+            vocabulary: dictionary.vocabulary
+        )
         let warmupSemaphore = DispatchSemaphore(value: 0)
         var warmupError: Error?
         Task.detached {
@@ -113,16 +123,8 @@ struct Run: ParsableCommand {
             throw ExitCode(1)
         }
 
-        let app = NSApplication.shared
-        MainActor.assumeIsolated {
-            AppIdentity.configure(app)
-        }
-
         let monitor = HotkeyMonitor(bindings: settings.hotkeys, debug: debugHotkey)
         let capture = AudioCapture()
-        let dictionary = MainActor.assumeIsolated {
-            DictionaryController(store: DictionaryStore(fileURL: dictionaryURL))
-        }
         let processor = AppAwareTranscriptProcessor(
             dictionaryProcessor: dictionary.processor,
             profile: settings.formattingProfile
@@ -383,6 +385,18 @@ struct Models: ParsableCommand {
         @Option(name: .long, help: "Model id. Defaults to the recommended model.")
         var model: String?
 
+        @Flag(
+            name: .long,
+            help: "Condition decoding with Wordhand's bundled editable starter vocabulary."
+        )
+        var defaultVocabulary: Bool = false
+
+        @Option(
+            name: .long,
+            help: "Comma-separated vocabulary terms for a controlled conditioning benchmark."
+        )
+        var vocabularyTerms: String?
+
         func run() throws {
             let modelID = model ?? ModelRegistry.recommended()?.id
             guard let modelID, let selectedModel = ModelRegistry.find(modelID) else {
@@ -397,7 +411,35 @@ struct Models: ParsableCommand {
                 throw ExitCode(1)
             }
 
-            let transcriber = WhisperKitTranscriber(model: selectedModel)
+            let vocabulary: DictionaryVocabularySource
+            if let vocabularyTerms {
+                let terms = vocabularyTerms
+                    .split(separator: ",")
+                    .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                    .filter { !$0.isEmpty }
+                vocabulary = DictionaryVocabularySource(entries: terms.map {
+                    DictionaryEntry(spokenForm: $0, replacement: $0)
+                })
+            } else if defaultVocabulary {
+                let seed = try BundledDictionaryVocabulary.load()
+                let installedAt = Date(timeIntervalSince1970: 0)
+                vocabulary = DictionaryVocabularySource(entries: seed.terms.enumerated().map {
+                    DictionaryEntry(
+                        spokenForm: $0.element,
+                        replacement: $0.element,
+                        origin: .starterVocabulary,
+                        starterVocabularyOrder: $0.offset,
+                        createdAt: installedAt,
+                        updatedAt: installedAt
+                    )
+                })
+            } else {
+                vocabulary = DictionaryVocabularySource()
+            }
+            let transcriber = WhisperKitTranscriber(
+                model: selectedModel,
+                vocabulary: vocabulary
+            )
             let semaphore = DispatchSemaphore(value: 0)
             let resultBox = ModelBenchmarkResultBox()
             Task.detached {

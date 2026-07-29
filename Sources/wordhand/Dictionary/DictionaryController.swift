@@ -5,6 +5,7 @@ import WordhandCore
 @MainActor
 final class DictionaryController {
     let processor: MutableTranscriptProcessor
+    let vocabulary: DictionaryVocabularySource
     private let store: DictionaryStore
     private(set) var entries: [DictionaryEntry]
     private(set) var latestTranscript: String?
@@ -12,15 +13,18 @@ final class DictionaryController {
 
     init(store: DictionaryStore = DictionaryStore(fileURL: DictionaryStore.defaultFileURL())) {
         self.store = store
+        let loadedEntries: [DictionaryEntry]
         do {
-            entries = try store.load().entries
+            loadedEntries = try store.installBundledDefaults().entries
         } catch {
-            entries = []
+            loadedEntries = (try? store.load().entries) ?? []
             FileHandle.standardError.write(Data(
-                "dictionary load failed: \(error)\n".utf8
+                "dictionary defaults/load failed: \(error)\n".utf8
             ))
         }
+        entries = loadedEntries
         processor = MutableTranscriptProcessor(dictionaryEntries: entries)
+        vocabulary = DictionaryVocabularySource(entries: entries)
     }
 
     func rememberLatestTranscript(_ text: String) {
@@ -70,7 +74,10 @@ final class DictionaryController {
 
         let alert = NSAlert()
         alert.messageText = entry == nil ? "Add Dictionary Correction" : "Edit Dictionary Correction"
-        alert.informativeText = "The match stays on this Mac and is applied before text is inserted."
+        alert.informativeText = """
+        The canonical spelling teaches the local recognizer before decoding. \
+        The correction also runs afterward as a fallback.
+        """
         alert.accessoryView = form
         alert.addButton(withTitle: entry == nil ? "Add" : "Save")
         alert.addButton(withTitle: "Cancel")
@@ -109,6 +116,10 @@ final class DictionaryController {
             updated.replacement = replacement
             updated.matchMode = selectedMode
             updated.isCaseSensitive = caseCheckbox.state == .on
+            if entry != nil {
+                updated.origin = nil
+                updated.starterVocabularyOrder = nil
+            }
             updated.updatedAt = Date()
 
             do {
@@ -143,6 +154,7 @@ final class DictionaryController {
             $0.spokenForm.localizedCaseInsensitiveCompare($1.spokenForm) == .orderedAscending
         }
         processor.update(dictionaryEntries: entries)
+        vocabulary.update(entries: entries)
         windowController?.reload()
     }
 

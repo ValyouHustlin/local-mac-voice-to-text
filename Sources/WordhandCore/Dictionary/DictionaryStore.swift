@@ -4,19 +4,41 @@ public struct DictionaryDocument: Codable, Equatable, Sendable {
     public static let currentSchemaVersion = 1
 
     public var schemaVersion: Int
+    public var installedDefaultVocabularyVersion: Int
     public var entries: [DictionaryEntry]
 
     public init(
         schemaVersion: Int = Self.currentSchemaVersion,
+        installedDefaultVocabularyVersion: Int = 0,
         entries: [DictionaryEntry] = []
     ) {
         self.schemaVersion = schemaVersion
+        self.installedDefaultVocabularyVersion = installedDefaultVocabularyVersion
         self.entries = entries
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case schemaVersion
+        case installedDefaultVocabularyVersion
+        case entries
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        schemaVersion = try container.decode(Int.self, forKey: .schemaVersion)
+        installedDefaultVocabularyVersion =
+            try container.decodeIfPresent(Int.self, forKey: .installedDefaultVocabularyVersion) ?? 0
+        entries = try container.decode([DictionaryEntry].self, forKey: .entries)
     }
 
     public func validated() throws -> DictionaryDocument {
         guard schemaVersion == Self.currentSchemaVersion else {
             throw DictionaryStoreError.unsupportedSchema(schemaVersion)
+        }
+        guard installedDefaultVocabularyVersion >= 0 else {
+            throw DictionaryStoreError.invalidDefaultVocabularyVersion(
+                installedDefaultVocabularyVersion
+            )
         }
 
         var seenIDs = Set<UUID>()
@@ -54,6 +76,11 @@ public enum DictionaryStoreError: Error, Equatable {
     case duplicateID(UUID)
     case duplicateSpokenForm(String)
     case missingEntry(UUID)
+    case invalidDefaultVocabularyVersion(Int)
+    case emptyDefaultVocabulary
+    case emptyDefaultVocabularyTerm
+    case duplicateDefaultVocabularyTerm(String)
+    case missingDefaultVocabulary
 }
 
 public struct DictionaryStore: Sendable {
@@ -74,6 +101,7 @@ public struct DictionaryStore: Sendable {
         guard FileManager.default.fileExists(atPath: fileURL.path) else {
             return DictionaryDocument()
         }
+        try hardenPermissions()
         let data = try Data(contentsOf: fileURL)
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .millisecondsSince1970
@@ -104,6 +132,78 @@ public struct DictionaryStore: Sendable {
             withIntermediateDirectories: true
         )
         try data.write(to: fileURL, options: [.atomic])
+        try hardenPermissions()
+    }
+
+    @discardableResult
+    public func installDefaults(_ seed: DictionaryVocabularySeed) throws -> DictionaryDocument {
+        let seed = try seed.validated()
+        var document = try load()
+        let seedOrder = Dictionary(
+            uniqueKeysWithValues: seed.terms.enumerated().map { offset, term in
+                (
+                    term.folding(
+                        options: [.caseInsensitive],
+                        locale: Locale(identifier: "en_US_POSIX")
+                    ),
+                    offset
+                )
+            }
+        )
+        var metadataChanged = false
+        for index in document.entries.indices
+        where document.entries[index].origin == .starterVocabulary
+            && document.entries[index].starterVocabularyOrder == nil
+        {
+            let key = document.entries[index].replacement.folding(
+                options: [.caseInsensitive],
+                locale: Locale(identifier: "en_US_POSIX")
+            )
+            if let order = seedOrder[key] {
+                document.entries[index].starterVocabularyOrder = order
+                metadataChanged = true
+            }
+        }
+        guard document.installedDefaultVocabularyVersion < seed.version else {
+            if metadataChanged {
+                try save(document)
+            }
+            return document
+        }
+
+        var canonicalTerms = Set(document.entries.map {
+            $0.replacement
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+                .folding(
+                    options: [.caseInsensitive],
+                    locale: Locale(identifier: "en_US_POSIX")
+                )
+        })
+        let installedAt = Date()
+        for (starterOrder, term) in seed.terms.enumerated() {
+            let trimmed = term.trimmingCharacters(in: .whitespacesAndNewlines)
+            let key = trimmed.folding(
+                options: [.caseInsensitive],
+                locale: Locale(identifier: "en_US_POSIX")
+            )
+            guard canonicalTerms.insert(key).inserted else { continue }
+            document.entries.append(DictionaryEntry(
+                spokenForm: trimmed,
+                replacement: trimmed,
+                origin: .starterVocabulary,
+                starterVocabularyOrder: starterOrder,
+                createdAt: installedAt,
+                updatedAt: installedAt
+            ))
+        }
+        document.installedDefaultVocabularyVersion = seed.version
+        try save(document)
+        return document
+    }
+
+    @discardableResult
+    public func installBundledDefaults() throws -> DictionaryDocument {
+        try installDefaults(BundledDictionaryVocabulary.load())
     }
 
     @discardableResult
@@ -127,5 +227,12 @@ public struct DictionaryStore: Sendable {
         document.entries.remove(at: index)
         try save(document)
         return document
+    }
+
+    private func hardenPermissions() throws {
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o600],
+            ofItemAtPath: fileURL.path
+        )
     }
 }

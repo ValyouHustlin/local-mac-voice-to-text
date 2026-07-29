@@ -27,7 +27,7 @@ and inserts the result into ordinary Mac apps.
 | --- | --- |
 | **Private by architecture** | Audio and transcript processing stay on the Mac. There is no account, remote transcription API, analytics, or transcript sync. |
 | **Push to talk** | Hold `Control-Space`, speak, and release. A compact overlay shows recording and transcription state. |
-| **Custom dictionary** | Teach Wordhand names, acronyms, product terms, and exact replacements. Corrections apply without restarting. |
+| **Decode-aware dictionary** | Teach Wordhand names, acronyms, product terms, and exact replacements. Canonical spellings condition Whisper before decoding; post-processing remains as a fallback. Changes apply without restarting. |
 | **Recoverable history** | Search recent transcripts, inspect insertion status, copy, reinsert, correct, or delete them from a native window. |
 | **A real Mac app** | Wordhand lives in both the menu bar and Dock. Clicking its Dock icon opens Settings; history and dictionary are one click away. |
 | **Accuracy-first local model** | Optimized Whisper Large v3 is the default on capable Macs. Balanced and smaller Whisper models remain selectable. |
@@ -74,6 +74,22 @@ target.
 The recording stays local, the transcript is saved to local history, and the
 text appears at the cursor.
 
+### Privacy boundaries
+
+Wordhand does not send audio, transcripts, dictionary terms, or formatting
+prompts to a server. Whisper decoding runs in the local WhisperKit/Core ML
+pipeline. AI-prompt formatting uses Apple's on-device Foundation Models
+framework when available and deterministic local cleanup otherwise.
+
+User vocabulary and transcript history live only under
+`~/Library/Application Support/Wordhand`. The public repository ships a
+versioned starter vocabulary, then installs it as ordinary editable dictionary
+entries. Future starter updates merge non-destructively; a term a user deletes
+does not silently return at the same seed version. Dictionary files are
+owner-readable only (`0600`). Wordhand prioritizes recent user corrections and
+uses at most 24 canonical terms per decode so a large dictionary does not drown
+out the terms that matter now.
+
 If macOS uses `Control-Space` to switch input sources, disable **Select the
 previous input source** under **System Settings > Keyboard > Keyboard
 Shortcuts > Input Sources**.
@@ -100,8 +116,9 @@ old directory is preserved as a rollback copy.
 ## Built locally, tested honestly
 
 The package contains a deterministic test target for the model registry,
-settings, transcript processing, dictionary matching and persistence, history,
-hotkey state, coordinator behavior, and data migration.
+settings, transcript processing, dictionary matching, decode-prompt generation
+and persistence, history, hotkey state, coordinator behavior, and data
+migration.
 
 ```sh
 /usr/bin/xcrun swift test

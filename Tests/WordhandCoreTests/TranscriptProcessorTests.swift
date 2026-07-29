@@ -54,14 +54,33 @@ struct TranscriptProcessorTests {
 
     @Test
     func automaticProfileSelectsAIPromptForCodingAndTerminalApps() {
-        #expect(
-            TranscriptFormattingProfile.automatic.resolved(
-                for: TranscriptTarget(
-                    bundleIdentifier: "com.mitchellh.ghostty",
-                    applicationName: "Ghostty"
-                )
-            ) == .aiPrompt
-        )
+        let developmentTargets = [
+            TranscriptTarget(
+                bundleIdentifier: "com.apple.Terminal",
+                applicationName: "Terminal"
+            ),
+            TranscriptTarget(
+                bundleIdentifier: "com.googlecode.iterm2",
+                applicationName: "iTerm2"
+            ),
+            TranscriptTarget(
+                bundleIdentifier: "dev.warp.Warp-Stable",
+                applicationName: "Warp"
+            ),
+            TranscriptTarget(
+                bundleIdentifier: "com.mitchellh.ghostty",
+                applicationName: "Ghostty"
+            ),
+            TranscriptTarget(
+                bundleIdentifier: "com.microsoft.VSCode",
+                applicationName: "Visual Studio Code"
+            ),
+        ]
+        for target in developmentTargets {
+            #expect(
+                TranscriptFormattingProfile.automatic.resolved(for: target) == .aiPrompt
+            )
+        }
         #expect(
             TranscriptFormattingProfile.automatic.resolved(
                 for: TranscriptTarget(

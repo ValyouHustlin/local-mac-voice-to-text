@@ -33,7 +33,10 @@ let package = Package(
     ],
     dependencies: [
         .package(url: "https://github.com/apple/swift-argument-parser.git", from: "1.3.0"),
-        .package(url: "https://github.com/argmaxinc/WhisperKit.git", from: "0.9.0"),
+        .package(
+            url: "https://github.com/argmaxinc/argmax-oss-swift.git",
+            from: "1.0.0"
+        ),
         .package(
             url: "https://github.com/swiftlang/swift-testing.git",
             revision: "swift-6.3.1-RELEASE"
@@ -42,6 +45,9 @@ let package = Package(
     targets: [
         .target(
             name: "WordhandCore",
+            resources: [
+                .process("Resources"),
+            ],
             linkerSettings: [
                 .linkedLibrary("sqlite3"),
             ]
@@ -51,7 +57,7 @@ let package = Package(
             dependencies: [
                 "WordhandCore",
                 .product(name: "ArgumentParser", package: "swift-argument-parser"),
-                .product(name: "WhisperKit", package: "WhisperKit"),
+                .product(name: "WhisperKit", package: "argmax-oss-swift"),
             ]
         ),
         .testTarget(

@@ -5,12 +5,17 @@ import WhisperKit
 actor WhisperKitTranscriber: Transcribing {
     let modelID: String
     private let model: TranscriptionModel
+    private let vocabulary: DictionaryVocabularySource
     private var pipeline: WhisperKit?
     private var cancellationToken: TranscriptionCancellationToken?
 
-    init(model: TranscriptionModel) {
+    init(
+        model: TranscriptionModel,
+        vocabulary: DictionaryVocabularySource = DictionaryVocabularySource()
+    ) {
         self.modelID = model.id
         self.model = model
+        self.vocabulary = vocabulary
     }
 
     /// Loads the model into memory; downloads first if not already on disk.
@@ -22,7 +27,13 @@ actor WhisperKitTranscriber: Transcribing {
             throw TranscriberError.missingEngineID
         }
         FileHandle.standardError.write(Data("loading \(model.id)...\n".utf8))
-        let config = WhisperKitConfig(model: whisperKitID, verbose: false, prewarm: true, load: true)
+        let config = WhisperKitConfig(
+            model: whisperKitID,
+            textDecoder: PromptSafeTextDecoder(),
+            verbose: false,
+            prewarm: true,
+            load: true
+        )
         pipeline = try await WhisperKit(config)
         FileHandle.standardError.write(Data("✓ \(model.id) ready\n".utf8))
     }
@@ -38,8 +49,26 @@ actor WhisperKitTranscriber: Transcribing {
                 cancellationToken = nil
             }
         }
+        let decodingOptions: DecodingOptions?
+        if let prompt = vocabulary.prompt(),
+           let tokenizer = pipeline.tokenizer
+        {
+            // Whisper tokenizers add special tokens by default. Prompt
+            // conditioning accepts only ordinary text tokens and, like
+            // WhisperKit's own CLI, needs a leading space for word boundaries.
+            let promptTokens = tokenizer
+                .encode(text: " " + prompt.trimmingCharacters(in: .whitespaces))
+                .filter { $0 < tokenizer.specialTokens.specialTokenBegin }
+            decodingOptions = promptTokens.isEmpty
+                ? nil
+                : DecodingOptions(promptTokens: promptTokens)
+        } else {
+            decodingOptions = nil
+        }
+
         let results = try await pipeline.transcribe(
             audioArray: audio,
+            decodeOptions: decodingOptions,
             callback: { _ in token.isCancelled ? false : nil }
         )
         return results.map(\.text).joined(separator: " ")

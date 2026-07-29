@@ -1,6 +1,10 @@
 import Foundation
 
 public struct DictionaryEntry: Codable, Equatable, Identifiable, Sendable {
+    public enum Origin: String, Codable, Sendable {
+        case starterVocabulary
+    }
+
     public enum MatchMode: String, Codable, Sendable {
         case word
         case phrase
@@ -12,6 +16,8 @@ public struct DictionaryEntry: Codable, Equatable, Identifiable, Sendable {
     public var matchMode: MatchMode
     public var isCaseSensitive: Bool
     public var isEnabled: Bool
+    public var origin: Origin?
+    public var starterVocabularyOrder: Int?
     public let createdAt: Date
     public var updatedAt: Date
 
@@ -22,6 +28,8 @@ public struct DictionaryEntry: Codable, Equatable, Identifiable, Sendable {
         matchMode: MatchMode = .phrase,
         isCaseSensitive: Bool = false,
         isEnabled: Bool = true,
+        origin: Origin? = nil,
+        starterVocabularyOrder: Int? = nil,
         createdAt: Date = Date(),
         updatedAt: Date = Date()
     ) {
@@ -31,6 +39,8 @@ public struct DictionaryEntry: Codable, Equatable, Identifiable, Sendable {
         self.matchMode = matchMode
         self.isCaseSensitive = isCaseSensitive
         self.isEnabled = isEnabled
+        self.origin = origin
+        self.starterVocabularyOrder = starterVocabularyOrder
         self.createdAt = createdAt
         self.updatedAt = updatedAt
     }
