@@ -117,6 +117,12 @@ transcript, repeat the phrase in three targets, and observe the corrected term.
 
 Partial receipt: `docs/verification/2026-07-28-dictionary.md`.
 
+The repaired installed-app checkpoint
+`docs/verification/2026-07-29-three-target-checkpoint.md` preserved all five
+seeded terms in one accepted Chrome run, but identical audio still produced
+`Cloudware`, `Whisperkid`, and `Tailskill` in TextEdit or VS Code. The
+three-target accuracy exit receipt therefore remains open.
+
 ## P3: transcript history
 
 Status: implementation complete; isolated native UI receipt complete. Fresh
@@ -170,6 +176,13 @@ TextEdit, Google Chrome, and Visual Studio Code accepted the complete final
 transcript. Chrome and VS Code preserved a preloaded clipboard containing RTF
 and both UTF-8/UTF-16 plain text. The Secure Input branch is automated and
 implemented but has not been forced in a real password field.
+
+The 2026-07-29 repaired-build checkpoint reconfirmed insertion into TextEdit, a
+focused Chrome textarea, and a VS Code untitled editor. It also found a new
+focus-race defect: an advertising iframe can take focus during recording,
+causing the intended textarea to remain empty while the paste event is still
+recorded as successful. Receipt:
+`docs/verification/2026-07-29-three-target-checkpoint.md`.
 
 ## P5: configurable hotkeys
 

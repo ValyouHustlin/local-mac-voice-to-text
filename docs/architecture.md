@@ -231,6 +231,13 @@ mutation. Chrome and VS Code accepted complete live transcripts while an RTF
 plus plain-text clipboard item was restored. See
 `docs/verification/2026-07-28-accuracy-paste.md`.
 
+The repaired installed-app checkpoint on 2026-07-29 reconfirmed paste insertion
+into TextEdit, a focused Chrome textarea, and a VS Code untitled editor. It also
+exposed that posting Command-V is not proof that the intended field received
+the transcript: a browser advertising iframe took focus during one recording,
+the textarea stayed empty, and history still recorded the paste as inserted.
+See `docs/verification/2026-07-29-three-target-checkpoint.md`.
+
 The recording surface is intentionally visually quiet: a matte capsule, an
 eleven-bar mint waveform, and a compact cancel button. It follows the pointer
 between displays, so the state stays visible on the screen being used.
@@ -435,6 +442,14 @@ Paste insertion:
 5. restore the previous pasteboard only if no third party changed it in the
    meantime;
 6. report a recoverable failure instead of silently discarding text.
+
+A posted paste event is not sufficient evidence that the intended field
+received text. Wordhand must capture a target/focus fingerprint before
+processing, revalidate it immediately before insertion, and surface a
+recoverable focus-changed conflict if another element, window, or browser frame
+took focus. Until that is implemented, a history status of `inserted` means
+Wordhand posted the paste event; it does not mean the intended field contents
+were verified.
 
 Direct Unicode insertion remains a fallback. Copy-only intentionally leaves the
 transcript on the clipboard. The last successful insertion keeps enough local
