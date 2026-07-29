@@ -126,3 +126,23 @@ Not yet covered by an adapter-level automated test:
 - a forced `IsSecureEventInputEnabled()` live field;
 - clipboard write/event-construction failure;
 - immediate undo/revert of the last insertion.
+
+Final commands:
+
+```sh
+/usr/bin/git diff --check
+/usr/bin/xcrun swift test
+/usr/bin/xcrun swift build -c release
+```
+
+Observed final output:
+
+```text
+Test run with 45 tests in 10 suites passed after 0.021 seconds.
+Build complete! (4.70s)
+```
+
+The final debug binary was relaunched after those source changes. It loaded
+Large v3, announced the configured Control-Option-Z toggle binding, and opened
+the Settings window from its Dock icon. The visible controls showed
+`Whisper Large v3 (Accuracy) · 626 MB` and `Paste · Recommended`.
