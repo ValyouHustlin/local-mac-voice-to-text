@@ -105,9 +105,40 @@ creates a new macOS privacy identity, the exact final build still requires one
 fresh user grant for all three permissions. A Developer ID signed release is
 still required to make grants persist reliably across future binary upgrades.
 
-## Residual live check
+## Live permission and Control-Space receipt
 
-No unbounded Wordhand development process was run. The normal installed app is
-open for the user. Control-Space recording and insertion must be re-driven after
-the user grants the three permissions to this exact installed build; this
-receipt does not claim that hotkey flow yet.
+After the user granted the exact `/Applications/Wordhand.app` build,
+Accessibility, Input Monitoring, and Microphone all displayed green checks and
+the running Settings window stated `Wordhand is ready in every app.`
+
+An attended 10-second development listener then received a controlled lowercase
+`z` key-down and key-up:
+
+```text
+[debug] type=10 keycode=6 flags=0
+[debug] type=11 keycode=6 flags=0
+```
+
+Finally, the normal installed app was reopened with TextEdit frontmost. A
+controlled Control-Space event started recording, a `173 × 43` Wordhand overlay
+window appeared, and a second Control-Space event stopped recording. Four
+seconds later:
+
+```text
+/usr/bin/pgrep -fl '/Applications/Wordhand.app/Contents/MacOS/wordhand'
+20075 /Applications/Wordhand.app/Contents/MacOS/wordhand
+
+TextEdit document text:
+ZThank you.
+```
+
+`Z` was the deliberate event-listener probe already in the blank test document.
+`Thank you.` was newly captured from the live microphone, transcribed, formatted,
+and inserted at the TextEdit cursor. This observes the complete installed-app
+path from global shortcut through recording, local transcription, and cursor
+insertion. No unbounded development process was left running.
+
+Residual: this receipt drove the shortcut through a controlled synthetic
+Control-Space event so it could be observed deterministically. The event tap and
+complete action path are verified; a physical-key gesture was not separately
+instrumented.
