@@ -13,7 +13,9 @@ public struct TranscriptProcessor: TranscriptProcessing, Sendable {
     }
 
     public func process(_ text: String, target: TranscriptTarget = .unknown) async -> String {
-        let cleaned = dictionary.apply(to: Self.sanitize(text))
+        let cleaned = Self.removeSpeechFillers(
+            dictionary.apply(to: Self.sanitize(text))
+        )
         guard let formattingProfile else { return cleaned }
         switch formattingProfile {
         case .casual, .formatted, .professional, .aiCommunication:
@@ -45,12 +47,40 @@ public struct TranscriptProcessor: TranscriptProcessing, Sendable {
         return output.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    public static func polish(_ text: String) -> String {
+    /// Removes unambiguous hesitation sounds wherever they occur while
+    /// preserving words that merely contain the same letters. Dictionary
+    /// substitutions run first so a user-defined meaning for a token wins.
+    public static func removeSpeechFillers(_ text: String) -> String {
         var output = text.replacingOccurrences(
-            of: #"(?i)^\s*(?:(?:um+|uh+|erm)[,\s]+)+"#,
+            of: #"(?i)^\s*(?:(?:um+|uh+|erm+|hmm+)(?![\p{L}\p{N}-])\s*[,.;:!?…—–-]*\s*)+"#,
             with: "",
             options: .regularExpression
         )
+        output = output.replacingOccurrences(
+            of: #"(?i)(?<=[.!?])\s+(?:um+|uh+|erm+|hmm+)(?![\p{L}\p{N}-])\s*[.!?]+\s*"#,
+            with: " ",
+            options: .regularExpression
+        )
+        output = output.replacingOccurrences(
+            of: #"(?i)(?:[,;:]|\.{2,}|[—–])?\s*(?<![\p{L}\p{N}-])(?:um+|uh+|erm+|hmm+)(?![\p{L}\p{N}-])\s*(?:[,;:]|\.{2,}|[—–])?"#,
+            with: " ",
+            options: .regularExpression
+        )
+        output = output.replacingOccurrences(
+            of: #"\s+([,.;:!?])"#,
+            with: "$1",
+            options: .regularExpression
+        )
+        output = output.replacingOccurrences(
+            of: #"\s+"#,
+            with: " ",
+            options: .regularExpression
+        )
+        return output.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    public static func polish(_ text: String) -> String {
+        var output = removeSpeechFillers(text)
         output = output.replacingOccurrences(
             of: #"(?i)\s+(?:and\s+)?then\s+"#,
             with: ". Then ",

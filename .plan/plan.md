@@ -265,6 +265,12 @@ Status: complete for the second vertical slice.
 - [x] Keep surrounding application text out of the formatter.
 - [x] Keep formatting instructions, user vocabulary, audio, and transcript
   content on-device with no cloud fallback.
+- [x] Remove unambiguous hesitation sounds (`um`, `uh`, `erm`, and `hmm`,
+  including stretched forms) deterministically in every writing style after
+  dictionary substitution. The isolated CLI receipt transformed
+  `Um, I, uh, think we should erm ship this. Hmm... Please do.` into
+  `I think we should ship this. Please do.` without launching audio or global
+  input.
 
 Receipts: `docs/verification/2026-07-28-flow-formatting.md` and
 `docs/verification/2026-07-29-writing-modes.md`.

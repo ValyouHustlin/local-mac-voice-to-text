@@ -381,12 +381,15 @@ Initial order:
 1. sanitize model control and non-speech tokens;
 2. normalize whitespace;
 3. apply custom dictionary replacements;
-4. apply the explicit Casual, Formatted, Professional, or AI Communication
+4. remove unambiguous hesitation sounds such as `um`, `uh`, `erm`, and `hmm`
+   deterministically, including stretched forms and surrounding pause
+   punctuation; user dictionary substitutions take precedence;
+5. apply the explicit Casual, Formatted, Professional, or AI Communication
    writing style;
-5. validate on-device rewrites for facts, constraints, perspective, modality,
+6. validate on-device rewrites for facts, constraints, perspective, modality,
    and uncertainty, retry conservatively once, then use safe local fallback;
-6. interpret explicitly supported voice commands;
-7. produce the final transcript stored in history.
+7. interpret explicitly supported voice commands;
+8. produce the final transcript stored in history.
 
 The raw model output may be retained inside the same local history record for
 debugging and future reprocessing. Nothing in this pipeline may call a remote

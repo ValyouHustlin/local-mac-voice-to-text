@@ -17,6 +17,7 @@ public final class MutableTranscriptProcessor: TranscriptProcessing, @unchecked 
     public func process(_ text: String, target: TranscriptTarget = .unknown) async -> String {
         let snapshot = lock.withLock { entries }
         let sanitized = TranscriptProcessor.sanitize(text)
-        return DictionaryMatcher(entries: snapshot).apply(to: sanitized)
+        let substituted = DictionaryMatcher(entries: snapshot).apply(to: sanitized)
+        return TranscriptProcessor.removeSpeechFillers(substituted)
     }
 }

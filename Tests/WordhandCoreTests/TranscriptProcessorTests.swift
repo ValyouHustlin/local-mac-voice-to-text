@@ -17,6 +17,51 @@ struct TranscriptProcessorTests {
     }
 
     @Test
+    func removesHesitationFillersAnywhereInTranscript() {
+        let input = "Um, I, uh, think we should erm ship. Hmm... Please do."
+        #expect(
+            TranscriptProcessor.removeSpeechFillers(input)
+                == "I think we should ship. Please do."
+        )
+    }
+
+    @Test
+    func removesStretchedFillersAndCleansSpacing() {
+        let input = "Ummm this is uhhh ready — ermmm — ship it."
+        #expect(
+            TranscriptProcessor.removeSpeechFillers(input)
+                == "this is ready ship it."
+        )
+    }
+
+    @Test
+    func removesFillersWithoutLeavingSentencePunctuationBehind() {
+        #expect(TranscriptProcessor.removeSpeechFillers("Um! Ship it.") == "Ship it.")
+        #expect(
+            TranscriptProcessor.removeSpeechFillers("Done. Um. Start the next task.")
+                == "Done. Start the next task."
+        )
+        #expect(TranscriptProcessor.removeSpeechFillers("Um, uh, hmm...") == "")
+    }
+
+    @Test
+    func preservesWordsAndAffirmationsThatContainFillerLetters() {
+        let input = "The album, thumb, human, and hummus remain; uh-huh."
+        #expect(TranscriptProcessor.removeSpeechFillers(input) == input)
+    }
+
+    @Test
+    func dictionaryMeaningWinsBeforeFillerRemoval() async {
+        let processor = TranscriptProcessor(dictionaryEntries: [
+            DictionaryEntry(spokenForm: "UM", replacement: "University of Michigan"),
+        ])
+        #expect(
+            await processor.process("UM has a campus.")
+                == "University of Michigan has a campus."
+        )
+    }
+
+    @Test
     func dictionaryAppliesLongestMatchWithoutCascading() async {
         let entries = [
             DictionaryEntry(spokenForm: "whisper", replacement: "Wispr"),
