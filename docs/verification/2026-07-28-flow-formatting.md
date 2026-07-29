@@ -48,6 +48,8 @@ Observed:
 
 - the overlay appeared as a matte capsule with an eleven-bar waveform and
   cancel button;
+- a live screenshot during speech showed asymmetric center bars rising strongly
+  while the container stayed borderless and visually quiet;
 - clicking the button removed the overlay without a capture or transcript log;
 - the very next shortcut tap started recording instead of being consumed as a
   stale stop;
@@ -164,8 +166,8 @@ and sound cues.
 ## Residual risk
 
 - A human listening pass is still needed to tune cue timbre and loudness.
-- The waveform reacted to live microphone levels, but an objective
-  high-amplitude visual capture was not produced in this session.
+- Waveform behavior was visually inspected at the fixture's measured RMS
+  `0.007`; subjective motion feel still benefits from Aaron's daily use.
 - Automatic app detection currently uses the active application's bundle/name,
   not the focused field or surrounding document content.
 - The measured local rewrite added 1.03 seconds on this fixture. Longer prompt
