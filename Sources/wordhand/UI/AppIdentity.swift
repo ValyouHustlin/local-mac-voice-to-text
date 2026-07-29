@@ -85,9 +85,14 @@ enum AppIdentity {
 @MainActor
 final class WordhandAppDelegate: NSObject, NSApplicationDelegate {
     private let onOpenPrimaryWindow: () -> Void
+    private let onTerminate: () -> Void
 
-    init(onOpenPrimaryWindow: @escaping () -> Void) {
+    init(
+        onOpenPrimaryWindow: @escaping () -> Void,
+        onTerminate: @escaping () -> Void = {}
+    ) {
         self.onOpenPrimaryWindow = onOpenPrimaryWindow
+        self.onTerminate = onTerminate
     }
 
     func applicationShouldHandleReopen(
@@ -102,5 +107,9 @@ final class WordhandAppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
         false
+    }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        onTerminate()
     }
 }

@@ -22,6 +22,10 @@ public final class TranscriptHistoryStore: TranscriptRecording, @unchecked Senda
             at: fileURL.deletingLastPathComponent(),
             withIntermediateDirectories: true
         )
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o700],
+            ofItemAtPath: fileURL.deletingLastPathComponent().path
+        )
 
         var opened: OpaquePointer?
         let result = sqlite3_open_v2(
@@ -39,6 +43,7 @@ public final class TranscriptHistoryStore: TranscriptRecording, @unchecked Senda
 
         do {
             try configureAndMigrate()
+            try hardenDatabasePermissions()
         } catch {
             sqlite3_close(opened)
             database = nil
@@ -238,6 +243,17 @@ public final class TranscriptHistoryStore: TranscriptRecording, @unchecked Senda
                 try? execute("ROLLBACK")
                 throw error
             }
+        }
+    }
+
+    private func hardenDatabasePermissions() throws {
+        for suffix in ["", "-wal", "-shm"] {
+            let path = fileURL.path + suffix
+            guard FileManager.default.fileExists(atPath: path) else { continue }
+            try FileManager.default.setAttributes(
+                [.posixPermissions: 0o600],
+                ofItemAtPath: path
+            )
         }
     }
 

@@ -37,10 +37,15 @@ public struct DictionaryVocabularySeed: Codable, Equatable, Sendable {
 
 public enum BundledDictionaryVocabulary {
     public static func load() throws -> DictionaryVocabularySeed {
-        guard let url = Bundle.module.url(
+        let appResourceURL = Bundle.main.url(
             forResource: "default-vocabulary",
             withExtension: "json"
-        ) else {
+        )
+        let packageResourceURL = Bundle.module.url(
+            forResource: "default-vocabulary",
+            withExtension: "json"
+        )
+        guard let url = appResourceURL ?? packageResourceURL else {
             throw DictionaryStoreError.missingDefaultVocabulary
         }
         return try JSONDecoder()

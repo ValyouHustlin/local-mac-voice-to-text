@@ -52,6 +52,7 @@ struct Run: ParsableCommand {
 
     func run() throws {
         let environment = ProcessInfo.processInfo.environment
+        let isBundledApplication = Bundle.main.bundleURL.pathExtension == "app"
         if GlobalInputSafetyPolicy.blocksGlobalInput(environment: environment) {
             FileHandle.standardError.write(Data(
                 """
@@ -101,8 +102,16 @@ struct Run: ParsableCommand {
             if !DoctorReport.allOK(checks) {
                 FileHandle.standardError.write(Data("startup checks failed:\n".utf8))
                 DoctorReport.print(checks)
-                FileHandle.standardError.write(Data("\nfix the above or pass --skip-doctor\n".utf8))
-                throw ExitCode(1)
+                if isBundledApplication {
+                    FileHandle.standardError.write(Data(
+                        "\nWordhand.app will stay open so permissions can be repaired.\n".utf8
+                    ))
+                } else {
+                    FileHandle.standardError.write(Data(
+                        "\nfix the above or pass --skip-doctor\n".utf8
+                    ))
+                    throw ExitCode(1)
+                }
             }
         }
 
@@ -149,22 +158,6 @@ struct Run: ParsableCommand {
             model: chosenModel,
             vocabulary: dictionary.vocabulary
         )
-        let warmupSemaphore = DispatchSemaphore(value: 0)
-        var warmupError: Error?
-        Task.detached {
-            do {
-                try await transcriber.warmUp()
-            } catch {
-                warmupError = error
-            }
-            warmupSemaphore.signal()
-        }
-        warmupSemaphore.wait()
-        if let warmupError {
-            FileHandle.standardError.write(Data("warmup failed: \(warmupError)\n".utf8))
-            throw ExitCode(1)
-        }
-
         let monitor = HotkeyMonitor(bindings: settings.hotkeys, debug: debugHotkey)
         let capture = AudioCapture()
         let processor = AppAwareTranscriptProcessor(
@@ -207,8 +200,18 @@ struct Run: ParsableCommand {
                 onCorrectLast: { dictionary.correctLatestTranscript() }
             )
         }
+        let readiness = MainActor.assumeIsolated {
+            RuntimeReadiness()
+        }
+        var modelWarmupTask: Task<Void, Never>?
         let appDelegate = MainActor.assumeIsolated {
-            WordhandAppDelegate(onOpenPrimaryWindow: { settingsController.showSettings() })
+            WordhandAppDelegate(
+                onOpenPrimaryWindow: { settingsController.showSettings() },
+                onTerminate: {
+                    modelWarmupTask?.cancel()
+                    monitor.stop()
+                }
+            )
         }
         let coordinator = MainActor.assumeIsolated {
             DictationCoordinator(
@@ -222,6 +225,13 @@ struct Run: ParsableCommand {
                 audioSampleRate: AudioCapture.targetSampleRate,
                 currentTarget: currentTranscriptTarget
             )
+        }
+        let startHotkeyMonitor = {
+            try monitor.start { event in
+                Task { @MainActor in
+                    await coordinator.handle(event)
+                }
+            }
         }
         MainActor.assumeIsolated {
             app.delegate = appDelegate
@@ -244,6 +254,25 @@ struct Run: ParsableCommand {
             }
             settingsController.onShortcutCaptureChange = { capturing in
                 monitor.setSuspended(capturing)
+            }
+            settingsController.onPermissionsRefresh = { permissions in
+                guard permissions.accessibilityGranted, !readiness.hotkeyReady else {
+                    return
+                }
+                do {
+                    try startHotkeyMonitor()
+                    readiness.hotkeyReady = true
+                    if readiness.modelReady {
+                        menuBar.setReady()
+                    } else {
+                        menuBar.setLoadingModel(chosenModel.id)
+                    }
+                } catch {
+                    FileHandle.standardError.write(Data(
+                        "permission recovery failed: \(error)\n".utf8
+                    ))
+                    menuBar.setFailure("permissions needed · open Settings")
+                }
             }
             coordinator.onStateChange = { state in
                 switch state {
@@ -328,16 +357,40 @@ struct Run: ParsableCommand {
             }
         }
 
+        MainActor.assumeIsolated {
+            menuBar.setLoadingModel(chosenModel.id)
+        }
         do {
-            try monitor.start { event in
-                Task { @MainActor in
-                    await coordinator.handle(event)
-                }
+            try startHotkeyMonitor()
+            MainActor.assumeIsolated {
+                readiness.hotkeyReady = true
             }
         } catch {
             FileHandle.standardError.write(Data("failed to register hotkey tap: \(error)\n".utf8))
             FileHandle.standardError.write(Data("run `wordhand setup` to configure permissions.\n".utf8))
-            throw ExitCode(1)
+            if isBundledApplication {
+                MainActor.assumeIsolated {
+                    menuBar.setFailure("permissions needed · open Settings")
+                    settingsController.showSettings()
+                }
+            } else {
+                throw ExitCode(1)
+            }
+        }
+
+        modelWarmupTask = Task { @MainActor in
+            do {
+                try await transcriber.warmUp()
+                readiness.modelReady = true
+                if readiness.hotkeyReady, coordinator.state == .idle {
+                    menuBar.setReady()
+                }
+            } catch {
+                FileHandle.standardError.write(Data("warmup failed: \(error)\n".utf8))
+                if coordinator.state == .idle {
+                    menuBar.setFailure("model unavailable · open Settings")
+                }
+            }
         }
 
         var globalInputTestTimer: DispatchSourceTimer?
@@ -375,10 +428,16 @@ struct Run: ParsableCommand {
             let behavior = $0.action == .toggleRecording ? "tap" : "hold"
             return "\($0.displayName) \(behavior)"
         }.joined(separator: ", ")
+        let hotkeyReady = MainActor.assumeIsolated {
+            readiness.hotkeyReady
+        }
+        let runtimeStatus = hotkeyReady
+            ? "listening on \(shortcuts)"
+            : "app open; global shortcut unavailable"
         FileHandle.standardError.write(Data(
-            "listening on \(shortcuts) · model: \(chosenModel.id) · ^C to quit\n".utf8
+            "\(runtimeStatus) · model: \(chosenModel.id) · ^C to quit\n".utf8
         ))
-        withExtendedLifetime((instanceLock, globalInputTestTimer)) {
+        withExtendedLifetime((instanceLock, globalInputTestTimer, modelWarmupTask)) {
             app.run()
         }
     }

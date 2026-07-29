@@ -90,6 +90,16 @@ struct SettingsTests {
         try store.save(expected)
 
         #expect(try store.load() == expected)
+        let filePermissions = try #require(
+            FileManager.default.attributesOfItem(atPath: store.fileURL.path)[.posixPermissions]
+                as? NSNumber
+        )
+        let directoryPermissions = try #require(
+            FileManager.default.attributesOfItem(atPath: root.path)[.posixPermissions]
+                as? NSNumber
+        )
+        #expect(filePermissions.intValue == 0o600)
+        #expect(directoryPermissions.intValue == 0o700)
     }
 
     @Test

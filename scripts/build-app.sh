@@ -1,0 +1,81 @@
+#!/usr/bin/env bash
+# Build a self-contained local Wordhand.app from the Swift package.
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(/usr/bin/dirname "$0")" && /bin/pwd)"
+REPO_DIR="$(cd "${SCRIPT_DIR}/.." && /bin/pwd)"
+APP_PATH="${WORDHAND_APP_OUTPUT:-${REPO_DIR}/dist/Wordhand.app}"
+APP_VERSION="${WORDHAND_VERSION:-0.1.0}"
+APP_BUILD="${WORDHAND_BUILD_NUMBER:-1}"
+SIGNING_IDENTITY="${WORDHAND_CODESIGN_IDENTITY:--}"
+
+case "${APP_PATH}" in
+    */Wordhand.app) ;;
+    *)
+        /bin/echo "WORDHAND_APP_OUTPUT must end in Wordhand.app" >&2
+        exit 64
+        ;;
+esac
+
+cd "${REPO_DIR}"
+/usr/bin/swift build -c release -Xswiftc -warnings-as-errors
+BIN_DIR="$(/usr/bin/swift build -c release --show-bin-path)"
+
+if [ -e "${APP_PATH}" ]; then
+    /bin/rm -rf "${APP_PATH}"
+fi
+
+/bin/mkdir -p \
+    "${APP_PATH}/Contents/MacOS" \
+    "${APP_PATH}/Contents/Resources"
+
+/usr/bin/ditto "${BIN_DIR}/wordhand" "${APP_PATH}/Contents/MacOS/wordhand"
+/bin/chmod 755 "${APP_PATH}/Contents/MacOS/wordhand"
+/usr/bin/ditto "${REPO_DIR}/Packaging/Info.plist" "${APP_PATH}/Contents/Info.plist"
+/usr/bin/plutil -replace CFBundleShortVersionString -string "${APP_VERSION}" \
+    "${APP_PATH}/Contents/Info.plist"
+/usr/bin/plutil -replace CFBundleVersion -string "${APP_BUILD}" \
+    "${APP_PATH}/Contents/Info.plist"
+
+/usr/bin/ditto \
+    "${REPO_DIR}/Sources/WordhandCore/Resources/default-vocabulary.json" \
+    "${APP_PATH}/Contents/Resources/default-vocabulary.json"
+
+ICON_WORK="$(/usr/bin/mktemp -d /tmp/wordhand-app-icon.XXXXXX)"
+trap '/bin/rm -rf "${ICON_WORK}"' EXIT
+ICONSET="${ICON_WORK}/AppIcon.iconset"
+/bin/mkdir -p "${ICONSET}"
+/usr/bin/sips -s format png "${REPO_DIR}/docs/assets/wordhand-icon.svg" \
+    --out "${ICON_WORK}/icon-1024.png" >/dev/null
+
+while read -r size filename; do
+    /usr/bin/sips -z "${size}" "${size}" "${ICON_WORK}/icon-1024.png" \
+        --out "${ICONSET}/${filename}" >/dev/null
+done <<'SIZES'
+16 icon_16x16.png
+32 icon_16x16@2x.png
+32 icon_32x32.png
+64 icon_32x32@2x.png
+128 icon_128x128.png
+256 icon_128x128@2x.png
+256 icon_256x256.png
+512 icon_256x256@2x.png
+512 icon_512x512.png
+1024 icon_512x512@2x.png
+SIZES
+
+/usr/bin/iconutil -c icns "${ICONSET}" \
+    -o "${APP_PATH}/Contents/Resources/AppIcon.icns"
+
+/usr/bin/plutil -lint "${APP_PATH}/Contents/Info.plist" >/dev/null
+/usr/bin/codesign --force --deep --sign "${SIGNING_IDENTITY}" "${APP_PATH}"
+/usr/bin/codesign --verify --deep --strict "${APP_PATH}"
+
+/bin/echo "Built ${APP_PATH}"
+/bin/echo "Version ${APP_VERSION} (${APP_BUILD})"
+if [ "${SIGNING_IDENTITY}" = "-" ]; then
+    /bin/echo "Signature: local ad hoc"
+else
+    /bin/echo "Signature: ${SIGNING_IDENTITY}"
+fi

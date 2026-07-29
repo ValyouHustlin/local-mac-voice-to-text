@@ -18,6 +18,7 @@ public struct SettingsStore {
         guard FileManager.default.fileExists(atPath: fileURL.path) else {
             return AppSettings()
         }
+        try hardenPermissions()
         let data = try Data(contentsOf: fileURL)
         return try JSONDecoder().decode(AppSettings.self, from: data).validated()
     }
@@ -29,7 +30,23 @@ public struct SettingsStore {
             at: fileURL.deletingLastPathComponent(),
             withIntermediateDirectories: true
         )
+        try hardenDirectoryPermissions()
         try data.write(to: fileURL, options: [.atomic])
+        try hardenPermissions()
+    }
+
+    private func hardenDirectoryPermissions() throws {
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o700],
+            ofItemAtPath: fileURL.deletingLastPathComponent().path
+        )
+    }
+
+    private func hardenPermissions() throws {
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o600],
+            ofItemAtPath: fileURL.path
+        )
     }
 }
 

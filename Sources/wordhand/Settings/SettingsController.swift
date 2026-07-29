@@ -7,17 +7,32 @@ final class SettingsController: NSObject, ObservableObject, NSWindowDelegate {
     @Published private(set) var settings: AppSettings
     @Published private(set) var saveError: String?
     @Published private(set) var capturingIndex: Int?
+    @Published private(set) var launchAtLoginState: LaunchAtLoginState
+    @Published private(set) var launchAtLoginError: String?
+    @Published private(set) var permissionStatus: WordhandPermissionStatus
 
     var onSettingsChange: ((AppSettings) -> Void)?
     var onShortcutCaptureChange: ((Bool) -> Void)?
+    var onPermissionsRefresh: ((WordhandPermissionStatus) -> Void)?
 
     private let store: SettingsStore
+    private let launchAtLoginManager: any LaunchAtLoginManaging
+    private let permissionManager: any PermissionManaging
     private var windowController: NSWindowController?
     private var localKeyMonitor: Any?
 
-    init(store: SettingsStore, settings: AppSettings) {
+    init(
+        store: SettingsStore,
+        settings: AppSettings,
+        launchAtLoginManager: any LaunchAtLoginManaging = SystemLaunchAtLoginManager(),
+        permissionManager: any PermissionManaging = SystemPermissionManager()
+    ) {
         self.store = store
         self.settings = settings
+        self.launchAtLoginManager = launchAtLoginManager
+        self.launchAtLoginState = launchAtLoginManager.state()
+        self.permissionManager = permissionManager
+        self.permissionStatus = permissionManager.status()
         super.init()
     }
 
@@ -28,6 +43,7 @@ final class SettingsController: NSObject, ObservableObject, NSWindowDelegate {
     }
 
     func showSettings() {
+        refreshPermissions()
         let controller = ensureWindowController()
         controller.showWindow(nil)
         controller.window?.makeKeyAndOrderFront(nil)
@@ -98,6 +114,52 @@ final class SettingsController: NSObject, ObservableObject, NSWindowDelegate {
 
     func setInsertionMode(_ insertionMode: InsertionMode) {
         update { $0.insertionMode = insertionMode }
+    }
+
+    func setLaunchAtLogin(_ enabled: Bool) {
+        do {
+            try launchAtLoginManager.setEnabled(enabled)
+            launchAtLoginState = launchAtLoginManager.state()
+            launchAtLoginError = nil
+            if launchAtLoginState == .requiresApproval {
+                launchAtLoginManager.openSystemSettings()
+            }
+        } catch {
+            launchAtLoginState = launchAtLoginManager.state()
+            launchAtLoginError = error.localizedDescription
+            NSSound.beep()
+        }
+    }
+
+    func openLoginItemSettings() {
+        launchAtLoginManager.openSystemSettings()
+    }
+
+    func refreshPermissions() {
+        permissionStatus = permissionManager.status()
+        onPermissionsRefresh?(permissionStatus)
+    }
+
+    func repairAccessibilityPermission() {
+        permissionManager.requestAccessibility()
+        permissionManager.openAccessibilitySettings()
+        refreshPermissions()
+    }
+
+    func repairMicrophonePermission() {
+        switch permissionStatus.microphone {
+        case .granted:
+            refreshPermissions()
+        case .notDetermined:
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                _ = await permissionManager.requestMicrophone()
+                refreshPermissions()
+            }
+        case .denied:
+            permissionManager.openMicrophoneSettings()
+            refreshPermissions()
+        }
     }
 
     func beginShortcutCapture(at index: Int) {
@@ -256,6 +318,8 @@ private struct SettingsView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 22) {
                     header
+                    startupCard
+                    permissionCard
                     modelCard
                     insertionCard
                     formattingCard
@@ -267,6 +331,132 @@ private struct SettingsView: View {
             }
         }
         .frame(width: 680, height: 440)
+    }
+
+    private var startupCard: some View {
+        settingsCard {
+            VStack(alignment: .leading, spacing: 12) {
+                HStack {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Launch at login")
+                            .font(.headline)
+                        Text(controller.launchAtLoginState.detail)
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    Toggle(
+                        "",
+                        isOn: Binding(
+                            get: { controller.launchAtLoginState.isEnabled },
+                            set: { controller.setLaunchAtLogin($0) }
+                        )
+                    )
+                    .labelsHidden()
+                    .toggleStyle(.switch)
+                    .disabled(!controller.launchAtLoginState.canChange)
+                }
+
+                if controller.launchAtLoginState == .requiresApproval {
+                    Button("Open Login Items") {
+                        controller.openLoginItemSettings()
+                    }
+                    .buttonStyle(.link)
+                }
+
+                if let error = controller.launchAtLoginError {
+                    Label(error, systemImage: "exclamationmark.triangle.fill")
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                }
+            }
+        }
+    }
+
+    private var permissionCard: some View {
+        settingsCard {
+            VStack(alignment: .leading, spacing: 14) {
+                HStack {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Permissions")
+                            .font(.headline)
+                        Text(
+                            controller.permissionStatus.isReady
+                                ? "Wordhand is ready in every app."
+                                : "Microphone and Accessibility stay under your control."
+                        )
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    Button("Check again") {
+                        controller.refreshPermissions()
+                    }
+                    .buttonStyle(.borderless)
+                }
+
+                Divider()
+
+                permissionRow(
+                    title: "Accessibility",
+                    detail: "Listens for your shortcut and inserts text at the cursor.",
+                    granted: controller.permissionStatus.accessibilityGranted,
+                    buttonTitle: "Open Settings",
+                    action: controller.repairAccessibilityPermission
+                )
+
+                Divider()
+
+                permissionRow(
+                    title: "Microphone",
+                    detail: microphonePermissionDetail,
+                    granted: controller.permissionStatus.microphone == .granted,
+                    buttonTitle: controller.permissionStatus.microphone == .notDetermined
+                        ? "Allow" : "Open Settings",
+                    action: controller.repairMicrophonePermission
+                )
+            }
+        }
+    }
+
+    private var microphonePermissionDetail: String {
+        switch controller.permissionStatus.microphone {
+        case .granted:
+            return "Records only while dictation is active."
+        case .notDetermined:
+            return "Permission has not been requested yet."
+        case .denied:
+            return "Enable Wordhand under Privacy & Security → Microphone."
+        }
+    }
+
+    private func permissionRow(
+        title: String,
+        detail: String,
+        granted: Bool,
+        buttonTitle: String,
+        action: @escaping () -> Void
+    ) -> some View {
+        HStack(spacing: 12) {
+            Image(systemName: granted ? "checkmark.circle.fill" : "circle.dashed")
+                .foregroundStyle(
+                    granted
+                        ? Color(red: 0.12, green: 0.49, blue: 0.39)
+                        : Color.secondary
+                )
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                    .font(.subheadline.weight(.semibold))
+                Text(detail)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            Spacer()
+            if !granted {
+                Button(buttonTitle, action: action)
+                    .buttonStyle(.bordered)
+            }
+        }
     }
 
     private var insertionCard: some View {

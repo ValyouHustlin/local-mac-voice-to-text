@@ -42,6 +42,117 @@ struct GlobalInputAdapterTests {
         #expect(poster.unicodeTexts == ["local only"])
         #expect(poster.pasteShortcutCount == 0)
     }
+
+    @Test
+    @MainActor
+    func settingsLaunchAtLoginToggleUsesInjectedManager() throws {
+        let manager = FakeLaunchAtLoginManager(state: .disabled)
+        let permissions = FakePermissionManager()
+        let fixture = try TemporarySettingsFixture()
+        defer { fixture.remove() }
+        let controller = SettingsController(
+            store: fixture.store,
+            settings: AppSettings(),
+            launchAtLoginManager: manager,
+            permissionManager: permissions
+        )
+
+        controller.setLaunchAtLogin(true)
+
+        #expect(manager.setEnabledValues == [true])
+        #expect(controller.launchAtLoginState == .enabled)
+        #expect(controller.launchAtLoginError == nil)
+    }
+
+    @Test
+    @MainActor
+    func settingsLaunchAtLoginOpensApprovalPanelWhenRequired() throws {
+        let manager = FakeLaunchAtLoginManager(state: .disabled)
+        manager.nextEnabledState = .requiresApproval
+        let permissions = FakePermissionManager()
+        let fixture = try TemporarySettingsFixture()
+        defer { fixture.remove() }
+        let controller = SettingsController(
+            store: fixture.store,
+            settings: AppSettings(),
+            launchAtLoginManager: manager,
+            permissionManager: permissions
+        )
+
+        controller.setLaunchAtLogin(true)
+
+        #expect(controller.launchAtLoginState == .requiresApproval)
+        #expect(manager.openSettingsCount == 1)
+    }
+
+    @Test
+    @MainActor
+    func settingsPermissionRefreshPublishesRecoveryState() throws {
+        let permissions = FakePermissionManager()
+        permissions.currentStatus = WordhandPermissionStatus(
+            accessibilityGranted: false,
+            microphone: .granted
+        )
+        let fixture = try TemporarySettingsFixture()
+        defer { fixture.remove() }
+        let controller = SettingsController(
+            store: fixture.store,
+            settings: AppSettings(),
+            launchAtLoginManager: FakeLaunchAtLoginManager(state: .disabled),
+            permissionManager: permissions
+        )
+        var observed: WordhandPermissionStatus?
+        controller.onPermissionsRefresh = { observed = $0 }
+        permissions.currentStatus.accessibilityGranted = true
+
+        controller.refreshPermissions()
+
+        #expect(controller.permissionStatus.isReady)
+        #expect(observed?.isReady == true)
+    }
+
+    @Test
+    func localWhisperModelRequiresEveryCompiledComponent() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("wordhand-model-tests-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let modelID = "test-model"
+        let modelFolder = directory
+            .appendingPathComponent("models/argmaxinc/whisperkit-coreml")
+            .appendingPathComponent(modelID)
+        try FileManager.default.createDirectory(
+            at: modelFolder,
+            withIntermediateDirectories: true
+        )
+        for entry in [
+            "config.json",
+            "MelSpectrogram.mlmodelc",
+            "AudioEncoder.mlmodelc",
+            "TextDecoder.mlmodelc",
+        ] {
+            try FileManager.default.createDirectory(
+                at: modelFolder.appendingPathComponent(entry),
+                withIntermediateDirectories: true
+            )
+        }
+
+        #expect(
+            WhisperModelStorage.localModelFolder(
+                modelID: modelID,
+                downloadBase: directory
+            )?.standardizedFileURL.path == modelFolder.standardizedFileURL.path
+        )
+
+        try FileManager.default.removeItem(
+            at: modelFolder.appendingPathComponent("TextDecoder.mlmodelc")
+        )
+        #expect(
+            WhisperModelStorage.localModelFolder(
+                modelID: modelID,
+                downloadBase: directory
+            ) == nil
+        )
+    }
 }
 
 private final class FakeHotkeyTapController: HotkeyTapControlling {
@@ -83,5 +194,80 @@ private final class FakeTextEventPoster: TextEventPosting, @unchecked Sendable {
         lock.withLock {
             pasteShortcutCount += 1
         }
+    }
+}
+
+private final class FakeLaunchAtLoginManager: LaunchAtLoginManaging {
+    let isAvailable = true
+    private var currentState: LaunchAtLoginState
+    var nextEnabledState: LaunchAtLoginState = .enabled
+    private(set) var setEnabledValues: [Bool] = []
+    private(set) var openSettingsCount = 0
+
+    init(state: LaunchAtLoginState) {
+        self.currentState = state
+    }
+
+    func state() -> LaunchAtLoginState {
+        currentState
+    }
+
+    func setEnabled(_ enabled: Bool) throws {
+        setEnabledValues.append(enabled)
+        currentState = enabled ? nextEnabledState : .disabled
+    }
+
+    func openSystemSettings() {
+        openSettingsCount += 1
+    }
+}
+
+private final class FakePermissionManager: PermissionManaging {
+    var currentStatus = WordhandPermissionStatus(
+        accessibilityGranted: true,
+        microphone: .granted
+    )
+    private(set) var accessibilityRequestCount = 0
+    private(set) var accessibilitySettingsCount = 0
+    private(set) var microphoneSettingsCount = 0
+
+    func status() -> WordhandPermissionStatus {
+        currentStatus
+    }
+
+    func requestAccessibility() {
+        accessibilityRequestCount += 1
+    }
+
+    func requestMicrophone() async -> Bool {
+        currentStatus.microphone = .granted
+        return true
+    }
+
+    func openAccessibilitySettings() {
+        accessibilitySettingsCount += 1
+    }
+
+    func openMicrophoneSettings() {
+        microphoneSettingsCount += 1
+    }
+}
+
+private struct TemporarySettingsFixture {
+    let directory: URL
+    let store: SettingsStore
+
+    init() throws {
+        directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("wordhand-login-tests-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(
+            at: directory,
+            withIntermediateDirectories: true
+        )
+        store = SettingsStore(fileURL: directory.appendingPathComponent("settings.json"))
+    }
+
+    func remove() {
+        try? FileManager.default.removeItem(at: directory)
     }
 }

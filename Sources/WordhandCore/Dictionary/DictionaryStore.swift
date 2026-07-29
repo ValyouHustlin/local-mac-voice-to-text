@@ -131,6 +131,10 @@ public struct DictionaryStore: Sendable {
             at: fileURL.deletingLastPathComponent(),
             withIntermediateDirectories: true
         )
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o700],
+            ofItemAtPath: fileURL.deletingLastPathComponent().path
+        )
         try data.write(to: fileURL, options: [.atomic])
         try hardenPermissions()
     }

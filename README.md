@@ -30,6 +30,7 @@ and inserts the result into ordinary Mac apps.
 | **Decode-aware dictionary** | Teach Wordhand names, acronyms, product terms, and exact replacements. Canonical spellings condition Whisper before decoding; post-processing remains as a fallback. Changes apply without restarting. |
 | **Recoverable history** | Search recent transcripts, inspect insertion status, copy, reinsert, correct, or delete them from a native window. |
 | **A real Mac app** | Wordhand lives in both the menu bar and Dock. Clicking its Dock icon opens Settings; history and dictionary are one click away. |
+| **Ready after login** | The installed app can register as a native macOS login item. Its interface and shortcut become available immediately while the selected speech model warms in the background. |
 | **Accuracy-first local model** | Optimized Whisper Large v3 is the default on capable Macs. Balanced and smaller Whisper models remain selectable. |
 | **Reliable insertion** | Paste-first insertion works across native, browser, and Electron targets while restoring the previous rich clipboard. Direct typing and copy-only modes are available. |
 | **Flow-focused feedback** | Quiet start/stop tones, an expressive live waveform, a display-following recording control, and one-click cancellation keep dictation legible without demanding attention. |
@@ -39,11 +40,12 @@ and inserts the result into ordinary Mac apps.
   <img src="docs/assets/wordhand-history.png" width="920" alt="Wordhand transcript history window">
 </p>
 
-## Source preview
+## Install from source
 
-Wordhand is usable from source today. A signed and notarized installer is still
-in development, so the honest public path currently requires the Xcode command
-line tools.
+Wordhand builds into a normal app bundle with a stable bundle identifier, Dock
+icon, menu bar control, and native launch-at-login support. A Developer ID
+signature and notarized public download are still in development, so the honest
+public path currently requires the Xcode command line tools.
 
 **Requirements:** macOS 14 or newer, an Apple silicon Mac, and approximately
 1 GB of free space for the first model.
@@ -51,15 +53,18 @@ line tools.
 ```sh
 git clone https://github.com/ValyouHustlin/wordhand.git
 cd wordhand
-/usr/bin/xcrun swift build -c release
-.build/release/wordhand setup
-.build/release/wordhand run
+./scripts/install-app.sh --launch-at-login
 ```
 
-On first launch, macOS asks for Microphone and Accessibility access. Those
-permissions are required to capture speech and place text at the cursor.
-For source builds, macOS associates these grants with the terminal application
-that launches Wordhand; the future signed app will have its own stable identity.
+This installs `Wordhand.app` in `~/Applications`, preserves the previous app as
+a rollback copy during upgrades, registers it with macOS, enables launch at
+login, and opens it. Local source builds are ad-hoc signed; they are not a
+substitute for the planned notarized public release, and macOS may require
+permissions again after replacing an ad-hoc-signed build.
+
+On first launch, macOS asks for Microphone and Accessibility access. Wordhand
+keeps Settings open with visible repair actions if either grant is missing.
+Those permissions are required to capture speech and place text at the cursor.
 macOS secure-input fields intentionally block text injection; Wordhand keeps
 the transcript in history instead of treating a password field as a valid
 target.
@@ -81,14 +86,15 @@ prompts to a server. Whisper decoding runs in the local WhisperKit/Core ML
 pipeline. AI-prompt formatting uses Apple's on-device Foundation Models
 framework when available and deterministic local cleanup otherwise.
 
-User vocabulary and transcript history live only under
+User vocabulary, settings, and transcript history live only under
 `~/Library/Application Support/Wordhand`. The public repository ships a
 versioned starter vocabulary, then installs it as ordinary editable dictionary
 entries. Future starter updates merge non-destructively; a term a user deletes
 does not silently return at the same seed version. Dictionary files are
-owner-readable only (`0600`). Wordhand prioritizes recent user corrections and
-uses at most 24 canonical terms per decode so a large dictionary does not drown
-out the terms that matter now.
+owner-readable only (`0600`), as are settings and history; their containing
+directory is owner-accessible only (`0700`). Wordhand prioritizes recent user
+corrections and uses at most 24 canonical terms per decode so a large dictionary
+does not drown out the terms that matter now.
 
 If macOS uses `Control-Space` to switch input sources, disable **Select the
 previous input source** under **System Settings > Keyboard > Keyboard
@@ -103,8 +109,8 @@ wordhand doctor                          # diagnose permissions and shortcut con
 wordhand models list                     # list local transcription models
 wordhand models download <id>            # download a model before first use
 wordhand models benchmark <audio> --model <id>
-wordhand install --launch-at-login       # register the current binary at login
-wordhand install --uninstall             # remove the login agent
+wordhand install --launch-at-login       # register Wordhand at login
+wordhand install --uninstall             # remove launch-at-login registration
 wordhand --model whisper-large-v3-turbo  # use a larger multilingual model
 wordhand --no-overlay                    # hide the recording overlay
 ```
@@ -148,8 +154,8 @@ dedicated to the test. The immediate kill command is
 
 ## Roadmap
 
-The next daily-use slices are immediate undo/revert, onboarding and permission
-repair, deeper prose/chat/code-comment profiles, and a signed release path. See
+The next daily-use slices are immediate undo/revert, fresh-account onboarding,
+deeper prose/chat/code-comment profiles, and a signed release path. See
 [the product roadmap](.plan/plan.md) and
 [architecture](docs/architecture.md).
 

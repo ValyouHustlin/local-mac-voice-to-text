@@ -7,6 +7,7 @@ actor WhisperKitTranscriber: Transcribing {
     private let model: TranscriptionModel
     private let vocabulary: DictionaryVocabularySource
     private var pipeline: WhisperKit?
+    private var warmupTask: Task<Void, Error>?
     private var cancellationToken: TranscriptionCancellationToken?
 
     init(
@@ -23,19 +24,61 @@ actor WhisperKitTranscriber: Transcribing {
     /// download/load.
     func warmUp() async throws {
         if pipeline != nil { return }
+        if let warmupTask {
+            try await warmupTask.value
+            return
+        }
         guard let whisperKitID = model.whisperKitID else {
             throw TranscriberError.missingEngineID
         }
+        let warmupStarted = ProcessInfo.processInfo.systemUptime
         FileHandle.standardError.write(Data("loading \(model.id)...\n".utf8))
-        let config = WhisperKitConfig(
-            model: whisperKitID,
-            textDecoder: PromptSafeTextDecoder(),
-            verbose: false,
-            prewarm: true,
-            load: true
-        )
-        pipeline = try await WhisperKit(config)
-        FileHandle.standardError.write(Data("✓ \(model.id) ready\n".utf8))
+        let task = Task {
+            let downloadBase = WhisperModelStorage.defaultDownloadBase()
+            let localModelFolder = WhisperModelStorage.localModelFolder(
+                modelID: whisperKitID,
+                downloadBase: downloadBase
+            )
+            let config: WhisperKitConfig
+            if let localModelFolder {
+                FileHandle.standardError.write(Data(
+                    "using cached local model; network disabled\n".utf8
+                ))
+                config = WhisperKitConfig(
+                    downloadBase: downloadBase,
+                    modelFolder: localModelFolder.path,
+                    tokenizerFolder: downloadBase,
+                    textDecoder: PromptSafeTextDecoder(),
+                    verbose: false,
+                    prewarm: true,
+                    load: true,
+                    download: false
+                )
+            } else {
+                config = WhisperKitConfig(
+                    model: whisperKitID,
+                    downloadBase: downloadBase,
+                    textDecoder: PromptSafeTextDecoder(),
+                    verbose: false,
+                    prewarm: true,
+                    load: true,
+                    download: true
+                )
+            }
+            pipeline = try await WhisperKit(config)
+        }
+        warmupTask = task
+        do {
+            try await task.value
+            warmupTask = nil
+            let elapsed = ProcessInfo.processInfo.systemUptime - warmupStarted
+            FileHandle.standardError.write(Data(
+                String(format: "✓ %@ ready in %.2fs\n", model.id, elapsed).utf8
+            ))
+        } catch {
+            warmupTask = nil
+            throw error
+        }
     }
 
     func transcribe(_ audio: [Float]) async throws -> String {

@@ -128,18 +128,30 @@ Verified by source inspection and dated receipts on 2026-07-28:
 - searchable SQLite transcript history with copy, reinsert, correction, and
   deletion actions;
 - versioned settings and automatic migration from the legacy product name;
-- permission doctor, setup, and LaunchAgent commands;
+- permission doctor and visible in-app recovery;
+- a stable native application bundle with local code signing, native login-item
+  registration, rollback-preserving local installation, and a legacy
+  LaunchAgent fallback for command-line-only builds;
+- immediate menu, Dock, and shortcut readiness while the selected model warms
+  asynchronously from a complete local cache without network validation;
 - macOS continuous integration for tests and release builds.
 
-The remaining preferences surfaces, signed app bundle, notarization, and
-updates remain planned. Only measured receipts may promote latency or
-compatibility claims.
+Developer ID signing, hardened runtime, notarization, public packaging, a
+fresh-account onboarding pass, and updates remain planned. Only measured
+receipts may promote latency or compatibility claims.
 
 ## Current delivery state
 
 P0 ground truth and P1 foundation are complete as of 2026-07-28. The package
 now has `WordhandCore`, protocol-backed coordinator seams, versioned settings,
-70 deterministic tests across core and macOS adapter targets, and macOS CI.
+74 deterministic tests across core and macOS adapter targets, and macOS CI.
+
+The daily-driver bundle is built by `scripts/build-app.sh` and installed by
+`scripts/install-app.sh`. Installed builds use `SMAppService.mainApp` for native
+launch at login. The UI starts before model warmup; a complete local WhisperKit
+cache is opened with downloading disabled, while a missing cache falls back to
+the explicit download path. Settings, dictionary, history, and the data
+directory are hardened to owner-only permissions.
 
 P2 custom dictionary now drives both transcription stages. Its runtime path is:
 

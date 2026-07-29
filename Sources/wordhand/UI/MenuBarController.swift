@@ -88,7 +88,7 @@ final class MenuBarController {
         menu.addItem(.separator())
 
         let quit = NSMenuItem(
-            title: "Quit wordhand",
+            title: "Quit Wordhand",
             action: #selector(quitClicked),
             keyEquivalent: "q"
         )
@@ -101,6 +101,14 @@ final class MenuBarController {
 
     func setRecording(_ recording: Bool) {
         stateLabel.title = recording ? "● recording" : Self.idleTitle(for: settings)
+    }
+
+    func setLoadingModel(_ modelID: String) {
+        stateLabel.title = "loading \(modelID)…"
+    }
+
+    func setReady() {
+        stateLabel.title = Self.idleTitle(for: settings)
     }
 
     func setTranscribing() {

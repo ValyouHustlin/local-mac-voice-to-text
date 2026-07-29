@@ -333,11 +333,16 @@ Receipt: `docs/verification/2026-07-28-accuracy-paste.md`.
 
 ## P7: ship quality
 
-Status: planned; certificate and public-release actions are Aaron-gated.
+Status: in progress; certificate and public-release actions are Aaron-gated.
 
 Goal: install and update like a normal trusted Mac app.
 
-- Produce a stable `.app` bundle and bundle identifier.
+- [x] Produce a stable `.app` bundle and bundle identifier.
+- [x] Add a rollback-preserving local installer and native launch at login.
+- [x] Keep UI and shortcuts immediately available during background model
+  warmup, and bypass network validation for a complete local model cache.
+- [x] Add visible permission status and in-app recovery controls.
+- [x] Restrict local settings, vocabulary, and history data to the owner.
 - Sign with hardened runtime.
 - Notarize and staple.
 - Package without stripping quarantine.

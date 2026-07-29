@@ -31,6 +31,19 @@ struct TranscriptHistoryStoreTests {
 
         let reopened = try TranscriptHistoryStore(fileURL: fixture.databaseURL)
         #expect(try reopened.records().map(\.id) == [newer.id, older.id])
+
+        let databasePermissions = try #require(
+            FileManager.default.attributesOfItem(atPath: fixture.databaseURL.path)[
+                .posixPermissions
+            ] as? NSNumber
+        )
+        let directoryPermissions = try #require(
+            FileManager.default.attributesOfItem(
+                atPath: fixture.databaseURL.deletingLastPathComponent().path
+            )[.posixPermissions] as? NSNumber
+        )
+        #expect(databasePermissions.intValue == 0o600)
+        #expect(directoryPermissions.intValue == 0o700)
     }
 
     @Test

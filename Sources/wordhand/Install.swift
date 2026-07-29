@@ -1,11 +1,10 @@
 import ArgumentParser
 import Foundation
 
-/// Manage wordhand's LaunchAgent so the daemon starts at login.
+/// Manage Wordhand's launch-at-login registration.
 ///
-/// We deliberately do NOT use SMAppService.mainApp here — that requires a full
-/// .app bundle. Since wordhand ships as a single binary in /usr/local/bin, a
-/// plain LaunchAgent plist is the simpler, more honest mechanism.
+/// Installed app bundles use Apple's ServiceManagement API. Source-built and
+/// legacy command-line installations retain a LaunchAgent fallback.
 struct Install: ParsableCommand {
     static let configuration = CommandConfiguration(
         abstract: "Install or remove the launch-at-login LaunchAgent."
@@ -42,6 +41,20 @@ struct Install: ParsableCommand {
     }
 
     private func writeAgent() throws {
+        let loginManager = SystemLaunchAtLoginManager()
+        if loginManager.isAvailable {
+            try removeLegacyAgents()
+            try loginManager.setEnabled(true)
+            let state = loginManager.state()
+            if state == .requiresApproval {
+                loginManager.openSystemSettings()
+                print("! Wordhand is registered but needs approval in Login Items")
+            } else {
+                print("✓ Wordhand will launch when you sign in")
+            }
+            return
+        }
+
         let binary = try resolveBinaryPath()
         let legacyURL = plistURL(for: Self.legacyLabel)
         let hasLegacyAgent = FileManager.default.fileExists(atPath: legacyURL.path)
@@ -49,14 +62,21 @@ struct Install: ParsableCommand {
             _ = runLaunchctl(["bootout", "gui/\(uid())", legacyURL.path])
         }
 
+        let logDirectory = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/Logs/Wordhand", isDirectory: true)
+        try FileManager.default.createDirectory(
+            at: logDirectory,
+            withIntermediateDirectories: true
+        )
+
         let plist: [String: Any] = [
             "Label": Self.label,
             "ProgramArguments": [binary, "run", "--skip-doctor"],
             "RunAtLoad": true,
-            "KeepAlive": ["SuccessfulExit": false] as [String: Any],
             "ProcessType": "Interactive",
-            "StandardOutPath": "/tmp/wordhand.out.log",
-            "StandardErrorPath": "/tmp/wordhand.err.log",
+            "LimitLoadToSessionType": "Aqua",
+            "StandardOutPath": logDirectory.appendingPathComponent("stdout.log").path,
+            "StandardErrorPath": logDirectory.appendingPathComponent("stderr.log").path,
         ]
 
         let url = plistURL
@@ -93,10 +113,18 @@ struct Install: ParsableCommand {
         print("✓ launch-at-login installed")
         print("  plist:  \(url.path)")
         print("  binary: \(binary)")
-        print("  logs:   /tmp/wordhand.out.log, /tmp/wordhand.err.log")
+        print("  logs:   \(logDirectory.path)")
     }
 
     private func removeAgent() throws {
+        let loginManager = SystemLaunchAtLoginManager()
+        if loginManager.isAvailable {
+            try loginManager.setEnabled(false)
+            try removeLegacyAgents()
+            print("✓ launch-at-login removed")
+            return
+        }
+
         let url = plistURL
         if FileManager.default.fileExists(atPath: url.path) {
             _ = runLaunchctl(["bootout", "gui/\(uid())", url.path])
@@ -104,6 +132,15 @@ struct Install: ParsableCommand {
             print("✓ launch-at-login removed")
         } else {
             print("nothing to remove (no agent at \(url.path))")
+        }
+    }
+
+    private func removeLegacyAgents() throws {
+        for label in [Self.label, Self.legacyLabel] {
+            let url = plistURL(for: label)
+            guard FileManager.default.fileExists(atPath: url.path) else { continue }
+            _ = runLaunchctl(["bootout", "gui/\(uid())", url.path])
+            try FileManager.default.removeItem(at: url)
         }
     }
 
