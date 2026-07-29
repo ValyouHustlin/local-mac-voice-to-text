@@ -4,6 +4,21 @@ import CoreGraphics
 import Foundation
 import WordhandCore
 
+protocol TextEventPosting: Sendable {
+    func postUnicode(_ text: String)
+    func postPasteShortcut() throws
+}
+
+struct CGTextEventPoster: TextEventPosting {
+    func postUnicode(_ text: String) {
+        TextInjector.inject(text)
+    }
+
+    func postPasteShortcut() throws {
+        try TextInjector.postPasteShortcut()
+    }
+}
+
 /// Posts a string of text at the current cursor location by synthesizing
 /// keyboard events with `CGEventKeyboardSetUnicodeString`. Works in nearly
 /// every text field on macOS; some Electron apps and secure password fields
@@ -42,15 +57,28 @@ enum TextInjector {
 }
 
 struct MacTextInserter: TextInserting, @unchecked Sendable {
+    private let eventPoster: any TextEventPosting
+    private let secureInputEnabled: @Sendable () -> Bool
+
+    init(
+        eventPoster: any TextEventPosting = CGTextEventPoster(),
+        secureInputEnabled: @escaping @Sendable () -> Bool = {
+            IsSecureEventInputEnabled()
+        }
+    ) {
+        self.eventPoster = eventPoster
+        self.secureInputEnabled = secureInputEnabled
+    }
+
     func insert(_ text: String, mode: InsertionMode) async throws {
         guard !text.isEmpty else { return }
 
         switch mode {
         case .unicode:
-            guard !IsSecureEventInputEnabled() else {
+            guard !secureInputEnabled() else {
                 throw TextInsertionError.secureInputEnabled
             }
-            TextInjector.inject(text)
+            eventPoster.postUnicode(text)
 
         case .copyOnly:
             try await MainActor.run {
@@ -64,7 +92,7 @@ struct MacTextInserter: TextInserting, @unchecked Sendable {
             }
 
         case .paste:
-            guard !IsSecureEventInputEnabled() else {
+            guard !secureInputEnabled() else {
                 throw TextInsertionError.secureInputEnabled
             }
 
@@ -78,7 +106,7 @@ struct MacTextInserter: TextInserting, @unchecked Sendable {
                 }
                 let ownedChangeCount = pasteboard.changeCount
                 do {
-                    try TextInjector.postPasteShortcut()
+                    try eventPoster.postPasteShortcut()
                 } catch {
                     snapshot.restore(to: pasteboard)
                     throw error

@@ -38,7 +38,49 @@ struct Run: ParsableCommand {
     @Option(name: .long, help: "Override the local data directory for development.")
     var dataDirectory: String?
 
+    @Flag(
+        name: .long,
+        help: "Explicitly opt in to a bounded development test of global input."
+    )
+    var allowGlobalInputTest: Bool = false
+
+    @Option(
+        name: .long,
+        help: "Self-terminate a global-input test after 1–30 seconds."
+    )
+    var globalInputTestTimeoutSeconds: Int?
+
     func run() throws {
+        let environment = ProcessInfo.processInfo.environment
+        if GlobalInputSafetyPolicy.blocksGlobalInput(environment: environment) {
+            FileHandle.standardError.write(Data(
+                """
+                global input disabled because WORDHAND_SAFE is set
+                no event tap or text injector was installed
+
+                """.utf8
+            ))
+            throw ExitCode(1)
+        }
+        if GlobalInputSafetyPolicy.hasInvalidDevelopmentTestConfiguration(
+            optedIn: allowGlobalInputTest,
+            timeoutSeconds: globalInputTestTimeoutSeconds
+        ) {
+            FileHandle.standardError.write(Data(
+                """
+                development tests require both --allow-global-input-test and \
+                --global-input-test-timeout-seconds 1...\(GlobalInputSafetyPolicy.maximumDevelopmentTestSeconds)
+
+                """.utf8
+            ))
+            throw ExitCode(1)
+        }
+        let developmentTestTimeout =
+            GlobalInputSafetyPolicy.validatedDevelopmentTestTimeout(
+                optedIn: allowGlobalInputTest,
+                timeoutSeconds: globalInputTestTimeoutSeconds
+            )
+
         if dataDirectory == nil {
             do {
                 if try ApplicationData.migrateLegacyDataIfNeeded() {
@@ -298,6 +340,28 @@ struct Run: ParsableCommand {
             throw ExitCode(1)
         }
 
+        var globalInputTestTimer: DispatchSourceTimer?
+        if let developmentTestTimeout {
+            let timer = DispatchSource.makeTimerSource(queue: .main)
+            timer.schedule(deadline: .now() + .seconds(developmentTestTimeout))
+            timer.setEventHandler {
+                FileHandle.standardError.write(Data(
+                    "global-input test timeout reached; shutting down\n".utf8
+                ))
+                monitor.stop()
+                NSApp.terminate(nil)
+            }
+            timer.resume()
+            globalInputTestTimer = timer
+            FileHandle.standardError.write(Data(
+                """
+                development global-input test enabled for \(developmentTestTimeout)s
+                immediate kill path: /usr/bin/pkill -x wordhand
+
+                """.utf8
+            ))
+        }
+
         let sigint = DispatchSource.makeSignalSource(signal: SIGINT, queue: .main)
         sigint.setEventHandler {
             FileHandle.standardError.write(Data("\nshutting down\n".utf8))
@@ -314,7 +378,7 @@ struct Run: ParsableCommand {
         FileHandle.standardError.write(Data(
             "listening on \(shortcuts) · model: \(chosenModel.id) · ^C to quit\n".utf8
         ))
-        withExtendedLifetime(instanceLock) {
+        withExtendedLifetime((instanceLock, globalInputTestTimer)) {
             app.run()
         }
     }

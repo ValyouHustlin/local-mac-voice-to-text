@@ -1,5 +1,9 @@
 # Wordhand identity and public repository receipt
 
+> Historical receipt only. The live commands below predate the current
+> global-input safety rule and must not be rerun unattended. See
+> `2026-07-28-global-input-safety.md`.
+
 Date: 2026-07-28
 
 Commit: `951fa94` (`brand: rename Parrot to Wordhand`)

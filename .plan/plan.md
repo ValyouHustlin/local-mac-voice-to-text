@@ -296,6 +296,23 @@ bounded implementation.
 
 Receipt: `docs/verification/2026-07-28-hardening.md`.
 
+### Global input safety checkpoint
+
+Status: implementation and isolated verification complete. Real global-input
+execution is prohibited for agent lanes on Aaron's shared Mac.
+
+- [x] Add `WORDHAND_SAFE=1` startup refusal before model or runtime setup.
+- [x] Put event-tap creation behind an injected `HotkeyTapInstalling` adapter.
+- [x] Put Unicode and paste event posting behind an injected
+  `TextEventPosting` adapter.
+- [x] Test both adapters with fakes that install or post no global events.
+- [x] Require explicit opt-in plus a 1–30 second self-termination timeout for
+  deliberate development tap tests.
+- [x] Document `/usr/bin/pkill -x wordhand` as the immediate kill path.
+- [x] Record the incident and no-live-run development rule durably.
+
+Receipt: `docs/verification/2026-07-28-global-input-safety.md`.
+
 ### Accuracy and latency checkpoint
 
 Status: complete for the model/capture upgrade; continue measuring Aaron's own

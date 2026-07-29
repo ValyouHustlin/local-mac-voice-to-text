@@ -129,6 +129,23 @@ Hardware-facing behavior still requires real Mac verification. Dated receipts
 live in [`docs/verification`](docs/verification), including what was observed
 and what remains unverified.
 
+### Development safety
+
+Wordhand's interactive runtime owns a global keyboard event tap and can post
+synthetic input into the focused application. Do not run it unattended on a Mac
+with other active work. Set `WORDHAND_SAFE=1` to make the `run` command refuse
+startup before it installs global input:
+
+```sh
+WORDHAND_SAFE=1 .build/debug/wordhand run
+```
+
+Contributors should exercise shortcut and insertion behavior through the fake
+adapters in `WordhandMacTests`. A real development tap test requires explicit
+opt-in, a maximum 30-second timeout, active attendance, and a clear terminal
+dedicated to the test. The immediate kill command is
+`/usr/bin/pkill -x wordhand`.
+
 ## Roadmap
 
 The next daily-use slices are immediate undo/revert, onboarding and permission

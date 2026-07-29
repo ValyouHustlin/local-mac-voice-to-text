@@ -4,23 +4,37 @@ import CoreGraphics
 import Foundation
 import WordhandCore
 
+protocol HotkeyTapControlling: AnyObject {
+    func setEnabled(_ enabled: Bool)
+    func stop()
+}
+
+protocol HotkeyTapInstalling {
+    func install(for monitor: HotkeyMonitor) throws -> any HotkeyTapControlling
+}
+
 /// Watches configured global shortcuts and emits recording press/release edges.
 /// Requires Accessibility permission. Bindings can be replaced while running.
 final class HotkeyMonitor: HotkeyMonitoring {
     enum HotkeyError: Error { case tapCreateFailed }
 
     private let debug: Bool
+    private let tapInstaller: any HotkeyTapInstalling
     private var onEvent: ((HotkeyEvent) -> Void)?
-    private var tap: CFMachPort?
-    private var runLoopSource: CFRunLoopSource?
+    private var tapController: (any HotkeyTapControlling)?
     private var bindings: [HotkeyBinding]
     private var stateMachine: HotkeyRoutingStateMachine
     private var isSuspended = false
 
-    init(bindings: [HotkeyBinding], debug: Bool = false) {
+    init(
+        bindings: [HotkeyBinding],
+        debug: Bool = false,
+        tapInstaller: any HotkeyTapInstalling = CGHotkeyTapInstaller()
+    ) {
         self.bindings = bindings
         self.stateMachine = HotkeyRoutingStateMachine(bindings: bindings)
         self.debug = debug
+        self.tapInstaller = tapInstaller
     }
 
     func updateBindings(_ bindings: [HotkeyBinding]) {
@@ -44,61 +58,22 @@ final class HotkeyMonitor: HotkeyMonitoring {
     }
 
     fileprivate func reenableEventTap() {
-        if let tap {
-            CGEvent.tapEnable(tap: tap, enable: true)
-        }
+        tapController?.setEnabled(true)
     }
 
     func start(onEvent: @escaping (HotkeyEvent) -> Void) throws {
         self.onEvent = onEvent
-
-        let promptKey = kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String
-        let trusted = AXIsProcessTrustedWithOptions([promptKey: true] as CFDictionary)
-        if !trusted {
-            FileHandle.standardError.write(Data(
-                "accessibility not granted — system prompt opened. Grant access, then quit and relaunch wordhand.\n".utf8
-            ))
-            throw HotkeyError.tapCreateFailed
+        do {
+            tapController = try tapInstaller.install(for: self)
+        } catch {
+            self.onEvent = nil
+            throw error
         }
-
-        let mask: CGEventMask =
-            (1 << CGEventType.flagsChanged.rawValue)
-            | (1 << CGEventType.keyDown.rawValue)
-            | (1 << CGEventType.keyUp.rawValue)
-        let userInfo = Unmanaged.passUnretained(self).toOpaque()
-
-        // .cgSessionEventTap is the right level for an accessibility-granted
-        // user process (.cghidEventTap requires root).
-        guard
-            let tap = CGEvent.tapCreate(
-                tap: .cgSessionEventTap,
-                place: .headInsertEventTap,
-                options: .defaultTap,
-                eventsOfInterest: mask,
-                callback: hotkeyCallback,
-                userInfo: userInfo
-            )
-        else {
-            throw HotkeyError.tapCreateFailed
-        }
-
-        let source = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0)
-        CFRunLoopAddSource(CFRunLoopGetMain(), source, .commonModes)
-        CGEvent.tapEnable(tap: tap, enable: true)
-
-        self.tap = tap
-        self.runLoopSource = source
     }
 
     func stop() {
-        if let tap {
-            CGEvent.tapEnable(tap: tap, enable: false)
-        }
-        if let source = runLoopSource {
-            CFRunLoopRemoveSource(CFRunLoopGetMain(), source, .commonModes)
-        }
-        tap = nil
-        runLoopSource = nil
+        tapController?.stop()
+        tapController = nil
         onEvent = nil
     }
 
@@ -144,6 +119,79 @@ final class HotkeyMonitor: HotkeyMonitoring {
         if flags.contains(.maskCommand) { modifiers.insert(.command) }
         if flags.contains(.maskSecondaryFn) { modifiers.insert(.function) }
         return modifiers
+    }
+}
+
+private struct CGHotkeyTapInstaller: HotkeyTapInstalling {
+    func install(for monitor: HotkeyMonitor) throws -> any HotkeyTapControlling {
+        let promptKey = kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String
+        let trusted = AXIsProcessTrustedWithOptions([promptKey: true] as CFDictionary)
+        if !trusted {
+            FileHandle.standardError.write(Data(
+                "accessibility not granted — system prompt opened. Grant access, then quit and relaunch wordhand.\n".utf8
+            ))
+            throw HotkeyMonitor.HotkeyError.tapCreateFailed
+        }
+
+        let mask: CGEventMask =
+            (1 << CGEventType.flagsChanged.rawValue)
+            | (1 << CGEventType.keyDown.rawValue)
+            | (1 << CGEventType.keyUp.rawValue)
+        let userInfo = Unmanaged.passUnretained(monitor).toOpaque()
+
+        // .cgSessionEventTap is the right level for an accessibility-granted
+        // user process (.cghidEventTap requires root).
+        guard
+            let tap = CGEvent.tapCreate(
+                tap: .cgSessionEventTap,
+                place: .headInsertEventTap,
+                options: .defaultTap,
+                eventsOfInterest: mask,
+                callback: hotkeyCallback,
+                userInfo: userInfo
+            )
+        else {
+            throw HotkeyMonitor.HotkeyError.tapCreateFailed
+        }
+
+        guard let source = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0) else {
+            CGEvent.tapEnable(tap: tap, enable: false)
+            throw HotkeyMonitor.HotkeyError.tapCreateFailed
+        }
+        CFRunLoopAddSource(CFRunLoopGetMain(), source, .commonModes)
+        CGEvent.tapEnable(tap: tap, enable: true)
+        return CGHotkeyTapController(tap: tap, runLoopSource: source)
+    }
+}
+
+private final class CGHotkeyTapController: HotkeyTapControlling {
+    private var tap: CFMachPort?
+    private var runLoopSource: CFRunLoopSource?
+
+    init(tap: CFMachPort, runLoopSource: CFRunLoopSource) {
+        self.tap = tap
+        self.runLoopSource = runLoopSource
+    }
+
+    func setEnabled(_ enabled: Bool) {
+        if let tap {
+            CGEvent.tapEnable(tap: tap, enable: enabled)
+        }
+    }
+
+    func stop() {
+        if let tap {
+            CGEvent.tapEnable(tap: tap, enable: false)
+        }
+        if let runLoopSource {
+            CFRunLoopRemoveSource(CFRunLoopGetMain(), runLoopSource, .commonModes)
+        }
+        tap = nil
+        runLoopSource = nil
+    }
+
+    deinit {
+        stop()
     }
 }
 

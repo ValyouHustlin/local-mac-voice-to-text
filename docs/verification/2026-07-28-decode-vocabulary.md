@@ -1,5 +1,9 @@
 # Decode-time vocabulary receipt — 2026-07-28
 
+> Historical receipt only. The live commands below predate the current
+> global-input safety rule and must not be rerun unattended. See
+> `2026-07-28-global-input-safety.md`.
+
 ## Claim under test
 
 The same editable local dictionary should condition Whisper before decoding and

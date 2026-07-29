@@ -56,6 +56,39 @@ This file describes the intended architecture for that product. Features marked
 - macOS is the only supported platform. Native AppKit and SwiftUI are preferred
   over web shells or sidecar services.
 
+## Development and shared-machine safety
+
+Wordhand's real runtime installs a session-wide `CGEventTap` and can post
+synthetic keyboard events into whichever application is focused. On Aaron's
+shared development Mac, agent lanes must never leave `wordhand run` or another
+interactive global-input path unattended. `--skip-doctor` is not isolation and
+does not make an unattended run safe.
+
+Development verification uses `HotkeyMonitoring` and `TextInserting` protocols
+with injected fake tap controllers and fake event posters. Offline model
+benchmarks, builds, and tests are allowed because they do not install global
+input or post keystrokes.
+
+The startup kill switch is:
+
+```sh
+WORDHAND_SAFE=1 wordhand run
+```
+
+Safe mode must refuse the run before model warm-up, event-tap installation,
+audio capture, or text-injector setup.
+
+A deliberate real tap test must stay attended and use both
+`--allow-global-input-test` and `--global-input-test-timeout-seconds` with a
+value from 1 through 30. The timer self-terminates the process. The immediate
+manual kill path is `/usr/bin/pkill -x wordhand`, followed by
+`/usr/bin/pgrep -x wordhand` to confirm no process remains.
+
+This is a development constraint, not a relaxation of the end-user product
+goal. Normal user-owned use remains frictionless. Agent lanes prefer isolated
+adapters and fakes, and keep any necessary live run short, deliberate,
+time-bounded, and attended.
+
 ## Explicit non-goals
 
 - Cross-platform support.
@@ -106,7 +139,7 @@ compatibility claims.
 
 P0 ground truth and P1 foundation are complete as of 2026-07-28. The package
 now has `WordhandCore`, protocol-backed coordinator seams, versioned settings,
-66 deterministic tests, and macOS CI.
+70 deterministic tests across core and macOS adapter targets, and macOS CI.
 
 P2 custom dictionary now drives both transcription stages. Its runtime path is:
 
@@ -440,9 +473,9 @@ The final app bundle and bundle identifier will determine the stable TCC
 identity. Development builds must not pretend their permission grants prove the
 signed release identity works.
 
-For isolated development and verification, `wordhand run --data-directory`
-redirects settings, dictionary, and history persistence to an explicit local
-directory.
+`--data-directory` redirects settings, dictionary, and history persistence to
+an explicit local directory. It does not isolate global input; development runs
+still follow the attended, bounded procedure above.
 
 ## Testing strategy
 

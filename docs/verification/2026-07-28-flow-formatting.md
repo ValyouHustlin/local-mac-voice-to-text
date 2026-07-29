@@ -1,5 +1,9 @@
 # Flow feedback and app-aware formatting receipt — 2026-07-28
 
+> Historical receipt only. The live commands below predate the current
+> global-input safety rule and must not be rerun unattended. See
+> `2026-07-28-global-input-safety.md`.
+
 ## Scope
 
 This receipt covers the recording feedback pass and the first local,

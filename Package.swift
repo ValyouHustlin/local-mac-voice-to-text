@@ -68,6 +68,15 @@ let package = Package(
             ],
             linkerSettings: testLinkerSettings
         ),
+        .testTarget(
+            name: "WordhandMacTests",
+            dependencies: [
+                "wordhand",
+                "WordhandCore",
+                .product(name: "Testing", package: "swift-testing"),
+            ],
+            linkerSettings: testLinkerSettings
+        ),
     ],
     swiftLanguageModes: [.v5]
 )

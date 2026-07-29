@@ -1,5 +1,9 @@
 # Application hardening receipt
 
+> Historical receipt only. The live commands below predate the current
+> global-input safety rule and must not be rerun unattended. See
+> `2026-07-28-global-input-safety.md`.
+
 Date: 2026-07-28
 Machine: Aaron's Apple silicon Mac
 

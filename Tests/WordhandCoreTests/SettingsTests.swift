@@ -5,6 +5,54 @@ import Testing
 @Suite
 struct SettingsTests {
     @Test
+    func safeModeBlocksGlobalInputBeforeRuntimeSetup() {
+        #expect(
+            GlobalInputSafetyPolicy.blocksGlobalInput(
+                environment: ["WORDHAND_SAFE": "1"]
+            )
+        )
+        #expect(
+            GlobalInputSafetyPolicy.blocksGlobalInput(
+                environment: ["WORDHAND_SAFE": " true "]
+            )
+        )
+        #expect(
+            !GlobalInputSafetyPolicy.blocksGlobalInput(
+                environment: ["WORDHAND_SAFE": "0"]
+            )
+        )
+        #expect(!GlobalInputSafetyPolicy.blocksGlobalInput(environment: [:]))
+    }
+
+    @Test
+    func developmentGlobalInputTestRequiresOptInAndBoundedTimeout() {
+        #expect(
+            GlobalInputSafetyPolicy.hasInvalidDevelopmentTestConfiguration(
+                optedIn: false,
+                timeoutSeconds: 10
+            )
+        )
+        #expect(
+            GlobalInputSafetyPolicy.hasInvalidDevelopmentTestConfiguration(
+                optedIn: true,
+                timeoutSeconds: nil
+            )
+        )
+        #expect(
+            GlobalInputSafetyPolicy.hasInvalidDevelopmentTestConfiguration(
+                optedIn: true,
+                timeoutSeconds: 31
+            )
+        )
+        #expect(
+            !GlobalInputSafetyPolicy.hasInvalidDevelopmentTestConfiguration(
+                optedIn: true,
+                timeoutSeconds: 10
+            )
+        )
+    }
+
+    @Test
     func defaultsValidate() throws {
         let settings = try AppSettings().validated()
         #expect(
