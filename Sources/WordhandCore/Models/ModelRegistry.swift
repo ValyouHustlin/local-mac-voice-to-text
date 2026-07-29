@@ -21,6 +21,15 @@ public enum ModelRegistry {
             recommended: false
         ),
         TranscriptionModel(
+            id: "whisper-large-v3-626mb",
+            displayName: "Whisper Large v3 (626 MB)",
+            engine: .whisperKit,
+            whisperKitID: "openai_whisper-large-v3-v20240930_626MB",
+            sizeMB: 626,
+            languages: ["multi"],
+            recommended: false
+        ),
+        TranscriptionModel(
             id: "whisper-small.en",
             displayName: "Whisper Small (English)",
             engine: .whisperKit,

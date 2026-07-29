@@ -1,8 +1,8 @@
 # Wordhand product roadmap
 
-This fork is building a full local macOS dictation app, not preserving
-upstream's minimal daemon scope. See `docs/architecture.md` for the product
-contract and target boundaries.
+This fork is building a full local dictation product for Mac and iPhone, not
+preserving upstream's minimal daemon scope. See `docs/architecture.md` for the
+product contract and target boundaries.
 
 ## Rules for every phase
 
@@ -234,6 +234,47 @@ Goal: install and update like a normal trusted Mac app.
 Exit receipt: install the notarized artifact on a clean macOS user account,
 complete onboarding, dictate into all three target classes, restart, update,
 and verify settings/history survive.
+
+## P8: iPhone 17 Pro companion
+
+Status: source foundation complete on `codex/ios17-pro`; iOS build, signing,
+device benchmark, and real-field insertion receipt blocked by the absence of
+full Xcode and a discoverable iPhone on this Mac.
+
+Goal: remove the remaining reason Aaron needs Wispr Flow by making Wordhand
+dictation available in standard iPhone text fields without sending voice or
+text off device.
+
+- [x] Add a real iOS host-app and custom-keyboard project structure.
+- [x] Keep microphone and model loading out of the keyboard extension.
+- [x] Record protected 16 kHz mono audio in the host app.
+- [x] Require on-device recognition for the Apple Speech adapter.
+- [x] Include the exact WhisperKit Large v3 626 MB accuracy candidate behind
+  the same platform-neutral audio-file engine protocol.
+- [x] Require explicit selection before WhisperKit may download model assets.
+- [x] Process text through the shared core boundary.
+- [x] Hand one protected pending draft through an App Group and consume it only
+  after keyboard insertion.
+- [x] Preserve raw audio, model output, processed output, engine, latency, and
+  thermal state locally for same-corpus benchmarking.
+- [x] Cover atomic handoff, one-time consumption, stale-draft protection,
+  expiry, processing, and local observation persistence with pure tests.
+- [ ] Build with the current iOS SDK for an iPhone 17 Pro destination.
+- [ ] Select an Apple development team and provision matching App Group
+  entitlements.
+- [ ] Measure Apple Speech and Whisper Large on the same dictated corpus using
+  Instruments for peak memory and Energy/thermal observations.
+- [ ] Drive Record, return, and Insert in Messages, Notes, and ChatGPT.
+
+Exit receipt: on Aaron's physical iPhone 17 Pro, dictate the same corpus through
+both engines, select the more accurate daily default with measured tradeoffs,
+then insert exact observed output into Messages, Notes, and ChatGPT. Record any
+iOS app-switch limitation instead of assuming the keyboard can return control.
+
+Implementation and current blockers:
+`docs/ios-architecture.md`,
+`docs/ios-device-setup.md`, and
+`docs/verification/2026-07-28-ios-foundation.md`.
 
 ## Decision gates
 

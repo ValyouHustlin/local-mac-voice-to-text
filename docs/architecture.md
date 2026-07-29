@@ -6,8 +6,10 @@ This repository is Aaron's fork of `digimata/parrot`. It deliberately diverges
 from upstream's ultra-minimal dictation-daemon charter. Merge compatibility is
 not a design goal.
 
-The product is a daily-use macOS dictation app in the Wispr Flow class, with one
-defining advantage: microphone audio and transcript text stay on the Mac.
+The product is a daily-use Apple-platform dictation app in the Wispr Flow
+class, with one defining advantage: microphone audio and transcript text stay
+on the device that captured them. macOS is the mature primary surface. The
+first mobile target is Aaron's iPhone 17 Pro.
 
 ## Product identity
 
@@ -55,7 +57,7 @@ This file describes the intended architecture for that product. Features marked
 
 ## Explicit non-goals
 
-- Cross-platform support.
+- Platforms outside macOS and iOS.
 - Cloud transcription or cloud post-processing.
 - Uploading audio, transcripts, dictionary entries, history, or surrounding
   application text.
@@ -81,6 +83,13 @@ Verified by source inspection and dated receipts on 2026-07-28:
 - versioned settings and automatic migration from the legacy product name;
 - permission doctor, setup, and LaunchAgent commands;
 - macOS continuous integration for tests and release builds.
+
+An iOS host app, custom keyboard extension, shared local handoff core, and two
+on-device engine adapters are now present on the `codex/ios17-pro` development
+branch. Their source has not been compiled with an iOS SDK or driven on an
+iPhone because this Mac currently has Command Line Tools only. They are not
+promoted to shipped behavior until the device receipt in
+`docs/verification/2026-07-28-ios-foundation.md` is completed.
 
 Paste-based insertion, the remaining preferences surfaces, signed app bundle,
 notarization, and updates remain planned. Only measured receipts may promote
@@ -134,7 +143,7 @@ receipt plus the remaining three-target exit gate.
 
 ## Target structure
 
-The package should separate testable product logic from macOS adapters:
+The package separates testable product logic from platform adapters:
 
 ```text
 Package.swift
@@ -154,6 +163,11 @@ Sources/
     Permissions/
     UI/
   wordhand/                     executable wiring and CLI compatibility
+  WordhandMobileCore/           App Group handoff and local benchmark storage
+Mobile/
+  WordhandMobile/               iOS recorder and on-device transcription host
+  WordhandKeyboard/             lightweight cursor insertion extension
+  Shared/                       matching App Group configuration
 Tests/
   WordhandCoreTests/
   WordhandMacTests/             adapter contract tests with fakes where possible
@@ -352,7 +366,7 @@ On the first branded launch, Wordhand copies an existing
 staged migration. It never overwrites an existing Wordhand directory and
 preserves the legacy directory for rollback.
 
-The final app bundle and bundle identifier will determine the stable TCC
+The final macOS app bundle and bundle identifier will determine the stable TCC
 identity. Development builds must not pretend their permission grants prove the
 signed release identity works.
 
@@ -403,3 +417,36 @@ The inherited upstream repository currently has no software license. Public
 source visibility is allowed, but an installable project release must not be
 described as carrying an open-source license until provenance is resolved. See
 `NOTICE.md`.
+
+## iPhone architecture
+
+iOS does not give a custom keyboard extension microphone access. Wordhand
+therefore keeps the model and microphone in the containing app:
+
+```text
+Wordhand keyboard Record
+  -> wordhand://record opens containing app when iOS permits
+  -> private 16 kHz mono CAF recording
+  -> AudioFileTranscribing engine in host app only
+       Apple Speech with requiresOnDeviceRecognition = true
+       or explicitly selected Whisper Large v3 626 MB model
+  -> shared TranscriptProcessor and dictionary boundary
+  -> protected atomic draft in App Group
+  -> return to previous app
+  -> keyboard textDocumentProxy.insertText
+  -> consume only the inserted draft ID
+```
+
+The App Group contains only one processed pending draft. Raw audio, raw model
+output, latency, engine identity, and thermal observations stay in the
+containing app's private Application Support directory for cross-platform
+accuracy benchmarking. The keyboard never loads a speech model. iOS requires
+Full Access for App Group handoff, but the extension has no network client and
+sends no content anywhere.
+
+Apple Speech is the bootstrap engine, not the accuracy winner by assumption.
+The named WhisperKit candidate is
+`openai_whisper-large-v3-v20240930_626MB`. Choosing it in the host app is the
+explicit one-time model-download action. The default may change only after both
+engines run the same local corpus on Aaron's iPhone 17 Pro and the receipt
+records word accuracy, post-stop latency, peak memory, and thermal behavior.

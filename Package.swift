@@ -26,9 +26,13 @@ let testLinkerSettings: [LinkerSetting] = needsTestingInteropPath ? [
 
 let package = Package(
     name: "wordhand",
-    platforms: [.macOS(.v14)],
+    platforms: [
+        .macOS(.v14),
+        .iOS(.v17),
+    ],
     products: [
         .library(name: "WordhandCore", targets: ["WordhandCore"]),
+        .library(name: "WordhandMobileCore", targets: ["WordhandMobileCore"]),
         .executable(name: "wordhand", targets: ["wordhand"]),
     ],
     dependencies: [
@@ -46,6 +50,10 @@ let package = Package(
                 .linkedLibrary("sqlite3"),
             ]
         ),
+        .target(
+            name: "WordhandMobileCore",
+            dependencies: ["WordhandCore"]
+        ),
         .executableTarget(
             name: "wordhand",
             dependencies: [
@@ -58,6 +66,15 @@ let package = Package(
             name: "WordhandCoreTests",
             dependencies: [
                 "WordhandCore",
+                .product(name: "Testing", package: "swift-testing"),
+            ],
+            linkerSettings: testLinkerSettings
+        ),
+        .testTarget(
+            name: "WordhandMobileCoreTests",
+            dependencies: [
+                "WordhandCore",
+                "WordhandMobileCore",
                 .product(name: "Testing", package: "swift-testing"),
             ],
             linkerSettings: testLinkerSettings

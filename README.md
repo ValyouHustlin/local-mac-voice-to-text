@@ -108,6 +108,20 @@ Hardware-facing behavior still requires real Mac verification. Dated receipts
 live in [`docs/verification`](docs/verification), including what was observed
 and what remains unverified.
 
+## iPhone 17 Pro companion
+
+The `codex/ios17-pro` branch contains the first Wordhand iPhone host app and
+custom keyboard slice under `Mobile/`. Recording and both speech engines stay
+in the host app; the keyboard only inserts a protected local App Group draft.
+The accuracy candidates are Apple's required-on-device Speech recognizer and
+WhisperKit's `openai_whisper-large-v3-v20240930_626MB` model.
+
+This machine did not have full Xcode or an iOS SDK when the slice was created,
+so it is not yet a claimed working iPhone build. Continue from
+[`docs/ios-device-setup.md`](docs/ios-device-setup.md) and see the exact
+verification boundary in
+[`docs/verification/2026-07-28-ios-foundation.md`](docs/verification/2026-07-28-ios-foundation.md).
+
 ## Roadmap
 
 The next daily-use slices are paste-based insertion with clipboard restoration,
