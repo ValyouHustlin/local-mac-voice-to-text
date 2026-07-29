@@ -200,13 +200,15 @@ binding removal, and menu state were observed in the running app.
 
 ## P6: daily-use gap
 
-Status: planned; order must be validated after P0-P5 usage data.
+Status: in progress. The first app-aware formatting and recording-feedback
+checkpoint is implemented and live-verified.
 
 Current ranking:
 
-1. conservative auto-formatting and filler-word cleanup;
+1. [x] conservative auto-formatting and filler-word cleanup;
 2. onboarding, permission repair, and model-download recovery;
-3. app-aware formatting for prose, chat, and code-comment contexts;
+3. [x] first app-aware AI/coding profile; prose, chat, and code-comment
+   specialization remains;
 4. undo/revert of the last insertion if not completed in P4;
 5. text snippets and explicit voice commands;
 6. multilingual selection and language auto-detect;
@@ -223,6 +225,25 @@ surrounding document content.
 
 Exit receipts are defined per slice before implementation and include both unit
 checks and the real affected flow.
+
+### Flow feedback and app-aware formatting checkpoint
+
+Status: complete for the first vertical slice.
+
+- [x] Add restrained local start, stop, and cancel tones with a Settings toggle.
+- [x] Replace the passive six-bar indicator with an expressive eleven-bar
+  waveform and a modern matte treatment.
+- [x] Keep the overlay on the display containing the pointer.
+- [x] Add an accessible X that discards capture/transcription before insertion.
+- [x] Reset tap-toggle routing on cancellation so the next tap starts normally.
+- [x] Add Automatic, Polished, AI prompt, and Verbatim writing profiles.
+- [x] Route Ghostty, terminals, development tools, and AI apps to AI-prompt
+  formatting in Automatic mode.
+- [x] Use Apple's on-device system language model when available, with safe
+  output bounds, a four-second deadline, and deterministic local fallback.
+- [x] Keep surrounding application text out of the formatter.
+
+Receipt: `docs/verification/2026-07-28-flow-formatting.md`.
 
 ### Accuracy and latency checkpoint
 

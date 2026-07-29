@@ -39,7 +39,7 @@ public protocol Transcribing: Sendable {
 }
 
 public protocol TranscriptProcessing: Sendable {
-    func process(_ text: String) -> String
+    func process(_ text: String, target: TranscriptTarget) async -> String
 }
 
 public protocol TextInserting: Sendable {
@@ -55,6 +55,7 @@ public final class DictationCoordinator {
     public var onStateChange: ((DictationState) -> Void)?
     public var onCapture: (([Float]) -> Void)?
     public var onTranscript: ((String, TimeInterval) -> Void)?
+    public var onProcessingDuration: ((TimeInterval) -> Void)?
     public var onHistoryChange: (() -> Void)?
 
     private let capture: AudioCapturing
@@ -68,6 +69,8 @@ public final class DictationCoordinator {
     private let currentTarget: () -> TranscriptTarget
     private let date: () -> Date
     private let now: () -> TimeInterval
+    private var activeOperationID: UUID?
+    private var isCaptureStopping = false
 
     public init(
         capture: AudioCapturing,
@@ -104,6 +107,7 @@ public final class DictationCoordinator {
             guard state == .idle else { return }
             do {
                 try capture.start()
+                activeOperationID = UUID()
                 state = .recording
             } catch {
                 state = .failed(.capture(String(describing: error)))
@@ -111,27 +115,45 @@ public final class DictationCoordinator {
 
         case .released:
             guard state == .recording else { return }
+            guard let operationID = activeOperationID else { return }
+            state = .transcribing
+            isCaptureStopping = true
             let samples = await capture.stop()
+            isCaptureStopping = false
+            guard activeOperationID == operationID else {
+                if activeOperationID == nil {
+                    state = .idle
+                }
+                return
+            }
             onCapture?(samples)
             guard !samples.isEmpty else {
+                activeOperationID = nil
                 state = .idle
                 return
             }
 
-            state = .transcribing
             let transcriptionStarted = now()
             let raw: String
             do {
                 raw = try await transcriber.transcribe(samples)
             } catch {
+                guard activeOperationID == operationID else { return }
+                activeOperationID = nil
                 state = .failed(.transcription(String(describing: error)))
                 return
             }
+            guard activeOperationID == operationID else { return }
 
             let transcriptionElapsed = now() - transcriptionStarted
             state = .processing
-            let text = processor.process(raw)
+            let target = currentTarget()
+            let processingStarted = now()
+            let text = await processor.process(raw, target: target)
+            onProcessingDuration?(now() - processingStarted)
+            guard activeOperationID == operationID else { return }
             guard !text.isEmpty else {
+                activeOperationID = nil
                 state = .idle
                 return
             }
@@ -145,7 +167,7 @@ public final class DictationCoordinator {
                 audioDuration: Double(samples.count) / audioSampleRate,
                 transcriptionDuration: transcriptionElapsed,
                 insertionMode: insertionMode,
-                target: currentTarget(),
+                target: target,
                 status: .pendingInsertion
             )
             if let history {
@@ -153,6 +175,7 @@ public final class DictationCoordinator {
                     try history.save(record)
                     onHistoryChange?()
                 } catch {
+                    activeOperationID = nil
                     state = .failed(.history(String(describing: error)))
                     return
                 }
@@ -170,6 +193,7 @@ public final class DictationCoordinator {
                     )
                     onHistoryChange?()
                 }
+                activeOperationID = nil
                 state = .failed(.insertion(String(describing: error)))
                 return
             }
@@ -179,11 +203,29 @@ public final class DictationCoordinator {
                     try history.updateStatus(id: record.id, status: .inserted)
                     onHistoryChange?()
                 } catch {
+                    activeOperationID = nil
                     state = .failed(.historyStatus(String(describing: error)))
                     return
                 }
             }
+            activeOperationID = nil
             state = .idle
+        }
+    }
+
+    public func cancelCurrent() async {
+        switch state {
+        case .recording:
+            activeOperationID = nil
+            _ = await capture.stop()
+            state = .idle
+        case .transcribing, .processing:
+            activeOperationID = nil
+            if !isCaptureStopping {
+                state = .idle
+            }
+        case .idle, .inserting, .failed:
+            break
         }
     }
 

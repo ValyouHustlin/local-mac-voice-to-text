@@ -111,6 +111,11 @@ public struct HotkeyRoutingStateMachine: Sendable {
         return event
     }
 
+    public mutating func cancelActive() {
+        activeBindingIndex = nil
+        heldKeyCodes.removeAll()
+    }
+
     /// Whether a global event belongs to a configured recording shortcut and
     /// should be withheld from the frontmost app.
     public func shouldConsume(_ input: HotkeyInput) -> Bool {

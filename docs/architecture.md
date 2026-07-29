@@ -78,6 +78,12 @@ Verified by source inspection and dated receipts on 2026-07-28:
   direct Unicode fallback, and Secure Input detection;
 - native recording overlay, branded menu bar control, Dock presence, and
   Settings window;
+- quiet local start/stop/cancel cues, an expressive eleven-bar waveform, a
+  pointer-display-following overlay, and one-click cancellation that discards
+  work before insertion;
+- writing profiles for verbatim, polished, AI-prompt, and automatic app-aware
+  output; on macOS 26 the AI-prompt path uses Apple's on-device system language
+  model and falls back to deterministic cleanup when unavailable;
 - persistent custom dictionary with immediate correction flow;
 - searchable SQLite transcript history with copy, reinsert, correction, and
   deletion actions;
@@ -93,7 +99,7 @@ compatibility claims.
 
 P0 ground truth and P1 foundation are complete as of 2026-07-28. The package
 now has `WordhandCore`, protocol-backed coordinator seams, versioned settings,
-45 deterministic tests, and macOS CI.
+52 deterministic tests, and macOS CI.
 
 P2 custom dictionary is implemented but not yet through its live three-target
 exit gate. Its current runtime path is:
@@ -153,6 +159,23 @@ mutation. Chrome and VS Code accepted complete live transcripts while an RTF
 plus plain-text clipboard item was restored. See
 `docs/verification/2026-07-28-accuracy-paste.md`.
 
+The recording surface is intentionally visually quiet: a matte capsule, an
+eleven-bar mint waveform, and a compact cancel button. It follows the pointer
+between displays, so the state stays visible on the screen being used.
+Cancellation invalidates the current coordinator operation before insertion
+and resets tap-toggle routing so the next shortcut starts immediately.
+
+Automatic writing style now resolves terminal, development, and AI application
+targets to an AI-prompt profile. That profile sends only the current local
+transcript to Apple's local Foundation Models framework, with instructions to
+preserve meaning, restructure run-ons, and never answer the request. It does not
+read surrounding document content. Generation has a proportional response
+budget and a four-second deadline; either validation or runtime failure falls
+back to deterministic cleanup. Non-AI targets receive deterministic
+capitalization, punctuation, and conservative filler cleanup. Users can force
+automatic, polished, AI-prompt, or verbatim behavior in Settings. See
+`docs/verification/2026-07-28-flow-formatting.md`.
+
 ## Target structure
 
 The package should separate testable product logic from macOS adapters:
@@ -194,7 +217,8 @@ shortcut event
   -> transcript processor
        sanitize model tokens
        apply dictionary
-       format for active application
+       resolve writing profile for active application
+       optionally rewrite with Apple's on-device system language model
        apply local voice commands
   -> history store (before insertion)
   -> insertion router
@@ -212,8 +236,9 @@ idle -> recording -> transcribing -> processing -> inserting -> idle
                          \-> failed/recoverable -> idle
 ```
 
-Repeated presses, a release without a matching press, overlapping transcription,
-and shutdown during work must have defined behavior and tests.
+Repeated presses, a release without a matching press, explicit cancellation,
+overlapping transcription, and shutdown during work must have defined behavior
+and tests.
 
 ## Core contracts
 
@@ -258,8 +283,9 @@ Initial order:
 1. sanitize model control and non-speech tokens;
 2. normalize whitespace;
 3. apply custom dictionary replacements;
-4. apply conservative punctuation and capitalization;
-5. apply application-specific formatting when enabled;
+4. resolve the user-selected writing profile against the active application;
+5. apply conservative punctuation and capitalization, or an on-device
+   AI-prompt rewrite with strict output validation and deterministic fallback;
 6. interpret explicitly supported voice commands;
 7. produce the final transcript stored in history.
 

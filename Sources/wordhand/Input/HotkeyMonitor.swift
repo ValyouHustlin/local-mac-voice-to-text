@@ -39,6 +39,10 @@ final class HotkeyMonitor: HotkeyMonitoring {
         }
     }
 
+    func cancelActiveRecording() {
+        stateMachine.cancelActive()
+    }
+
     fileprivate func reenableEventTap() {
         if let tap {
             CGEvent.tapEnable(tap: tap, enable: true)

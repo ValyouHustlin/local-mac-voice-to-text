@@ -84,6 +84,14 @@ final class SettingsController: NSObject, ObservableObject, NSWindowDelegate {
         update { $0.showOverlay = enabled }
     }
 
+    func setSoundEffectsEnabled(_ enabled: Bool) {
+        update { $0.soundEffectsEnabled = enabled }
+    }
+
+    func setFormattingProfile(_ profile: TranscriptFormattingProfile) {
+        update { $0.formattingProfile = profile }
+    }
+
     func setModelID(_ modelID: String) {
         update { $0.modelID = modelID }
     }
@@ -250,6 +258,7 @@ private struct SettingsView: View {
                     header
                     modelCard
                     insertionCard
+                    formattingCard
                     shortcutsCard
                     recordingCard
                     privacyNote
@@ -336,6 +345,53 @@ private struct SettingsView: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
             }
+        }
+    }
+
+    private var formattingCard: some View {
+        settingsCard {
+            HStack(alignment: .firstTextBaseline) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Writing style")
+                        .font(.headline)
+                    Text(formattingDescription)
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer(minLength: 20)
+                Picker(
+                    "Writing style",
+                    selection: Binding(
+                        get: { controller.settings.formattingProfile },
+                        set: { controller.setFormattingProfile($0) }
+                    )
+                ) {
+                    Text("Automatic · Recommended")
+                        .tag(TranscriptFormattingProfile.automatic)
+                    Text("Polished")
+                        .tag(TranscriptFormattingProfile.polished)
+                    Text("AI prompt")
+                        .tag(TranscriptFormattingProfile.aiPrompt)
+                    Text("Verbatim")
+                        .tag(TranscriptFormattingProfile.verbatim)
+                }
+                .labelsHidden()
+                .frame(width: 220)
+            }
+        }
+    }
+
+    private var formattingDescription: String {
+        switch controller.settings.formattingProfile {
+        case .automatic:
+            return "Structures prompts in AI and coding apps; keeps everyday dictation naturally polished."
+        case .polished:
+            return "Cleans fillers, capitalization, punctuation, and sentence boundaries."
+        case .aiPrompt:
+            return "Uses Apple’s on-device model to turn spoken thoughts into scannable AI instructions."
+        case .verbatim:
+            return "Keeps your wording and structure exactly as transcribed."
         }
     }
 
@@ -476,24 +532,48 @@ private struct SettingsView: View {
 
     private var recordingCard: some View {
         settingsCard {
-            HStack {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Recording indicator")
-                        .font(.headline)
-                    Text("Show a small waveform while Wordhand is listening.")
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                }
-                Spacer()
-                Toggle(
-                    "",
-                    isOn: Binding(
-                        get: { controller.settings.showOverlay },
-                        set: { controller.setShowOverlay($0) }
+            VStack(spacing: 16) {
+                HStack {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Recording indicator")
+                            .font(.headline)
+                        Text("Show the live waveform and cancel control.")
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    Toggle(
+                        "",
+                        isOn: Binding(
+                            get: { controller.settings.showOverlay },
+                            set: { controller.setShowOverlay($0) }
+                        )
                     )
-                )
-                .labelsHidden()
-                .toggleStyle(.switch)
+                    .labelsHidden()
+                    .toggleStyle(.switch)
+                }
+
+                Divider()
+
+                HStack {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Sound cues")
+                            .font(.headline)
+                        Text("Play quiet start, finish, and cancel tones.")
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    Toggle(
+                        "",
+                        isOn: Binding(
+                            get: { controller.settings.soundEffectsEnabled },
+                            set: { controller.setSoundEffectsEnabled($0) }
+                        )
+                    )
+                    .labelsHidden()
+                    .toggleStyle(.switch)
+                }
             }
         }
     }

@@ -63,6 +63,75 @@ struct DictationCoordinatorTests {
     }
 
     @Test
+    func cancelWhileRecordingDiscardsAudioAndReturnsToIdle() async {
+        let capture = FakeCapture(samples: [0.1, 0.2])
+        let transcriber = FakeTranscriber(result: "must never be inserted")
+        let inserter = FakeInserter()
+        let coordinator = DictationCoordinator(
+            capture: capture,
+            transcriber: transcriber,
+            processor: TranscriptProcessor(),
+            inserter: inserter
+        )
+
+        await coordinator.handle(.pressed)
+        await coordinator.cancelCurrent()
+
+        #expect(coordinator.state == .idle)
+        #expect(capture.stopCount == 1)
+        #expect(transcriber.callCount == 0)
+        #expect(inserter.insertions.isEmpty)
+    }
+
+    @Test
+    func cancelDoesNotAllowRestartUntilMicrophoneHasStopped() async {
+        let capture = SuspendedCapture()
+        let coordinator = DictationCoordinator(
+            capture: capture,
+            transcriber: FakeTranscriber(result: "unused"),
+            processor: TranscriptProcessor(),
+            inserter: FakeInserter()
+        )
+
+        await coordinator.handle(.pressed)
+        let cancel = Task { await coordinator.cancelCurrent() }
+        await capture.waitUntilStopStarted()
+        await coordinator.handle(.pressed)
+
+        #expect(capture.startCount == 1)
+        #expect(coordinator.state == .recording)
+
+        capture.finishStop()
+        await cancel.value
+        #expect(coordinator.state == .idle)
+
+        await coordinator.handle(.pressed)
+        #expect(capture.startCount == 2)
+    }
+
+    @Test
+    func cancelDuringTranscriptionPreventsInsertion() async {
+        let transcriber = SuspendedTranscriber()
+        let inserter = FakeInserter()
+        let coordinator = DictationCoordinator(
+            capture: FakeCapture(samples: [0.1]),
+            transcriber: transcriber,
+            processor: TranscriptProcessor(),
+            inserter: inserter
+        )
+
+        await coordinator.handle(.pressed)
+        let release = Task { await coordinator.handle(.released) }
+        await transcriber.waitUntilStarted()
+        await coordinator.cancelCurrent()
+        transcriber.finish(with: "must never be inserted")
+        await release.value
+
+        #expect(coordinator.state == .idle)
+        #expect(inserter.insertions.isEmpty)
+    }
+
+    @Test
     func emptyCaptureReturnsToIdleWithoutTranscribing() async {
         let transcriber = FakeTranscriber(result: "should not run")
         let coordinator = DictationCoordinator(
@@ -195,6 +264,7 @@ private enum FakeError: Error {
 private final class FakeCapture: AudioCapturing {
     private let samples: [Float]
     private(set) var startCount = 0
+    private(set) var stopCount = 0
 
     init(samples: [Float]) {
         self.samples = samples
@@ -205,7 +275,8 @@ private final class FakeCapture: AudioCapturing {
     }
 
     func stop() async -> [Float] {
-        samples
+        stopCount += 1
+        return samples
     }
 }
 
@@ -223,6 +294,111 @@ private final class FakeTranscriber: Transcribing, @unchecked Sendable {
     func transcribe(_ audio: [Float]) async throws -> String {
         callCount += 1
         return result
+    }
+}
+
+private final class SuspendedCapture: AudioCapturing, @unchecked Sendable {
+    private let lock = NSLock()
+    private(set) var startCount = 0
+    private var stopStarted = false
+    private var stopStartedContinuation: CheckedContinuation<Void, Never>?
+    private var stopContinuation: CheckedContinuation<[Float], Never>?
+
+    func start() throws {
+        lock.withLock {
+            startCount += 1
+        }
+    }
+
+    func stop() async -> [Float] {
+        let waiter = lock.withLock {
+            stopStarted = true
+            let waiter = stopStartedContinuation
+            stopStartedContinuation = nil
+            return waiter
+        }
+        waiter?.resume()
+        return await withCheckedContinuation { continuation in
+            lock.withLock {
+                stopContinuation = continuation
+            }
+        }
+    }
+
+    func waitUntilStopStarted() async {
+        if lock.withLock({ stopStarted }) { return }
+        await withCheckedContinuation { continuation in
+            let resumeNow = lock.withLock {
+                if stopStarted {
+                    return true
+                }
+                stopStartedContinuation = continuation
+                return false
+            }
+            if resumeNow {
+                continuation.resume()
+            }
+        }
+    }
+
+    func finishStop() {
+        let continuation = lock.withLock {
+            let continuation = stopContinuation
+            stopContinuation = nil
+            return continuation
+        }
+        continuation?.resume(returning: [])
+    }
+}
+
+private final class SuspendedTranscriber: Transcribing, @unchecked Sendable {
+    let modelID = "suspended"
+    private let lock = NSLock()
+    private var startedContinuation: CheckedContinuation<Void, Never>?
+    private var resultContinuation: CheckedContinuation<String, Never>?
+    private var didStart = false
+
+    func warmUp() async throws {}
+
+    func transcribe(_ audio: [Float]) async throws -> String {
+        let started = lock.withLock {
+            didStart = true
+            let continuation = startedContinuation
+            startedContinuation = nil
+            return continuation
+        }
+        started?.resume()
+        return await withCheckedContinuation { continuation in
+            lock.withLock {
+                resultContinuation = continuation
+            }
+        }
+    }
+
+    func waitUntilStarted() async {
+        if lock.withLock({ didStart }) { return }
+        await withCheckedContinuation { continuation in
+            let resumeNow = lock.withLock {
+                if didStart {
+                    return true
+                } else {
+                    startedContinuation = continuation
+                    return false
+                }
+            }
+            if resumeNow {
+                continuation.resume()
+            }
+        }
+    }
+
+    func finish(with result: String) {
+        let continuation = lock.withLock {
+            let continuation = resultContinuation
+            resultContinuation = nil
+            return continuation
+        }
+        continuation?.resume(returning: result)
     }
 }
 

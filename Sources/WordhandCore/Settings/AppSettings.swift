@@ -109,6 +109,8 @@ public struct AppSettings: Codable, Equatable, Sendable {
     public var modelID: String
     public var insertionMode: InsertionMode
     public var showOverlay: Bool
+    public var soundEffectsEnabled: Bool
+    public var formattingProfile: TranscriptFormattingProfile
     public var historyRetentionDays: Int
     public var hotkeys: [HotkeyBinding]
 
@@ -117,6 +119,8 @@ public struct AppSettings: Codable, Equatable, Sendable {
         modelID: String = "whisper-large-v3",
         insertionMode: InsertionMode = .paste,
         showOverlay: Bool = true,
+        soundEffectsEnabled: Bool = true,
+        formattingProfile: TranscriptFormattingProfile = .automatic,
         historyRetentionDays: Int = 30,
         hotkeys: [HotkeyBinding] = [
             HotkeyBinding(key: "space", modifiers: ["control"], action: .pushToTalk),
@@ -126,8 +130,39 @@ public struct AppSettings: Codable, Equatable, Sendable {
         self.modelID = modelID
         self.insertionMode = insertionMode
         self.showOverlay = showOverlay
+        self.soundEffectsEnabled = soundEffectsEnabled
+        self.formattingProfile = formattingProfile
         self.historyRetentionDays = historyRetentionDays
         self.hotkeys = hotkeys
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case schemaVersion
+        case modelID
+        case insertionMode
+        case showOverlay
+        case soundEffectsEnabled
+        case formattingProfile
+        case historyRetentionDays
+        case hotkeys
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        schemaVersion = try container.decode(Int.self, forKey: .schemaVersion)
+        modelID = try container.decode(String.self, forKey: .modelID)
+        insertionMode = try container.decode(InsertionMode.self, forKey: .insertionMode)
+        showOverlay = try container.decode(Bool.self, forKey: .showOverlay)
+        soundEffectsEnabled = try container.decodeIfPresent(
+            Bool.self,
+            forKey: .soundEffectsEnabled
+        ) ?? true
+        formattingProfile = try container.decodeIfPresent(
+            TranscriptFormattingProfile.self,
+            forKey: .formattingProfile
+        ) ?? .automatic
+        historyRetentionDays = try container.decode(Int.self, forKey: .historyRetentionDays)
+        hotkeys = try container.decode([HotkeyBinding].self, forKey: .hotkeys)
     }
 
     public func validated() throws -> AppSettings {

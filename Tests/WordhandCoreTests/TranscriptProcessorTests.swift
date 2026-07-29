@@ -16,14 +16,14 @@ struct TranscriptProcessorTests {
     }
 
     @Test
-    func dictionaryAppliesLongestMatchWithoutCascading() {
+    func dictionaryAppliesLongestMatchWithoutCascading() async {
         let entries = [
             DictionaryEntry(spokenForm: "whisper", replacement: "Wispr"),
             DictionaryEntry(spokenForm: "whisper flow", replacement: "Wispr Flow"),
             DictionaryEntry(spokenForm: "Wispr Flow", replacement: "SHOULD NOT CASCADE"),
         ]
         let processor = TranscriptProcessor(dictionaryEntries: entries)
-        #expect(processor.process("whisper flow uses whisper") == "Wispr Flow uses Wispr")
+        #expect(await processor.process("whisper flow uses whisper") == "Wispr Flow uses Wispr")
     }
 
     @Test
@@ -50,5 +50,52 @@ struct TranscriptProcessorTests {
             ),
         ])
         #expect(matcher.apply(to: "api API secret") == "API API secret")
+    }
+
+    @Test
+    func automaticProfileSelectsAIPromptForCodingAndTerminalApps() {
+        #expect(
+            TranscriptFormattingProfile.automatic.resolved(
+                for: TranscriptTarget(
+                    bundleIdentifier: "com.mitchellh.ghostty",
+                    applicationName: "Ghostty"
+                )
+            ) == .aiPrompt
+        )
+        #expect(
+            TranscriptFormattingProfile.automatic.resolved(
+                for: TranscriptTarget(
+                    bundleIdentifier: "com.apple.TextEdit",
+                    applicationName: "TextEdit"
+                )
+            ) == .polished
+        )
+    }
+
+    @Test
+    func polishedFallbackCleansFillersCasingAndPunctuation() async {
+        let processor = TranscriptProcessor(formattingProfile: .polished)
+        let result = await processor.process(
+            "um this is a test and then we should ship it",
+            target: .unknown
+        )
+
+        #expect(result == "This is a test. Then we should ship it.")
+    }
+
+    @Test
+    func verbatimProfileOnlySanitizesAndAppliesDictionary() async {
+        let processor = TranscriptProcessor(
+            dictionaryEntries: [
+                DictionaryEntry(spokenForm: "word hand", replacement: "Wordhand"),
+            ],
+            formattingProfile: .verbatim
+        )
+        let result = await processor.process(
+            "um word hand stays lowercase",
+            target: .unknown
+        )
+
+        #expect(result == "um Wordhand stays lowercase")
     }
 }

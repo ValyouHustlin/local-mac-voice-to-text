@@ -32,6 +32,8 @@ and inserts the result into ordinary Mac apps.
 | **A real Mac app** | Wordhand lives in both the menu bar and Dock. Clicking its Dock icon opens Settings; history and dictionary are one click away. |
 | **Accuracy-first local model** | Optimized Whisper Large v3 is the default on capable Macs. Balanced and smaller Whisper models remain selectable. |
 | **Reliable insertion** | Paste-first insertion works across native, browser, and Electron targets while restoring the previous rich clipboard. Direct typing and copy-only modes are available. |
+| **Flow-focused feedback** | Quiet start/stop tones, an expressive live waveform, a display-following recording control, and one-click cancellation keep dictation legible without demanding attention. |
+| **App-aware writing** | Automatic mode turns spoken thought streams into structured AI prompts in terminal and coding apps using Apple's on-device model when available, with safe local fallback plus polished and verbatim profiles. |
 
 <p align="center">
   <img src="docs/assets/wordhand-history.png" width="920" alt="Wordhand transcript history window">
@@ -112,9 +114,8 @@ and what remains unverified.
 
 ## Roadmap
 
-The next daily-use slices are immediate undo/revert, conservative local
-formatting, onboarding and permission repair, app-aware formatting, and a
-signed release path. See
+The next daily-use slices are immediate undo/revert, onboarding and permission
+repair, deeper prose/chat/code-comment profiles, and a signed release path. See
 [the product roadmap](.plan/plan.md) and
 [architecture](docs/architecture.md).
 

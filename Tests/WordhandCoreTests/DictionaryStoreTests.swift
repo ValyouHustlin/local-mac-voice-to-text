@@ -78,14 +78,14 @@ struct DictionaryStoreTests {
     }
 
     @Test
-    func mutableProcessorUsesUpdatesWithoutRestart() {
+    func mutableProcessorUsesUpdatesWithoutRestart() async {
         let processor = MutableTranscriptProcessor()
-        #expect(processor.process("whisper flow") == "whisper flow")
+        #expect(await processor.process("whisper flow") == "whisper flow")
 
         processor.update(dictionaryEntries: [
             DictionaryEntry(spokenForm: "whisper flow", replacement: "Wispr Flow"),
         ])
-        #expect(processor.process("whisper flow") == "Wispr Flow")
+        #expect(await processor.process("whisper flow") == "Wispr Flow")
     }
 
     @Test

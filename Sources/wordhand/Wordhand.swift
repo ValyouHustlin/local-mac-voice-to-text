@@ -120,7 +120,10 @@ struct Run: ParsableCommand {
         let dictionary = MainActor.assumeIsolated {
             DictionaryController(store: DictionaryStore(fileURL: dictionaryURL))
         }
-        let processor = dictionary.processor
+        let processor = AppAwareTranscriptProcessor(
+            dictionaryProcessor: dictionary.processor,
+            profile: settings.formattingProfile
+        )
         let inserter = MacTextInserter()
         let historyStore = try TranscriptHistoryStore(fileURL: historyURL)
         let retentionDays: Int? = settings.historyRetentionDays
@@ -138,6 +141,9 @@ struct Run: ParsableCommand {
         }
         let dumpWav = self.dumpWav
         let overlay: RecordingOverlay? = noOverlay ? nil : MainActor.assumeIsolated { RecordingOverlay() }
+        let audioCues = MainActor.assumeIsolated {
+            AudioCuePlayer(isEnabled: settings.soundEffectsEnabled)
+        }
         if let overlay {
             capture.onLevel = { level in overlay.pushLevel(level) }
         }
@@ -172,9 +178,18 @@ struct Run: ParsableCommand {
         }
         MainActor.assumeIsolated {
             app.delegate = appDelegate
+            overlay?.onCancel = {
+                audioCues.play(.cancel)
+                monitor.cancelActiveRecording()
+                Task { @MainActor in
+                    await coordinator.cancelCurrent()
+                }
+            }
             settingsController.onSettingsChange = { updated in
                 monitor.updateBindings(updated.hotkeys)
                 coordinator.updateInsertionMode(updated.insertionMode)
+                processor.update(profile: updated.formattingProfile)
+                audioCues.isEnabled = updated.soundEffectsEnabled
                 menuBar.updateSettings(updated)
                 if !updated.showOverlay {
                     overlay?.hide()
@@ -190,13 +205,24 @@ struct Run: ParsableCommand {
                     menuBar.setRecording(false)
                 case .recording:
                     FileHandle.standardError.write(Data("● recording\n".utf8))
+                    audioCues.play(.start)
                     if settingsController.settings.showOverlay {
                         overlay?.show(.recording)
                     }
                     menuBar.setRecording(true)
-                case .transcribing, .processing, .inserting:
+                case .transcribing:
                     if settingsController.settings.showOverlay {
                         overlay?.show(.transcribing)
+                    }
+                    menuBar.setTranscribing()
+                case .processing:
+                    if settingsController.settings.showOverlay {
+                        overlay?.show(.transcribing)
+                    }
+                    menuBar.setTranscribing()
+                case .inserting:
+                    if settingsController.settings.showOverlay {
+                        overlay?.show(.finishing)
                     }
                     menuBar.setTranscribing()
                 case .failed(let failure):
@@ -216,6 +242,7 @@ struct Run: ParsableCommand {
                 }
             }
             coordinator.onCapture = { samples in
+                audioCues.play(.stop)
                 let seconds = Double(samples.count) / AudioCapture.targetSampleRate
                 let rms = computeRMS(samples)
                 FileHandle.standardError.write(Data(
@@ -237,6 +264,11 @@ struct Run: ParsableCommand {
                 ))
                 dictionary.rememberLatestTranscript(text)
                 menuBar.setHasLatestTranscript(true)
+            }
+            coordinator.onProcessingDuration = { elapsed in
+                FileHandle.standardError.write(Data(
+                    String(format: "  local formatting %.2fs\n", elapsed).utf8
+                ))
             }
             coordinator.onHistoryChange = {
                 history.reloadIfVisible()

@@ -74,6 +74,23 @@ struct HotkeyRoutingStateMachineTests {
     }
 
     @Test
+    func cancelingToggleLetsTheNextTapStartImmediately() {
+        var state = HotkeyRoutingStateMachine(bindings: [
+            HotkeyBinding(
+                key: "z",
+                keyCode: 6,
+                modifiers: ["control", "option"],
+                action: .toggleRecording
+            ),
+        ])
+
+        #expect(state.handle(keyDown(6, [.control, .option])) == .pressed)
+        _ = state.handle(keyUp(6, [.control, .option]))
+        state.cancelActive()
+        #expect(state.handle(keyDown(6, [.control, .option])) == .pressed)
+    }
+
+    @Test
     func pushToTalkRecoversWhenARequiredModifierIsReleasedFirst() {
         var state = HotkeyRoutingStateMachine(bindings: [
             HotkeyBinding(
