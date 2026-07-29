@@ -79,7 +79,10 @@ final class AppAwareTranscriptProcessor: TranscriptProcessing, @unchecked Sendab
                 options: options,
                 timeoutSeconds: 4
             )
-            guard Self.isSafeRewrite(candidate, of: text) else {
+            guard TranscriptRewriteValidator.isAcceptable(
+                candidate: candidate,
+                original: text
+            ) else {
                 return TranscriptProcessor.polish(text)
             }
             return candidate
@@ -140,14 +143,6 @@ final class AppAwareTranscriptProcessor: TranscriptProcessing, @unchecked Sendab
                 .trimmingCharacters(in: .whitespacesAndNewlines)
         }
         return result
-    }
-
-    private static func isSafeRewrite(_ candidate: String, of original: String) -> Bool {
-        guard !candidate.isEmpty else { return false }
-        let originalWords = max(1, original.split(whereSeparator: \.isWhitespace).count)
-        let candidateWords = candidate.split(whereSeparator: \.isWhitespace).count
-        let ratio = Double(candidateWords) / Double(originalWords)
-        return (0.55...1.65).contains(ratio)
     }
 #endif
 }

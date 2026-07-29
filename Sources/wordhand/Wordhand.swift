@@ -73,6 +73,9 @@ struct Run: ParsableCommand {
             ?? TranscriptHistoryStore.defaultFileURL()
         let settingsURL = customDataDirectory?.appendingPathComponent("settings.json")
             ?? SettingsStore.defaultFileURL()
+        let runtimeLockURL = settingsURL.deletingLastPathComponent()
+            .appendingPathComponent("wordhand.lock")
+        let instanceLock = try SingleInstanceLock(fileURL: runtimeLockURL)
         let settingsStore = SettingsStore(fileURL: settingsURL)
         let settings: AppSettings
         do {
@@ -270,6 +273,12 @@ struct Run: ParsableCommand {
                     String(format: "  local formatting %.2fs\n", elapsed).utf8
                 ))
             }
+            coordinator.onRecordingLimitReached = {
+                FileHandle.standardError.write(Data(
+                    "recording reached the 10-minute safety limit; processing captured audio\n".utf8
+                ))
+                menuBar.setFailure("10-minute limit reached · processing")
+            }
             coordinator.onHistoryChange = {
                 history.reloadIfVisible()
             }
@@ -303,7 +312,9 @@ struct Run: ParsableCommand {
         FileHandle.standardError.write(Data(
             "listening on \(shortcuts) · model: \(chosenModel.id) · ^C to quit\n".utf8
         ))
-        app.run()
+        withExtendedLifetime(instanceLock) {
+            app.run()
+        }
     }
 }
 

@@ -36,6 +36,11 @@ public protocol Transcribing: Sendable {
     var modelID: String { get }
     func warmUp() async throws
     func transcribe(_ audio: [Float]) async throws -> String
+    func cancel() async
+}
+
+public extension Transcribing {
+    func cancel() async {}
 }
 
 public protocol TranscriptProcessing: Sendable {
@@ -57,6 +62,7 @@ public final class DictationCoordinator {
     public var onTranscript: ((String, TimeInterval) -> Void)?
     public var onProcessingDuration: ((TimeInterval) -> Void)?
     public var onHistoryChange: (() -> Void)?
+    public var onRecordingLimitReached: (() -> Void)?
 
     private let capture: AudioCapturing
     private let transcriber: Transcribing
@@ -69,8 +75,11 @@ public final class DictationCoordinator {
     private let currentTarget: () -> TranscriptTarget
     private let date: () -> Date
     private let now: () -> TimeInterval
+    private let maximumRecordingNanoseconds: UInt64?
+    private let sleep: @Sendable (UInt64) async throws -> Void
     private var activeOperationID: UUID?
     private var isCaptureStopping = false
+    private var recordingLimitTask: Task<Void, Never>?
 
     public init(
         capture: AudioCapturing,
@@ -83,7 +92,11 @@ public final class DictationCoordinator {
         audioSampleRate: Double = 16_000,
         currentTarget: @escaping () -> TranscriptTarget = { .unknown },
         date: @escaping () -> Date = Date.init,
-        now: @escaping () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }
+        now: @escaping () -> TimeInterval = { ProcessInfo.processInfo.systemUptime },
+        maximumRecordingNanoseconds: UInt64? = 600_000_000_000,
+        sleep: @escaping @Sendable (UInt64) async throws -> Void = {
+            try await Task.sleep(nanoseconds: $0)
+        }
     ) {
         self.capture = capture
         self.transcriber = transcriber
@@ -96,6 +109,8 @@ public final class DictationCoordinator {
         self.currentTarget = currentTarget
         self.date = date
         self.now = now
+        self.maximumRecordingNanoseconds = maximumRecordingNanoseconds
+        self.sleep = sleep
     }
 
     public func handle(_ event: HotkeyEvent) async {
@@ -109,6 +124,7 @@ public final class DictationCoordinator {
                 try capture.start()
                 activeOperationID = UUID()
                 state = .recording
+                scheduleRecordingLimit()
             } catch {
                 state = .failed(.capture(String(describing: error)))
             }
@@ -116,6 +132,7 @@ public final class DictationCoordinator {
         case .released:
             guard state == .recording else { return }
             guard let operationID = activeOperationID else { return }
+            cancelRecordingLimit()
             state = .transcribing
             isCaptureStopping = true
             let samples = await capture.stop()
@@ -216,12 +233,16 @@ public final class DictationCoordinator {
     public func cancelCurrent() async {
         switch state {
         case .recording:
+            cancelRecordingLimit()
             activeOperationID = nil
             _ = await capture.stop()
             state = .idle
         case .transcribing, .processing:
             activeOperationID = nil
             if !isCaptureStopping {
+                if state == .transcribing {
+                    await transcriber.cancel()
+                }
                 state = .idle
             }
         case .idle, .inserting, .failed:
@@ -236,5 +257,28 @@ public final class DictationCoordinator {
 
     public func updateInsertionMode(_ insertionMode: InsertionMode) {
         self.insertionMode = insertionMode
+    }
+
+    private func scheduleRecordingLimit() {
+        cancelRecordingLimit()
+        guard let maximumRecordingNanoseconds else { return }
+        let sleep = self.sleep
+        recordingLimitTask = Task { [weak self] in
+            do {
+                try await sleep(maximumRecordingNanoseconds)
+            } catch {
+                return
+            }
+            guard let self else { return }
+            guard !Task.isCancelled, state == .recording else { return }
+            recordingLimitTask = nil
+            onRecordingLimitReached?()
+            await handle(.released)
+        }
+    }
+
+    private func cancelRecordingLimit() {
+        recordingLimitTask?.cancel()
+        recordingLimitTask = nil
     }
 }

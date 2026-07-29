@@ -245,6 +245,28 @@ Status: complete for the first vertical slice.
 
 Receipt: `docs/verification/2026-07-28-flow-formatting.md`.
 
+### Application hardening checkpoint
+
+Status: implementation and available live gates complete.
+
+- [x] Prevent duplicate processes from competing for the microphone, global
+  shortcut, clipboard, and insertion target.
+- [x] Stop and process toggle recordings at ten minutes instead of allowing an
+  unbounded in-memory audio buffer.
+- [x] Signal active Whisper decoding when a user cancels.
+- [x] Reject local model rewrites that drop numbers, technical tokens,
+  acronyms, or negated constraints.
+- [x] Compile tests and release builds with warnings treated as errors.
+- [x] Pass the complete test suite under Thread Sanitizer.
+- [x] Build and run the executable under Address Sanitizer.
+
+The 10-minute stop and active Whisper cancellation are covered through
+protocol-backed tests. A literal 10-minute microphone wait and a deliberately
+long live decode cancellation remain useful soak receipts, not blockers for the
+bounded implementation.
+
+Receipt: `docs/verification/2026-07-28-hardening.md`.
+
 ### Accuracy and latency checkpoint
 
 Status: complete for the model/capture upgrade; continue measuring Aaron's own

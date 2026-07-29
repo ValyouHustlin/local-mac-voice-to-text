@@ -84,6 +84,9 @@ Verified by source inspection and dated receipts on 2026-07-28:
 - writing profiles for verbatim, polished, AI-prompt, and automatic app-aware
   output; on macOS 26 the AI-prompt path uses Apple's on-device system language
   model and falls back to deterministic cleanup when unavailable;
+- duplicate-process prevention, a 10-minute recording safety stop, active
+  Whisper cancellation, and rewrite validation that rejects dropped numbers,
+  technical tokens, or negated constraints;
 - persistent custom dictionary with immediate correction flow;
 - searchable SQLite transcript history with copy, reinsert, correction, and
   deletion actions;
@@ -99,7 +102,7 @@ compatibility claims.
 
 P0 ground truth and P1 foundation are complete as of 2026-07-28. The package
 now has `WordhandCore`, protocol-backed coordinator seams, versioned settings,
-52 deterministic tests, and macOS CI.
+58 deterministic tests, and macOS CI.
 
 P2 custom dictionary is implemented but not yet through its live three-target
 exit gate. Its current runtime path is:
@@ -171,10 +174,19 @@ transcript to Apple's local Foundation Models framework, with instructions to
 preserve meaning, restructure run-ons, and never answer the request. It does not
 read surrounding document content. Generation has a proportional response
 budget and a four-second deadline; either validation or runtime failure falls
-back to deterministic cleanup. Non-AI targets receive deterministic
-capitalization, punctuation, and conservative filler cleanup. Users can force
+back to deterministic cleanup. Validation preserves digit-bearing values,
+technical tokens, acronyms, and negated constraints in addition to bounding
+rewrite length. Non-AI targets receive deterministic capitalization,
+punctuation, and conservative filler cleanup. Users can force
 automatic, polished, AI-prompt, or verbatim behavior in Settings. See
 `docs/verification/2026-07-28-flow-formatting.md`.
+
+The runtime now holds a per-data-directory process lock so a duplicate launch
+cannot create two competing microphone, hotkey, or insertion owners. Toggle
+recordings automatically stop and process at ten minutes instead of growing an
+unbounded audio buffer. Cancel during Whisper decoding now signals WhisperKit's
+progress callback and still invalidates the coordinator operation before any
+insertion. See `docs/verification/2026-07-28-hardening.md`.
 
 ## Target structure
 

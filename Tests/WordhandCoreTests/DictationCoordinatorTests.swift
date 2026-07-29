@@ -129,6 +129,42 @@ struct DictationCoordinatorTests {
 
         #expect(coordinator.state == .idle)
         #expect(inserter.insertions.isEmpty)
+        #expect(transcriber.cancelCount == 1)
+    }
+
+    @Test
+    func recordingLimitStopsAndProcessesInsteadOfGrowingForever() async {
+        let sleeper = SuspendedSleep()
+        let capture = FakeCapture(samples: [0.1, 0.2])
+        let transcriber = FakeTranscriber(result: "limited recording")
+        let inserter = FakeInserter()
+        let coordinator = DictationCoordinator(
+            capture: capture,
+            transcriber: transcriber,
+            processor: TranscriptProcessor(),
+            inserter: inserter,
+            maximumRecordingNanoseconds: 1,
+            sleep: { nanoseconds in
+                await sleeper.sleep(nanoseconds: nanoseconds)
+            }
+        )
+        var reachedLimit = false
+        coordinator.onRecordingLimitReached = {
+            reachedLimit = true
+        }
+
+        await coordinator.handle(.pressed)
+        await sleeper.waitUntilStarted()
+        sleeper.finish()
+
+        while coordinator.state != .idle {
+            await Task.yield()
+        }
+
+        #expect(reachedLimit)
+        #expect(capture.stopCount == 1)
+        #expect(inserter.insertions == ["limited recording"])
+        #expect(!transcriber.wasCancelledDuringTranscription)
     }
 
     @Test
@@ -284,6 +320,7 @@ private final class FakeTranscriber: Transcribing, @unchecked Sendable {
     let modelID = "fake"
     private let result: String
     private(set) var callCount = 0
+    private(set) var wasCancelledDuringTranscription = false
 
     init(result: String) {
         self.result = result
@@ -293,6 +330,7 @@ private final class FakeTranscriber: Transcribing, @unchecked Sendable {
 
     func transcribe(_ audio: [Float]) async throws -> String {
         callCount += 1
+        wasCancelledDuringTranscription = Task.isCancelled
         return result
     }
 }
@@ -357,6 +395,7 @@ private final class SuspendedTranscriber: Transcribing, @unchecked Sendable {
     private var startedContinuation: CheckedContinuation<Void, Never>?
     private var resultContinuation: CheckedContinuation<String, Never>?
     private var didStart = false
+    private(set) var cancelCount = 0
 
     func warmUp() async throws {}
 
@@ -399,6 +438,59 @@ private final class SuspendedTranscriber: Transcribing, @unchecked Sendable {
             return continuation
         }
         continuation?.resume(returning: result)
+    }
+
+    func cancel() {
+        lock.withLock {
+            cancelCount += 1
+        }
+    }
+}
+
+private final class SuspendedSleep: @unchecked Sendable {
+    private let lock = NSLock()
+    private var started = false
+    private var startedContinuation: CheckedContinuation<Void, Never>?
+    private var sleepContinuation: CheckedContinuation<Void, Never>?
+
+    func sleep(nanoseconds: UInt64) async {
+        let waiter = lock.withLock {
+            started = true
+            let waiter = startedContinuation
+            startedContinuation = nil
+            return waiter
+        }
+        waiter?.resume()
+        await withCheckedContinuation { continuation in
+            lock.withLock {
+                sleepContinuation = continuation
+            }
+        }
+    }
+
+    func waitUntilStarted() async {
+        if lock.withLock({ started }) { return }
+        await withCheckedContinuation { continuation in
+            let resumeNow = lock.withLock {
+                if started {
+                    return true
+                }
+                startedContinuation = continuation
+                return false
+            }
+            if resumeNow {
+                continuation.resume()
+            }
+        }
+    }
+
+    func finish() {
+        let continuation = lock.withLock {
+            let continuation = sleepContinuation
+            sleepContinuation = nil
+            return continuation
+        }
+        continuation?.resume()
     }
 }
 

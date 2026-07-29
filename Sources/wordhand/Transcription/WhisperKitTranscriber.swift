@@ -6,6 +6,7 @@ actor WhisperKitTranscriber: Transcribing {
     let modelID: String
     private let model: TranscriptionModel
     private var pipeline: WhisperKit?
+    private var cancellationToken: TranscriptionCancellationToken?
 
     init(model: TranscriptionModel) {
         self.modelID = model.id
@@ -30,12 +31,41 @@ actor WhisperKitTranscriber: Transcribing {
         if pipeline == nil { try await warmUp() }
         guard let pipeline else { throw TranscriberError.notLoaded }
 
-        let results = try await pipeline.transcribe(audioArray: audio)
+        let token = TranscriptionCancellationToken()
+        cancellationToken = token
+        defer {
+            if cancellationToken === token {
+                cancellationToken = nil
+            }
+        }
+        let results = try await pipeline.transcribe(
+            audioArray: audio,
+            callback: { _ in token.isCancelled ? false : nil }
+        )
         return results.map(\.text).joined(separator: " ")
+    }
+
+    func cancel() {
+        cancellationToken?.cancel()
     }
 }
 
 enum TranscriberError: Error {
     case missingEngineID
     case notLoaded
+}
+
+private final class TranscriptionCancellationToken: @unchecked Sendable {
+    private let lock = NSLock()
+    private var cancelled = false
+
+    var isCancelled: Bool {
+        lock.withLock { cancelled }
+    }
+
+    func cancel() {
+        lock.withLock {
+            cancelled = true
+        }
+    }
 }
