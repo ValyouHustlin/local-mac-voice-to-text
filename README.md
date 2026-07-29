@@ -56,18 +56,19 @@ cd wordhand
 ./scripts/install-app.sh --launch-at-login
 ```
 
-This installs `Wordhand.app` in `~/Applications`, preserves the previous app as
-a rollback copy during upgrades, registers it with macOS, enables launch at
-login, and opens it. Local source builds are ad-hoc signed; they are not a
-substitute for the planned notarized public release, and macOS may require
+This installs `Wordhand.app` in `/Applications` when that directory is writable
+(otherwise `~/Applications`), moves rollback copies outside the searchable
+Applications folders, registers and imports the app for Spotlight, enables
+launch at login, and opens it. Local source builds are ad-hoc signed; they are
+not a substitute for the planned notarized public release, and macOS may require
 permissions again after replacing an ad-hoc-signed build.
 
-On first launch, macOS asks for Microphone and Accessibility access. Wordhand
-keeps Settings open with visible repair actions if either grant is missing.
-Those permissions are required to capture speech and place text at the cursor.
-macOS secure-input fields intentionally block text injection; Wordhand keeps
-the transcript in history instead of treating a password field as a valid
-target.
+On first launch, macOS asks for Microphone, Input Monitoring, and Accessibility
+access. Wordhand keeps Settings open with a separate, truthful status and repair
+action for each grant. Input Monitoring detects the global shortcut,
+Accessibility inserts the result, and Microphone captures speech. macOS
+secure-input fields intentionally block text injection; Wordhand keeps the
+transcript in history instead of treating a password field as a valid target.
 
 ## Daily use
 

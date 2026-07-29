@@ -10,18 +10,25 @@ enum MicrophonePermissionState: Equatable {
 
 struct WordhandPermissionStatus: Equatable {
     var accessibilityGranted: Bool
+    var inputMonitoringGranted: Bool
     var microphone: MicrophonePermissionState
 
+    var globalInputReady: Bool {
+        accessibilityGranted && inputMonitoringGranted
+    }
+
     var isReady: Bool {
-        accessibilityGranted && microphone == .granted
+        globalInputReady && microphone == .granted
     }
 }
 
 protocol PermissionManaging {
     func status() -> WordhandPermissionStatus
     func requestAccessibility()
+    func requestInputMonitoring()
     func requestMicrophone() async -> Bool
     func openAccessibilitySettings()
+    func openInputMonitoringSettings()
     func openMicrophoneSettings()
 }
 
@@ -40,6 +47,7 @@ struct SystemPermissionManager: PermissionManaging {
         }
         return WordhandPermissionStatus(
             accessibilityGranted: AXIsProcessTrusted(),
+            inputMonitoringGranted: CGPreflightListenEventAccess(),
             microphone: microphone
         )
     }
@@ -49,12 +57,20 @@ struct SystemPermissionManager: PermissionManaging {
         _ = AXIsProcessTrustedWithOptions([promptKey: true] as CFDictionary)
     }
 
+    func requestInputMonitoring() {
+        _ = CGRequestListenEventAccess()
+    }
+
     func requestMicrophone() async -> Bool {
         await AVCaptureDevice.requestAccess(for: .audio)
     }
 
     func openAccessibilitySettings() {
         openPrivacyPane("Privacy_Accessibility")
+    }
+
+    func openInputMonitoringSettings() {
+        openPrivacyPane("Privacy_ListenEvent")
     }
 
     func openMicrophoneSettings() {

@@ -263,7 +263,15 @@ struct Run: ParsableCommand {
                 monitor.setSuspended(capturing)
             }
             settingsController.onPermissionsRefresh = { permissions in
-                guard permissions.accessibilityGranted, !readiness.hotkeyReady else {
+                guard permissions.globalInputReady else {
+                    if readiness.hotkeyReady {
+                        monitor.stop()
+                        readiness.hotkeyReady = false
+                    }
+                    menuBar.setFailure("permissions needed · open Settings")
+                    return
+                }
+                guard !readiness.hotkeyReady else {
                     return
                 }
                 do {

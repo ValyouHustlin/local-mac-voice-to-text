@@ -20,6 +20,7 @@ enum DoctorReport {
         [
             checkMicrophone(),
             checkAccessibility(),
+            checkInputMonitoring(),
             checkControlSpaceAvailability(),
         ]
     }
@@ -55,6 +56,18 @@ enum DoctorReport {
             name: "accessibility",
             status: .fail("not granted"),
             remediation: "System Settings → Privacy & Security → Accessibility → enable for \(parent)"
+        )
+    }
+
+    static func checkInputMonitoring() -> Check {
+        if CGPreflightListenEventAccess() {
+            return Check(name: "input monitoring", status: .ok, remediation: nil)
+        }
+        let parent = parentProcessName() ?? "the running app"
+        return Check(
+            name: "input monitoring",
+            status: .fail("not granted"),
+            remediation: "System Settings → Privacy & Security → Input Monitoring → enable for \(parent)"
         )
     }
 

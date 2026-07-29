@@ -12,18 +12,35 @@ struct Setup: ParsableCommand {
         print("wordhand setup")
         print("============")
         print()
-        print("Wordhand needs two permissions:")
-        print("  1. Accessibility — to detect Control-Space globally and insert text at the cursor.")
-        print("  2. Microphone — to record audio while you hold Control-Space.")
+        print("Wordhand needs three permissions:")
+        print("  1. Accessibility — to insert text at the cursor.")
+        print("  2. Input Monitoring — to detect Control-Space globally.")
+        print("  3. Microphone — to record audio while you dictate.")
         print()
         print("These attach to your terminal app (Terminal/iTerm/Ghostty/etc.), not wordhand itself.")
         print()
 
         try waitForAccessibility()
         print()
+        try waitForInputMonitoring()
+        print()
         try waitForMicrophone()
         print()
         print("✓ all set. Run `wordhand` to start the daemon.")
+    }
+
+    private func waitForInputMonitoring() throws {
+        if CGPreflightListenEventAccess() {
+            print("✓ input monitoring already granted")
+            return
+        }
+
+        print("→ requesting input monitoring access...")
+        _ = CGRequestListenEventAccess()
+        print()
+        print("  1. Toggle Wordhand on in the Input Monitoring list.")
+        print("  2. Quit and reopen Wordhand so macOS applies the grant.")
+        throw ExitCode(0)
     }
 
     private func waitForAccessibility() throws {

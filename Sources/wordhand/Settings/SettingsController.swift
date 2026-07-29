@@ -146,6 +146,12 @@ final class SettingsController: NSObject, ObservableObject, NSWindowDelegate {
         refreshPermissions()
     }
 
+    func repairInputMonitoringPermission() {
+        permissionManager.requestInputMonitoring()
+        permissionManager.openInputMonitoringSettings()
+        refreshPermissions()
+    }
+
     func repairMicrophonePermission() {
         switch permissionStatus.microphone {
         case .granted:
@@ -383,7 +389,7 @@ private struct SettingsView: View {
                         Text(
                             controller.permissionStatus.isReady
                                 ? "Wordhand is ready in every app."
-                                : "Microphone and Accessibility stay under your control."
+                                : "All three permissions stay under your control."
                         )
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
@@ -399,10 +405,20 @@ private struct SettingsView: View {
 
                 permissionRow(
                     title: "Accessibility",
-                    detail: "Listens for your shortcut and inserts text at the cursor.",
+                    detail: "Inserts the finished transcript at the cursor.",
                     granted: controller.permissionStatus.accessibilityGranted,
                     buttonTitle: "Open Settings",
                     action: controller.repairAccessibilityPermission
+                )
+
+                Divider()
+
+                permissionRow(
+                    title: "Input Monitoring",
+                    detail: "Detects your shortcut while you work in another app.",
+                    granted: controller.permissionStatus.inputMonitoringGranted,
+                    buttonTitle: "Allow",
+                    action: controller.repairInputMonitoringPermission
                 )
 
                 Divider()

@@ -128,9 +128,12 @@ Verified by source inspection and dated receipts on 2026-07-28:
 - searchable SQLite transcript history with copy, reinsert, correction, and
   deletion actions;
 - versioned settings and automatic migration from the legacy product name;
-- permission doctor and visible in-app recovery;
+- permission doctor and visible in-app recovery that independently checks
+  Microphone, Input Monitoring, and Accessibility instead of reporting a
+  false-ready state;
 - a stable native application bundle with local code signing, native login-item
-  registration, rollback-preserving local installation, and a legacy
+  registration, standard Applications-folder and Spotlight registration,
+  rollback copies stored outside searchable application folders, and a legacy
   LaunchAgent fallback for command-line-only builds;
 - immediate menu, Dock, and shortcut readiness while the selected model warms
   asynchronously from a complete local cache without network validation;
@@ -144,10 +147,13 @@ receipts may promote latency or compatibility claims.
 
 P0 ground truth and P1 foundation are complete as of 2026-07-28. The package
 now has `WordhandCore`, protocol-backed coordinator seams, versioned settings,
-79 deterministic tests across core and macOS adapter targets, and macOS CI.
+81 deterministic tests across core and macOS adapter targets, and macOS CI.
 
 The daily-driver bundle is built by `scripts/build-app.sh` and installed by
-`scripts/install-app.sh`. Installed builds use `SMAppService.mainApp` for native
+`scripts/install-app.sh`. The installer prefers `/Applications`, falls back to
+`~/Applications` when needed, explicitly registers/imports the bundle, and keeps
+rollback bundles under Application Support so Spotlight and LaunchServices see
+one active Wordhand. Installed builds use `SMAppService.mainApp` for native
 launch at login. The UI starts before model warmup; a complete local WhisperKit
 cache is opened with downloading disabled, while a missing cache falls back to
 the explicit download path. Settings, dictionary, history, and the data

@@ -91,6 +91,7 @@ struct GlobalInputAdapterTests {
         let permissions = FakePermissionManager()
         permissions.currentStatus = WordhandPermissionStatus(
             accessibilityGranted: false,
+            inputMonitoringGranted: false,
             microphone: .granted
         )
         let fixture = try TemporarySettingsFixture()
@@ -104,11 +105,44 @@ struct GlobalInputAdapterTests {
         var observed: WordhandPermissionStatus?
         controller.onPermissionsRefresh = { observed = $0 }
         permissions.currentStatus.accessibilityGranted = true
+        permissions.currentStatus.inputMonitoringGranted = true
 
         controller.refreshPermissions()
 
         #expect(controller.permissionStatus.isReady)
         #expect(observed?.isReady == true)
+    }
+
+    @Test
+    func permissionReadinessRequiresInputMonitoring() {
+        let status = WordhandPermissionStatus(
+            accessibilityGranted: true,
+            inputMonitoringGranted: false,
+            microphone: .granted
+        )
+
+        #expect(!status.isReady)
+        #expect(!status.globalInputReady)
+    }
+
+    @Test
+    @MainActor
+    func settingsCanRepairInputMonitoringPermission() throws {
+        let permissions = FakePermissionManager()
+        permissions.currentStatus.inputMonitoringGranted = false
+        let fixture = try TemporarySettingsFixture()
+        defer { fixture.remove() }
+        let controller = SettingsController(
+            store: fixture.store,
+            settings: AppSettings(),
+            launchAtLoginManager: FakeLaunchAtLoginManager(state: .disabled),
+            permissionManager: permissions
+        )
+
+        controller.repairInputMonitoringPermission()
+
+        #expect(permissions.inputMonitoringRequestCount == 1)
+        #expect(permissions.inputMonitoringSettingsCount == 1)
     }
 
     @Test
@@ -319,10 +353,13 @@ private final class FakeLaunchAtLoginManager: LaunchAtLoginManaging {
 private final class FakePermissionManager: PermissionManaging {
     var currentStatus = WordhandPermissionStatus(
         accessibilityGranted: true,
+        inputMonitoringGranted: true,
         microphone: .granted
     )
     private(set) var accessibilityRequestCount = 0
     private(set) var accessibilitySettingsCount = 0
+    private(set) var inputMonitoringRequestCount = 0
+    private(set) var inputMonitoringSettingsCount = 0
     private(set) var microphoneSettingsCount = 0
 
     func status() -> WordhandPermissionStatus {
@@ -333,6 +370,10 @@ private final class FakePermissionManager: PermissionManaging {
         accessibilityRequestCount += 1
     }
 
+    func requestInputMonitoring() {
+        inputMonitoringRequestCount += 1
+    }
+
     func requestMicrophone() async -> Bool {
         currentStatus.microphone = .granted
         return true
@@ -340,6 +381,10 @@ private final class FakePermissionManager: PermissionManaging {
 
     func openAccessibilitySettings() {
         accessibilitySettingsCount += 1
+    }
+
+    func openInputMonitoringSettings() {
+        inputMonitoringSettingsCount += 1
     }
 
     func openMicrophoneSettings() {

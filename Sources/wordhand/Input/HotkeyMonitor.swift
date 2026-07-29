@@ -14,9 +14,24 @@ protocol HotkeyTapInstalling {
 }
 
 /// Watches configured global shortcuts and emits recording press/release edges.
-/// Requires Accessibility permission. Bindings can be replaced while running.
+/// Requires Input Monitoring and Accessibility. Bindings can be replaced while running.
 final class HotkeyMonitor: HotkeyMonitoring {
-    enum HotkeyError: Error { case tapCreateFailed }
+    enum HotkeyError: LocalizedError {
+        case accessibilityNotGranted
+        case inputMonitoringNotGranted
+        case tapCreateFailed
+
+        var errorDescription: String? {
+            switch self {
+            case .accessibilityNotGranted:
+                return "Accessibility permission is not granted"
+            case .inputMonitoringNotGranted:
+                return "Input Monitoring permission is not granted"
+            case .tapCreateFailed:
+                return "macOS could not create the global shortcut listener"
+            }
+        }
+    }
 
     private let debug: Bool
     private let tapInstaller: any HotkeyTapInstalling
@@ -124,13 +139,17 @@ final class HotkeyMonitor: HotkeyMonitoring {
 
 private struct CGHotkeyTapInstaller: HotkeyTapInstalling {
     func install(for monitor: HotkeyMonitor) throws -> any HotkeyTapControlling {
-        let promptKey = kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String
-        let trusted = AXIsProcessTrustedWithOptions([promptKey: true] as CFDictionary)
-        if !trusted {
+        guard AXIsProcessTrusted() else {
             FileHandle.standardError.write(Data(
-                "accessibility not granted — system prompt opened. Grant access, then quit and relaunch wordhand.\n".utf8
+                "accessibility not granted — open Wordhand Settings to repair it.\n".utf8
             ))
-            throw HotkeyMonitor.HotkeyError.tapCreateFailed
+            throw HotkeyMonitor.HotkeyError.accessibilityNotGranted
+        }
+        guard CGPreflightListenEventAccess() else {
+            FileHandle.standardError.write(Data(
+                "input monitoring not granted — open Wordhand Settings to repair it.\n".utf8
+            ))
+            throw HotkeyMonitor.HotkeyError.inputMonitoringNotGranted
         }
 
         let mask: CGEventMask =

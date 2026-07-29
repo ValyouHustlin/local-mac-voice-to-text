@@ -206,7 +206,9 @@ checkpoint is implemented and live-verified.
 Current ranking:
 
 1. [x] conservative auto-formatting and filler-word cleanup;
-2. onboarding, permission repair, and model-download recovery;
+2. onboarding and model-download recovery; permission repair now distinguishes
+   Microphone, Input Monitoring, and Accessibility, while the broader
+   fresh-account onboarding flow remains;
 3. [x] first app-aware AI/coding profile; prose, chat, and code-comment
    specialization remains;
 4. undo/revert of the last insertion if not completed in P4;
@@ -344,9 +346,13 @@ Goal: install and update like a normal trusted Mac app.
 
 - [x] Produce a stable `.app` bundle and bundle identifier.
 - [x] Add a rollback-preserving local installer and native launch at login.
+- [x] Prefer the standard `/Applications` location, register/import the active
+  bundle for Spotlight, and keep rollback apps outside searchable application
+  folders so LaunchServices sees one active Wordhand.
 - [x] Keep UI and shortcuts immediately available during background model
   warmup, and bypass network validation for a complete local model cache.
-- [x] Add visible permission status and in-app recovery controls.
+- [x] Add visible permission status and in-app recovery controls that
+  independently verify Microphone, Input Monitoring, and Accessibility.
 - [x] Restrict local settings, vocabulary, and history data to the owner.
 - Sign with hardened runtime.
 - Notarize and staple.

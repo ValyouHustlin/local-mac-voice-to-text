@@ -1,14 +1,22 @@
 #!/usr/bin/env bash
-# Install the locally built app without requiring administrator access.
+# Install the locally built app in the standard Applications directory when writable.
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(/usr/bin/dirname "$0")" && /bin/pwd)"
 REPO_DIR="$(cd "${SCRIPT_DIR}/.." && /bin/pwd)"
 SOURCE_APP="${WORDHAND_APP_OUTPUT:-${REPO_DIR}/dist/Wordhand.app}"
-USER_APP_DIR="${WORDHAND_INSTALL_DIRECTORY:-${HOME}/Applications}"
-TARGET_APP="${USER_APP_DIR}/Wordhand.app"
+DEFAULT_INSTALL_DIRECTORY="/Applications"
+if [ ! -w "${DEFAULT_INSTALL_DIRECTORY}" ]; then
+    DEFAULT_INSTALL_DIRECTORY="${HOME}/Applications"
+fi
+INSTALL_DIRECTORY="${WORDHAND_INSTALL_DIRECTORY:-${DEFAULT_INSTALL_DIRECTORY}}"
+TARGET_APP="${INSTALL_DIRECTORY}/Wordhand.app"
+BACKUP_DIRECTORY="${WORDHAND_BACKUP_DIRECTORY:-${HOME}/Library/Application Support/Wordhand/App Backups}"
+LEGACY_INSTALL_DIRECTORY="${HOME}/Applications"
+LEGACY_TARGET_APP="${LEGACY_INSTALL_DIRECTORY}/Wordhand.app"
 ENABLE_LOGIN=false
+LSREGISTER="/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister"
 
 for argument in "$@"; do
     case "${argument}" in
@@ -38,21 +46,52 @@ if /usr/bin/pgrep -x wordhand >/dev/null 2>&1; then
     fi
 fi
 
-/bin/mkdir -p "${USER_APP_DIR}"
-STAGING_APP="${USER_APP_DIR}/.Wordhand.app.staging.$$"
+if [ "${ENABLE_LOGIN}" = true ]; then
+    for previous_app in "${TARGET_APP}" "${LEGACY_TARGET_APP}"; do
+        previous_binary="${previous_app}/Contents/MacOS/wordhand"
+        if [ -x "${previous_binary}" ]; then
+            "${previous_binary}" install --uninstall >/dev/null 2>&1 || true
+            break
+        fi
+    done
+fi
+
+/bin/mkdir -p "${INSTALL_DIRECTORY}" "${BACKUP_DIRECTORY}"
+/bin/chmod 700 "${BACKUP_DIRECTORY}"
+STAGING_APP="${INSTALL_DIRECTORY}/.Wordhand.app.staging.$$"
 trap '/bin/rm -rf "${STAGING_APP}"' EXIT
 /usr/bin/ditto "${SOURCE_APP}" "${STAGING_APP}"
 /usr/bin/codesign --verify --deep --strict "${STAGING_APP}"
 
+archive_app() {
+    local app_path="$1"
+    local label="$2"
+    local timestamp
+    local backup_app
+    timestamp="$(/bin/date +%Y%m%d-%H%M%S)"
+    backup_app="${BACKUP_DIRECTORY}/Wordhand.${label}.${timestamp}.$$.app"
+    "${LSREGISTER}" -u "${app_path}" >/dev/null 2>&1 || true
+    /bin/mv "${app_path}" "${backup_app}"
+    /bin/echo "Previous app preserved at ${backup_app}"
+}
+
 if [ -e "${TARGET_APP}" ]; then
-    BACKUP_APP="${USER_APP_DIR}/Wordhand.backup.$(/bin/date +%Y%m%d-%H%M%S).app"
-    /bin/mv "${TARGET_APP}" "${BACKUP_APP}"
-    /bin/echo "Previous app preserved at ${BACKUP_APP}"
+    archive_app "${TARGET_APP}" "backup"
+fi
+
+if [ "${LEGACY_TARGET_APP}" != "${TARGET_APP}" ] && [ -e "${LEGACY_TARGET_APP}" ]; then
+    archive_app "${LEGACY_TARGET_APP}" "legacy"
 fi
 /bin/mv "${STAGING_APP}" "${TARGET_APP}"
 
-LSREGISTER="/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister"
+for legacy_backup in "${LEGACY_INSTALL_DIRECTORY}"/Wordhand.backup.*.app; do
+    [ -e "${legacy_backup}" ] || continue
+    "${LSREGISTER}" -u "${legacy_backup}" >/dev/null 2>&1 || true
+    /bin/mv "${legacy_backup}" "${BACKUP_DIRECTORY}/"
+done
+
 "${LSREGISTER}" -f "${TARGET_APP}"
+/usr/bin/mdimport -i "${TARGET_APP}" >/dev/null 2>&1 || true
 
 if [ "${ENABLE_LOGIN}" = true ]; then
     "${TARGET_APP}/Contents/MacOS/wordhand" install --launch-at-login
