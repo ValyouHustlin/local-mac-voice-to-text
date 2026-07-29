@@ -99,9 +99,7 @@ final class WordhandAppDelegate: NSObject, NSApplicationDelegate {
         _ sender: NSApplication,
         hasVisibleWindows flag: Bool
     ) -> Bool {
-        if !flag {
-            onOpenPrimaryWindow()
-        }
+        onOpenPrimaryWindow()
         return true
     }
 

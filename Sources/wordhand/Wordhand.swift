@@ -437,7 +437,12 @@ struct Run: ParsableCommand {
         FileHandle.standardError.write(Data(
             "\(runtimeStatus) · model: \(chosenModel.id) · ^C to quit\n".utf8
         ))
-        withExtendedLifetime((instanceLock, globalInputTestTimer, modelWarmupTask)) {
+        withExtendedLifetime((
+            instanceLock,
+            globalInputTestTimer,
+            modelWarmupTask,
+            appDelegate
+        )) {
             app.run()
         }
     }

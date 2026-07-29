@@ -104,5 +104,9 @@ with mode `0600` after the final installed launch.
 - a clean macOS user account and first-ever model download;
 - the one-time app-bundle Microphone and Accessibility approvals remain for
   Aaron to grant through the visible macOS controls;
+- a physical Dock click was not observed in this slice; the optimized-build
+  delegate lifetime bug found while probing reopen behavior was fixed, but the
+  automated Dock accessibility action did not activate the app and is not
+  treated as proof of a physical click;
 - dictation across native, browser, and Electron targets was not repeated in
   this packaging slice; earlier dated receipts cover those feature paths.
