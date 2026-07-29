@@ -6,6 +6,11 @@ public enum InsertionMode: String, Codable, CaseIterable, Sendable {
     case copyOnly
 }
 
+public enum ProcessingPerformanceMode: String, Codable, CaseIterable, Sendable {
+    case adaptive
+    case maximum
+}
+
 public struct HotkeyBinding: Codable, Equatable, Sendable {
     public enum Action: String, Codable, Sendable {
         case pushToTalk
@@ -111,6 +116,7 @@ public struct AppSettings: Codable, Equatable, Sendable {
     public var showOverlay: Bool
     public var soundEffectsEnabled: Bool
     public var formattingProfile: TranscriptFormattingProfile
+    public var performanceMode: ProcessingPerformanceMode
     public var historyRetentionDays: Int
     public var hotkeys: [HotkeyBinding]
 
@@ -121,6 +127,7 @@ public struct AppSettings: Codable, Equatable, Sendable {
         showOverlay: Bool = true,
         soundEffectsEnabled: Bool = true,
         formattingProfile: TranscriptFormattingProfile = .formatted,
+        performanceMode: ProcessingPerformanceMode = .adaptive,
         historyRetentionDays: Int = 30,
         hotkeys: [HotkeyBinding] = [
             HotkeyBinding(key: "space", modifiers: ["control"], action: .pushToTalk),
@@ -132,6 +139,7 @@ public struct AppSettings: Codable, Equatable, Sendable {
         self.showOverlay = showOverlay
         self.soundEffectsEnabled = soundEffectsEnabled
         self.formattingProfile = formattingProfile
+        self.performanceMode = performanceMode
         self.historyRetentionDays = historyRetentionDays
         self.hotkeys = hotkeys
     }
@@ -143,6 +151,7 @@ public struct AppSettings: Codable, Equatable, Sendable {
         case showOverlay
         case soundEffectsEnabled
         case formattingProfile
+        case performanceMode
         case historyRetentionDays
         case hotkeys
     }
@@ -161,6 +170,10 @@ public struct AppSettings: Codable, Equatable, Sendable {
             TranscriptFormattingProfile.self,
             forKey: .formattingProfile
         ) ?? .formatted
+        performanceMode = try container.decodeIfPresent(
+            ProcessingPerformanceMode.self,
+            forKey: .performanceMode
+        ) ?? .adaptive
         historyRetentionDays = try container.decode(Int.self, forKey: .historyRetentionDays)
         hotkeys = try container.decode([HotkeyBinding].self, forKey: .hotkeys)
     }

@@ -5,6 +5,7 @@ import FoundationModels
 import WordhandCore
 
 protocol LocalTranscriptRewriting: Sendable {
+    func prewarm(instructions: String) async
     func rewrite(
         _ text: String,
         instructions: String,
@@ -13,26 +14,48 @@ protocol LocalTranscriptRewriting: Sendable {
     ) async throws -> String
 }
 
+extension LocalTranscriptRewriting {
+    func prewarm(instructions: String) async {}
+}
+
 final class AppAwareTranscriptProcessor: TranscriptProcessing, @unchecked Sendable {
     private let dictionaryProcessor: MutableTranscriptProcessor
     private let rewriter: any LocalTranscriptRewriting
     private let lock = NSLock()
     private var profile: TranscriptFormattingProfile
+    private var performanceMode: ProcessingPerformanceMode
 
     init(
         dictionaryProcessor: MutableTranscriptProcessor,
         profile: TranscriptFormattingProfile,
+        performanceMode: ProcessingPerformanceMode = .adaptive,
         rewriter: any LocalTranscriptRewriting = FoundationModelTranscriptRewriter()
     ) {
         self.dictionaryProcessor = dictionaryProcessor
         self.profile = profile
+        self.performanceMode = performanceMode
         self.rewriter = rewriter
     }
 
-    func update(profile: TranscriptFormattingProfile) {
+    func update(
+        profile: TranscriptFormattingProfile,
+        performanceMode: ProcessingPerformanceMode? = nil
+    ) {
         lock.withLock {
             self.profile = profile
+            if let performanceMode {
+                self.performanceMode = performanceMode
+            }
         }
+    }
+
+    func prepare(target: TranscriptTarget) async {
+        let configuration = lock.withLock { (profile, performanceMode) }
+        guard configuration.1 == .maximum else { return }
+        guard let intent = TranscriptRewriteIntent(profile: configuration.0) else {
+            return
+        }
+        await rewriter.prewarm(instructions: intent.instructions(for: target))
     }
 
     func process(_ text: String, target: TranscriptTarget) async -> String {
@@ -134,6 +157,19 @@ private enum TranscriptRewriteIntent: Equatable {
     case professional
     case aiCommunication
 
+    init?(profile: TranscriptFormattingProfile) {
+        switch profile {
+        case .casual:
+            return nil
+        case .formatted:
+            self = .formatted
+        case .professional:
+            self = .professional
+        case .aiCommunication:
+            self = .aiCommunication
+        }
+    }
+
     func instructions(for target: TranscriptTarget) -> String {
         let application = target.applicationName ?? "the current application"
         let shared = """
@@ -144,6 +180,8 @@ private enum TranscriptRewriteIntent: Equatable {
         Never turn a statement about someone into text addressed to that person.
         Never answer the message. Never add facts, recommendations, claims, or intent.
         Remove speech fillers, false starts, and accidental repetition only when meaning is unchanged.
+        Resolve explicit spoken self-corrections in place. For example, "Friday—wait, no, Monday" means Monday, "Blumira—I meant Valyou" means Valyou, and "scratch that" discards the abandoned clause.
+        Do not preserve correction phrases in the final text, and do not treat an ordinary semantic "no" as a correction.
         Return only the rewritten text with no preamble, label, quotation, or code fence.
         """
 
@@ -183,10 +221,23 @@ private enum TranscriptRewriteIntent: Equatable {
     }
 }
 
-struct FoundationModelTranscriptRewriter: LocalTranscriptRewriting {
+actor FoundationModelTranscriptRewriter: LocalTranscriptRewriting {
     enum RewriterError: Error {
         case unavailable
         case timedOut
+    }
+
+    private var preparedSessions: [String: Any] = [:]
+
+    func prewarm(instructions: String) async {
+#if canImport(FoundationModels)
+        guard #available(macOS 26.0, *) else { return }
+        guard case .available = SystemLanguageModel.default.availability else { return }
+        guard preparedSessions[instructions] == nil else { return }
+        let session = LanguageModelSession(instructions: instructions)
+        session.prewarm()
+        preparedSessions[instructions] = session
+#endif
     }
 
     func rewrite(
@@ -208,18 +259,22 @@ struct FoundationModelTranscriptRewriter: LocalTranscriptRewriting {
 
         \(text)
         """
-        let session = LanguageModelSession(instructions: instructions)
+        let session =
+            preparedSessions.removeValue(forKey: instructions) as? LanguageModelSession
+            ?? LanguageModelSession(instructions: instructions)
         let options = GenerationOptions(
             sampling: .greedy,
             temperature: 0,
             maximumResponseTokens: maximumResponseTokens
         )
-        return try await Self.respond(
+        let result = try await Self.respond(
             session: session,
             prompt: prompt,
             options: options,
             timeoutSeconds: timeoutSeconds
         )
+        Task { await self.prewarm(instructions: instructions) }
+        return result
 #else
         throw RewriterError.unavailable
 #endif

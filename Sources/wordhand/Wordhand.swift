@@ -169,7 +169,8 @@ struct Run: ParsableCommand {
         let capture = AudioCapture()
         let processor = AppAwareTranscriptProcessor(
             dictionaryProcessor: dictionary.processor,
-            profile: settings.formattingProfile
+            profile: settings.formattingProfile,
+            performanceMode: settings.performanceMode
         )
         let inserter = MacTextInserter()
         let historyStore = try TranscriptHistoryStore(fileURL: historyURL)
@@ -252,7 +253,16 @@ struct Run: ParsableCommand {
             settingsController.onSettingsChange = { updated in
                 monitor.updateBindings(updated.hotkeys)
                 coordinator.updateInsertionMode(updated.insertionMode)
-                processor.update(profile: updated.formattingProfile)
+                processor.update(
+                    profile: updated.formattingProfile,
+                    performanceMode: updated.performanceMode
+                )
+                if updated.performanceMode == .maximum {
+                    let target = currentTranscriptTarget()
+                    Task {
+                        await processor.prepare(target: target)
+                    }
+                }
                 audioCues.isEnabled = updated.soundEffectsEnabled
                 menuBar.updateSettings(updated)
                 if !updated.showOverlay {
@@ -297,6 +307,10 @@ struct Run: ParsableCommand {
                 case .recording:
                     FileHandle.standardError.write(Data("● recording\n".utf8))
                     audioCues.play(.start)
+                    let target = currentTranscriptTarget()
+                    Task {
+                        await processor.prepare(target: target)
+                    }
                     if settingsController.settings.showOverlay {
                         overlay?.show(.recording)
                     }
@@ -396,6 +410,9 @@ struct Run: ParsableCommand {
         modelWarmupTask = Task { @MainActor in
             do {
                 try await transcriber.warmUp()
+                if settingsController.settings.performanceMode == .maximum {
+                    await processor.prepare(target: currentTranscriptTarget())
+                }
                 readiness.modelReady = true
                 if readiness.hotkeyReady, coordinator.state == .idle {
                     menuBar.setReady()

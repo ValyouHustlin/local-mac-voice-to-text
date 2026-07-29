@@ -108,6 +108,10 @@ final class SettingsController: NSObject, ObservableObject, NSWindowDelegate {
         update { $0.formattingProfile = profile }
     }
 
+    func setPerformanceMode(_ mode: ProcessingPerformanceMode) {
+        update { $0.performanceMode = mode }
+    }
+
     func setModelID(_ modelID: String) {
         update { $0.modelID = modelID }
     }
@@ -327,6 +331,7 @@ private struct SettingsView: View {
                     startupCard
                     permissionCard
                     modelCard
+                    performanceCard
                     insertionCard
                     formattingCard
                     shortcutsCard
@@ -551,6 +556,43 @@ private struct SettingsView: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
             }
+        }
+    }
+
+    private var performanceCard: some View {
+        settingsCard {
+            HStack(alignment: .firstTextBaseline) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Processing speed")
+                        .font(.headline)
+                    Text(performanceDescription)
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer(minLength: 20)
+                Picker(
+                    "Processing speed",
+                    selection: Binding(
+                        get: { controller.settings.performanceMode },
+                        set: { controller.setPerformanceMode($0) }
+                    )
+                ) {
+                    Text("Adaptive").tag(ProcessingPerformanceMode.adaptive)
+                    Text("Maximum · Apple silicon").tag(ProcessingPerformanceMode.maximum)
+                }
+                .labelsHidden()
+                .frame(width: 230)
+            }
+        }
+    }
+
+    private var performanceDescription: String {
+        switch controller.settings.performanceMode {
+        case .adaptive:
+            return "Balances responsiveness and energy use. Models warm only when needed."
+        case .maximum:
+            return "Keeps local processing ready and prewarms formatting while you speak."
         }
     }
 

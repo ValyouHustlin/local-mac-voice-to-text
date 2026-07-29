@@ -229,6 +229,28 @@ struct GlobalInputAdapterTests {
     }
 
     @Test
+    func maximumPerformancePrewarmsTheSelectedStyle() async {
+        let rewriter = RecordingLocalTranscriptRewriter(responses: [])
+        let processor = AppAwareTranscriptProcessor(
+            dictionaryProcessor: MutableTranscriptProcessor(),
+            profile: .professional,
+            performanceMode: .maximum,
+            rewriter: rewriter
+        )
+        let target = TranscriptTarget(
+            bundleIdentifier: "com.mitchellh.ghostty",
+            applicationName: "Ghostty"
+        )
+
+        await processor.prepare(target: target)
+
+        let prewarms = await rewriter.recordedPrewarms()
+        #expect(prewarms.count == 1)
+        #expect(prewarms[0].contains("professional communication"))
+        #expect(prewarms[0].contains("Ghostty"))
+    }
+
+    @Test
     func unsafeProfessionalRewriteFallsBackWithoutDroppingConstraints() async {
         let rewriter = RecordingLocalTranscriptRewriter(
             responses: ["Ship it.", "Ship it."]
@@ -300,9 +322,14 @@ private actor RecordingLocalTranscriptRewriter: LocalTranscriptRewriting {
 
     private var responses: [String]
     private var calls: [Call] = []
+    private var prewarms: [String] = []
 
     init(responses: [String]) {
         self.responses = responses
+    }
+
+    func prewarm(instructions: String) {
+        prewarms.append(instructions)
     }
 
     func rewrite(
@@ -322,6 +349,10 @@ private actor RecordingLocalTranscriptRewriter: LocalTranscriptRewriting {
 
     func recordedCalls() -> [Call] {
         calls
+    }
+
+    func recordedPrewarms() -> [String] {
+        prewarms
     }
 }
 

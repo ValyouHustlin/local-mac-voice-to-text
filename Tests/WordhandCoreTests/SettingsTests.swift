@@ -85,6 +85,7 @@ struct SettingsTests {
         expected.showOverlay = false
         expected.soundEffectsEnabled = false
         expected.formattingProfile = .aiCommunication
+        expected.performanceMode = .maximum
         expected.insertionMode = .unicode
 
         try store.save(expected)
@@ -135,6 +136,7 @@ struct SettingsTests {
         #expect(settings.hotkeys.first?.displayName == "⌃Space")
         #expect(settings.soundEffectsEnabled)
         #expect(settings.formattingProfile == .formatted)
+        #expect(settings.performanceMode == .adaptive)
     }
 
     @Test
