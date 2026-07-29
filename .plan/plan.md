@@ -18,7 +18,7 @@ contract and target boundaries.
 
 ## Public identity
 
-Status: complete locally; public repository rename pending verification.
+Status: complete.
 
 The product name is Wordhand. The app, Swift package, executable, module names,
 documentation, icon, and repository use one identity. The previous name is
@@ -27,6 +27,8 @@ retained only for upstream attribution and automatic user-data migration.
 The repository is public source. Upstream currently provides no software
 license, so resolving provenance is a release prerequisite before calling the
 project open source or encouraging redistribution.
+
+Receipt: `docs/verification/2026-07-28-wordhand-brand.md`.
 
 ## P0: ground truth
 
