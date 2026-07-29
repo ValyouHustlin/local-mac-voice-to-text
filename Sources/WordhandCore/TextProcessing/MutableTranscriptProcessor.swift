@@ -18,6 +18,7 @@ public final class MutableTranscriptProcessor: TranscriptProcessing, @unchecked 
         let snapshot = lock.withLock { entries }
         let sanitized = TranscriptProcessor.sanitize(text)
         let substituted = DictionaryMatcher(entries: snapshot).apply(to: sanitized)
-        return TranscriptProcessor.removeSpeechFillers(substituted)
+        let withoutFillers = TranscriptProcessor.removeSpeechFillers(substituted)
+        return SpokenCorrectionEngine.apply(to: withoutFillers)
     }
 }

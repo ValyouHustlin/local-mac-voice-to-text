@@ -13,9 +13,10 @@ public struct TranscriptProcessor: TranscriptProcessing, Sendable {
     }
 
     public func process(_ text: String, target: TranscriptTarget = .unknown) async -> String {
-        let cleaned = Self.removeSpeechFillers(
+        let withoutFillers = Self.removeSpeechFillers(
             dictionary.apply(to: Self.sanitize(text))
         )
+        let cleaned = SpokenCorrectionEngine.apply(to: withoutFillers)
         guard let formattingProfile else { return cleaned }
         switch formattingProfile {
         case .casual, .formatted, .professional, .aiCommunication:
