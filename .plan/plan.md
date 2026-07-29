@@ -1,4 +1,4 @@
-# Parrot product roadmap
+# Wordhand product roadmap
 
 This fork is building a full local macOS dictation app, not preserving
 upstream's minimal daemon scope. See `docs/architecture.md` for the product
@@ -16,6 +16,18 @@ contract and target boundaries.
   commit.
 - Update this roadmap when evidence changes the order.
 
+## Public identity
+
+Status: complete locally; public repository rename pending verification.
+
+The product name is Wordhand. The app, Swift package, executable, module names,
+documentation, icon, and repository use one identity. The previous name is
+retained only for upstream attribution and automatic user-data migration.
+
+The repository is public source. Upstream currently provides no software
+license, so resolving provenance is a release prerequisite before calling the
+project open source or encouraging redistribution.
+
 ## P0: ground truth
 
 Status: complete for the initial baseline. Browser end-to-end and LaunchAgent
@@ -24,7 +36,7 @@ TCC remain explicit open receipts.
 Goal: establish what the current fork actually does on this Mac.
 
 - Build debug and release configurations.
-- Run `parrot doctor` and record TCC state for the exact development binary.
+- Run `wordhand doctor` and record TCC state for the exact development binary.
 - Warm the recommended model and record model/download behavior.
 - Dictate for several minutes through the actual hotkey.
 - Exercise one native app, one browser field, and one Electron app.
@@ -46,7 +58,7 @@ fork toward the wrong product.
 
 - Replace the inherited architecture and plan with this fork's product
   contract.
-- Add a `ParrotCore` library target and `ParrotCoreTests`.
+- Add a `WordhandCore` library target and `WordhandCoreTests`.
 - Move or wrap model registry and transcript sanitization as pure logic.
 - Add versioned settings types with testable storage.
 - Put audio capture, transcription, hotkey monitoring, text insertion,
@@ -191,6 +203,7 @@ Goal: install and update like a normal trusted Mac app.
 - Notarize and staple.
 - Package without stripping quarantine.
 - Add release CI, checksums, changelog, and rollback instructions.
+- Resolve upstream license provenance and publish a compatible project license.
 - Add an update mechanism whose metadata contains no transcript content.
 - Test a fresh install, first-run permissions, model failure/retry, login start,
   update, rollback, and uninstall.

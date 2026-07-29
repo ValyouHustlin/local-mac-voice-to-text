@@ -25,11 +25,11 @@ let testLinkerSettings: [LinkerSetting] = needsTestingInteropPath ? [
 ] : []
 
 let package = Package(
-    name: "parrot",
+    name: "wordhand",
     platforms: [.macOS(.v14)],
     products: [
-        .library(name: "ParrotCore", targets: ["ParrotCore"]),
-        .executable(name: "parrot", targets: ["parrot"]),
+        .library(name: "WordhandCore", targets: ["WordhandCore"]),
+        .executable(name: "wordhand", targets: ["wordhand"]),
     ],
     dependencies: [
         .package(url: "https://github.com/apple/swift-argument-parser.git", from: "1.3.0"),
@@ -41,23 +41,23 @@ let package = Package(
     ],
     targets: [
         .target(
-            name: "ParrotCore",
+            name: "WordhandCore",
             linkerSettings: [
                 .linkedLibrary("sqlite3"),
             ]
         ),
         .executableTarget(
-            name: "parrot",
+            name: "wordhand",
             dependencies: [
-                "ParrotCore",
+                "WordhandCore",
                 .product(name: "ArgumentParser", package: "swift-argument-parser"),
                 .product(name: "WhisperKit", package: "WhisperKit"),
             ]
         ),
         .testTarget(
-            name: "ParrotCoreTests",
+            name: "WordhandCoreTests",
             dependencies: [
-                "ParrotCore",
+                "WordhandCore",
                 .product(name: "Testing", package: "swift-testing"),
             ],
             linkerSettings: testLinkerSettings

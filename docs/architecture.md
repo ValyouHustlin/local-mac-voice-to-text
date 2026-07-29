@@ -9,6 +9,17 @@ not a design goal.
 The product is a daily-use macOS dictation app in the Wispr Flow class, with one
 defining advantage: microphone audio and transcript text stay on the Mac.
 
+## Product identity
+
+The public product, app, executable, package, and repository are named
+**Wordhand**. The command-line executable is `wordhand`, and the stable product
+data directory is `~/Library/Application Support/Wordhand`.
+
+The pre-fork name, Parrot, survives only where required for upstream attribution
+and automatic migration. It is not a secondary brand. Existing user data is
+copied once into the Wordhand directory, while the legacy directory is
+preserved as a rollback copy.
+
 Done means a signed, installable app that:
 
 1. records from a configurable push-to-talk shortcut;
@@ -52,45 +63,38 @@ This file describes the intended architecture for that product. Features marked
   dictation product.
 - Preserving a small diff from upstream.
 
-## Current implementation baseline
+## Current implementation
 
-Verified by source inspection on 2026-07-28:
+Verified by source inspection and dated receipts on 2026-07-28:
 
-- Swift Package Manager executable target, macOS 14+.
-- WhisperKit transcription with three registered Whisper models.
-- `AVAudioEngine` capture converted to 16 kHz mono Float32.
-- global `fn` press and release detection through `CGEventTap`.
-- direct Unicode cursor insertion through `CGEvent`.
-- recording and transcribing overlay.
-- menu bar status item.
-- permission doctor and setup commands.
-- LaunchAgent installation command.
+- Swift Package Manager library, executable, and test targets for macOS 14+;
+- WhisperKit transcription with three registered local Whisper models;
+- `AVAudioEngine` capture converted to 16 kHz mono Float32;
+- Control-Space push-to-talk through `CGEventTap`;
+- direct Unicode cursor insertion through `CGEvent`;
+- native recording overlay, menu bar control, and Dock presence;
+- persistent custom dictionary with immediate correction flow;
+- searchable SQLite transcript history with copy, reinsert, correction, and
+  deletion actions;
+- versioned settings and automatic migration from the legacy product name;
+- permission doctor, setup, and LaunchAgent commands;
+- macOS continuous integration for tests and release builds.
 
-Not present in the inspected baseline:
-
-- any Swift test target or test files;
-- persistent app settings;
-- custom dictionary;
-- transcript history;
-- paste-based insertion with clipboard restoration;
-- configurable hotkeys in the live command implementation;
-- a preferences or history window;
-- signed app bundle, notarization, update mechanism, or release CI.
-
-The README and older plans contain unverified latency and compatibility claims.
-Only measured receipts from the current session may promote those claims.
+Paste-based insertion, fully configurable hotkeys, a complete preferences
+window, signed app bundle, notarization, and updates remain planned. Only
+measured receipts may promote latency or compatibility claims.
 
 ## Current delivery state
 
 P0 ground truth and P1 foundation are complete as of 2026-07-28. The package
-now has `ParrotCore`, protocol-backed coordinator seams, versioned settings,
-32 deterministic tests, and macOS CI.
+now has `WordhandCore`, protocol-backed coordinator seams, versioned settings,
+35 deterministic tests, and macOS CI.
 
 P2 custom dictionary is implemented but not yet through its live three-target
 exit gate. Its current runtime path is:
 
 ```text
-~/Library/Application Support/Parrot/dictionary.json
+~/Library/Application Support/Wordhand/dictionary.json
   -> versioned DictionaryStore
   -> MutableTranscriptProcessor
   -> coordinator processing stage
@@ -110,13 +114,13 @@ split history window supports Unicode-aware search, copy, reinsert, correction
 creation, delete, clear-all, metadata, and visible failure states.
 
 The app now has a regular Dock presence as well as its menu bar item. Clicking
-the Dock item with no visible windows opens History. Its minimal app icon
-extends the existing vector bird mark so the Dock and menu bar share one
-identity. See `docs/verification/2026-07-28-history.md` for the isolated live
-UI receipt and the remaining microphone exit gate.
+the Dock item with no visible windows opens History. Its minimal app icon pairs
+a monoline `W` with a mint text cursor, giving the Dock and public repository
+one identity. See `docs/verification/2026-07-28-history.md` for the original
+isolated UI receipt and the remaining microphone exit gate.
 
 Control-Space is the current push-to-talk default. Its press/release edge logic
-is isolated in `ParrotCore`, rejects unintended modifier combinations, and
+is isolated in `WordhandCore`, rejects unintended modifier combinations, and
 recovers if Control is released before Space. Full live rebinding and multiple
 bindings remain P5 work. See
 `docs/verification/2026-07-28-control-space.md` for the automated and live Dock
@@ -129,7 +133,7 @@ The package should separate testable product logic from macOS adapters:
 ```text
 Package.swift
 Sources/
-  ParrotCore/                 pure and persistence-facing product logic
+  WordhandCore/                 pure and persistence-facing product logic
     Models/
     Settings/
     TextProcessing/
@@ -137,16 +141,16 @@ Sources/
     History/
     Insertion/
     Hotkeys/
-  ParrotMac/                  AppKit, AVFoundation, CoreGraphics adapters
+  WordhandMac/                  AppKit, AVFoundation, CoreGraphics adapters
     Audio/
     Transcription/
     Input/
     Permissions/
     UI/
-  parrot/                     executable wiring and CLI compatibility
+  wordhand/                     executable wiring and CLI compatibility
 Tests/
-  ParrotCoreTests/
-  ParrotMacTests/             adapter contract tests with fakes where possible
+  WordhandCoreTests/
+  WordhandMacTests/             adapter contract tests with fakes where possible
 ```
 
 Migration may happen incrementally. The important boundary is behavioral: core
@@ -330,18 +334,23 @@ original file and fall back visibly rather than overwriting user data.
 User data stays under:
 
 ```text
-~/Library/Application Support/Parrot/
+~/Library/Application Support/Wordhand/
   settings.json
   dictionary.json
   history.sqlite
   Models/
 ```
 
+On the first branded launch, Wordhand copies an existing
+`~/Library/Application Support/Parrot` directory into this location through a
+staged migration. It never overwrites an existing Wordhand directory and
+preserves the legacy directory for rollback.
+
 The final app bundle and bundle identifier will determine the stable TCC
 identity. Development builds must not pretend their permission grants prove the
 signed release identity works.
 
-For isolated development and verification, `parrot run --data-directory`
+For isolated development and verification, `wordhand run --data-directory`
 redirects settings, dictionary, and history persistence to an explicit local
 directory.
 
@@ -383,3 +392,8 @@ strip quarantine attributes.
 Release automation will build, test, sign, notarize, staple, publish checksums,
 and produce an update feed. Publishing, certificate selection, and any paid
 service remain Aaron-gated actions.
+
+The inherited upstream repository currently has no software license. Public
+source visibility is allowed, but an installable project release must not be
+described as carrying an open-source license until provenance is resolved. See
+`NOTICE.md`.
