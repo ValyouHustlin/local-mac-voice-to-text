@@ -84,6 +84,14 @@ final class SettingsController: NSObject, ObservableObject, NSWindowDelegate {
         update { $0.showOverlay = enabled }
     }
 
+    func setModelID(_ modelID: String) {
+        update { $0.modelID = modelID }
+    }
+
+    func setInsertionMode(_ insertionMode: InsertionMode) {
+        update { $0.insertionMode = insertionMode }
+    }
+
     func beginShortcutCapture(at index: Int) {
         cancelShortcutCapture()
         capturingIndex = index
@@ -240,6 +248,8 @@ private struct SettingsView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 22) {
                     header
+                    modelCard
+                    insertionCard
                     shortcutsCard
                     recordingCard
                     privacyNote
@@ -248,6 +258,85 @@ private struct SettingsView: View {
             }
         }
         .frame(width: 680, height: 440)
+    }
+
+    private var insertionCard: some View {
+        settingsCard {
+            VStack(alignment: .leading, spacing: 12) {
+                HStack {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Insert transcript")
+                            .font(.headline)
+                        Text(insertionDescription)
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    Picker(
+                        "Insertion mode",
+                        selection: Binding(
+                            get: { controller.settings.insertionMode },
+                            set: { controller.setInsertionMode($0) }
+                        )
+                    ) {
+                        Text("Paste · Recommended").tag(InsertionMode.paste)
+                        Text("Direct typing").tag(InsertionMode.unicode)
+                        Text("Copy only").tag(InsertionMode.copyOnly)
+                    }
+                    .labelsHidden()
+                    .frame(width: 205)
+                }
+            }
+        }
+    }
+
+    private var insertionDescription: String {
+        switch controller.settings.insertionMode {
+        case .paste:
+            return "Works reliably in native, browser, Electron, and Java apps. Your clipboard is restored."
+        case .unicode:
+            return "Types without touching the clipboard, but some browser and Electron fields reject it."
+        case .copyOnly:
+            return "Leaves each transcript on the clipboard without inserting it."
+        }
+    }
+
+    private var modelCard: some View {
+        settingsCard {
+            VStack(alignment: .leading, spacing: 12) {
+                HStack(alignment: .firstTextBaseline) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Transcription model")
+                            .font(.headline)
+                        Text("Large v3 is the accuracy-first choice for this Mac.")
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    Picker(
+                        "Model",
+                        selection: Binding(
+                            get: { controller.settings.modelID },
+                            set: { controller.setModelID($0) }
+                        )
+                    ) {
+                        ForEach(ModelRegistry.shared, id: \.id) { model in
+                            Text("\(model.displayName) · \(model.sizeMB) MB")
+                                .tag(model.id)
+                        }
+                    }
+                    .labelsHidden()
+                    .frame(width: 285)
+                }
+
+                Label(
+                    "Model changes take effect the next time Wordhand launches.",
+                    systemImage: "arrow.clockwise"
+                )
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            }
+        }
     }
 
     private var header: some View {

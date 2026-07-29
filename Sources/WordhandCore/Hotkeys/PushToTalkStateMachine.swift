@@ -111,9 +111,25 @@ public struct HotkeyRoutingStateMachine: Sendable {
         return event
     }
 
+    /// Whether a global event belongs to a configured recording shortcut and
+    /// should be withheld from the frontmost app.
+    public func shouldConsume(_ input: HotkeyInput) -> Bool {
+        switch input.kind {
+        case .keyDown:
+            return bindings.contains {
+                Self.isRecordingAction($0.action) && matches($0, input: input)
+            }
+        case .keyUp:
+            return heldKeyCodes.contains(input.keyCode)
+        case .flagsChanged:
+            return false
+        }
+    }
+
     public mutating func handle(_ input: HotkeyInput) -> HotkeyEvent? {
         switch input.kind {
         case .keyDown:
+            guard shouldConsume(input) else { return nil }
             guard !input.isRepeat, !heldKeyCodes.contains(input.keyCode) else {
                 return nil
             }

@@ -114,7 +114,7 @@ public struct AppSettings: Codable, Equatable, Sendable {
 
     public init(
         schemaVersion: Int = Self.currentSchemaVersion,
-        modelID: String = "whisper-base.en",
+        modelID: String = "whisper-large-v3",
         insertionMode: InsertionMode = .paste,
         showOverlay: Bool = true,
         historyRetentionDays: Int = 30,

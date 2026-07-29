@@ -69,7 +69,7 @@ final class HotkeyMonitor: HotkeyMonitoring {
             let tap = CGEvent.tapCreate(
                 tap: .cgSessionEventTap,
                 place: .headInsertEventTap,
-                options: .listenOnly,
+                options: .defaultTap,
                 eventsOfInterest: mask,
                 callback: hotkeyCallback,
                 userInfo: userInfo
@@ -98,8 +98,8 @@ final class HotkeyMonitor: HotkeyMonitoring {
         onEvent = nil
     }
 
-    fileprivate func handle(type: CGEventType, event: CGEvent) {
-        guard !isSuspended else { return }
+    fileprivate func handle(type: CGEventType, event: CGEvent) -> Bool {
+        guard !isSuspended else { return false }
         if debug {
             let flags = event.flags
             let keycode = event.getIntegerValueField(.keyboardEventKeycode)
@@ -109,16 +109,18 @@ final class HotkeyMonitor: HotkeyMonitoring {
                         .utf8
                 ))
         }
-        guard let kind = Self.inputKind(for: type) else { return }
+        guard let kind = Self.inputKind(for: type) else { return false }
         let input = HotkeyInput(
             kind: kind,
             keyCode: UInt16(event.getIntegerValueField(.keyboardEventKeycode)),
             modifiers: Self.modifiers(from: event.flags),
             isRepeat: event.getIntegerValueField(.keyboardEventAutorepeat) != 0
         )
+        let shouldConsume = stateMachine.shouldConsume(input)
         if let edge = stateMachine.handle(input) {
             onEvent?(edge)
         }
+        return shouldConsume
     }
 
     private static func inputKind(for type: CGEventType) -> HotkeyInputKind? {
@@ -155,11 +157,7 @@ private func hotkeyCallback(
         return Unmanaged.passUnretained(event)
     }
 
-    let copy = event.copy()
-    DispatchQueue.main.async {
-        if let copy {
-            monitor.handle(type: type, event: copy)
-        }
-    }
-    return Unmanaged.passUnretained(event)
+    return monitor.handle(type: type, event: event)
+        ? nil
+        : Unmanaged.passUnretained(event)
 }

@@ -29,8 +29,9 @@ and inserts the result into ordinary Mac apps.
 | **Push to talk** | Hold `Control-Space`, speak, and release. A compact overlay shows recording and transcription state. |
 | **Custom dictionary** | Teach Wordhand names, acronyms, product terms, and exact replacements. Corrections apply without restarting. |
 | **Recoverable history** | Search recent transcripts, inspect insertion status, copy, reinsert, correct, or delete them from a native window. |
-| **A real Mac app** | Wordhand lives in both the menu bar and Dock. Clicking its Dock icon opens transcript history. |
-| **Local model choice** | The recommended English model is optimized for daily speed. Larger multilingual Whisper models are available. |
+| **A real Mac app** | Wordhand lives in both the menu bar and Dock. Clicking its Dock icon opens Settings; history and dictionary are one click away. |
+| **Accuracy-first local model** | Optimized Whisper Large v3 is the default on capable Macs. Balanced and smaller Whisper models remain selectable. |
+| **Reliable insertion** | Paste-first insertion works across native, browser, and Electron targets while restoring the previous rich clipboard. Direct typing and copy-only modes are available. |
 
 <p align="center">
   <img src="docs/assets/wordhand-history.png" width="920" alt="Wordhand transcript history window">
@@ -83,6 +84,7 @@ wordhand setup                           # permissions and model setup
 wordhand doctor                          # diagnose permissions and shortcut conflicts
 wordhand models list                     # list local transcription models
 wordhand models download <id>            # download a model before first use
+wordhand models benchmark <audio> --model <id>
 wordhand install --launch-at-login       # register the current binary at login
 wordhand install --uninstall             # remove the login agent
 wordhand --model whisper-large-v3-turbo  # use a larger multilingual model
@@ -110,9 +112,9 @@ and what remains unverified.
 
 ## Roadmap
 
-The next daily-use slices are paste-based insertion with clipboard restoration,
-fully configurable shortcuts, conservative local formatting, onboarding and
-permission repair, and a signed release path. See
+The next daily-use slices are immediate undo/revert, conservative local
+formatting, onboarding and permission repair, app-aware formatting, and a
+signed release path. See
 [the product roadmap](.plan/plan.md) and
 [architecture](docs/architecture.md).
 

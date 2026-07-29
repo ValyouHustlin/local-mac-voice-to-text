@@ -1,3 +1,5 @@
+import AppKit
+import Carbon
 import CoreGraphics
 import Foundation
 import WordhandCore
@@ -39,15 +41,130 @@ enum TextInjector {
     }
 }
 
-struct UnicodeTextInserter: TextInserting {
+struct MacTextInserter: TextInserting, @unchecked Sendable {
     func insert(_ text: String, mode: InsertionMode) async throws {
-        guard mode == .unicode else {
-            throw TextInsertionError.unsupportedMode(mode)
+        guard !text.isEmpty else { return }
+
+        switch mode {
+        case .unicode:
+            guard !IsSecureEventInputEnabled() else {
+                throw TextInsertionError.secureInputEnabled
+            }
+            TextInjector.inject(text)
+
+        case .copyOnly:
+            try await MainActor.run {
+                let pasteboard = NSPasteboard.general
+                let snapshot = PasteboardSnapshot(pasteboard: pasteboard)
+                pasteboard.clearContents()
+                guard pasteboard.setString(text, forType: .string) else {
+                    snapshot.restore(to: pasteboard)
+                    throw TextInsertionError.clipboardWriteFailed
+                }
+            }
+
+        case .paste:
+            guard !IsSecureEventInputEnabled() else {
+                throw TextInsertionError.secureInputEnabled
+            }
+
+            let transaction = try await MainActor.run {
+                let pasteboard = NSPasteboard.general
+                let snapshot = PasteboardSnapshot(pasteboard: pasteboard)
+                pasteboard.clearContents()
+                guard pasteboard.setString(text, forType: .string) else {
+                    snapshot.restore(to: pasteboard)
+                    throw TextInsertionError.clipboardWriteFailed
+                }
+                let ownedChangeCount = pasteboard.changeCount
+                do {
+                    try TextInjector.postPasteShortcut()
+                } catch {
+                    snapshot.restore(to: pasteboard)
+                    throw error
+                }
+                return PasteboardTransaction(
+                    snapshot: snapshot,
+                    ownedChangeCount: ownedChangeCount
+                )
+            }
+
+            // Give browser/Electron targets time to consume the paste before
+            // returning the user's rich clipboard contents.
+            try? await Task.sleep(nanoseconds: 180_000_000)
+            await MainActor.run {
+                let pasteboard = NSPasteboard.general
+                guard PasteboardRestorationPolicy.shouldRestore(
+                    ownedChangeCount: transaction.ownedChangeCount,
+                    currentChangeCount: pasteboard.changeCount
+                ) else {
+                    return
+                }
+                transaction.snapshot.restore(to: pasteboard)
+            }
         }
-        TextInjector.inject(text)
     }
 }
 
-enum TextInsertionError: Error {
-    case unsupportedMode(InsertionMode)
+enum TextInsertionError: LocalizedError {
+    case secureInputEnabled
+    case clipboardWriteFailed
+    case pasteEventCreationFailed
+
+    var errorDescription: String? {
+        switch self {
+        case .secureInputEnabled:
+            return "Secure Input is active. The transcript is safe in History, but macOS blocked insertion."
+        case .clipboardWriteFailed:
+            return "Wordhand couldn’t place the transcript on the clipboard."
+        case .pasteEventCreationFailed:
+            return "Wordhand couldn’t create the Command-V event."
+        }
+    }
+}
+
+private struct PasteboardTransaction: @unchecked Sendable {
+    let snapshot: PasteboardSnapshot
+    let ownedChangeCount: Int
+}
+
+private struct PasteboardSnapshot: @unchecked Sendable {
+    private let items: [[NSPasteboard.PasteboardType: Data]]
+
+    init(pasteboard: NSPasteboard) {
+        items = (pasteboard.pasteboardItems ?? []).map { item in
+            Dictionary(uniqueKeysWithValues: item.types.compactMap { type in
+                item.data(forType: type).map { (type, $0) }
+            })
+        }
+    }
+
+    func restore(to pasteboard: NSPasteboard) {
+        pasteboard.clearContents()
+        guard !items.isEmpty else { return }
+
+        let restoredItems = items.map { contents in
+            let item = NSPasteboardItem()
+            for (type, data) in contents {
+                item.setData(data, forType: type)
+            }
+            return item
+        }
+        _ = pasteboard.writeObjects(restoredItems)
+    }
+}
+
+private extension TextInjector {
+    static func postPasteShortcut() throws {
+        guard
+            let down = CGEvent(keyboardEventSource: nil, virtualKey: 9, keyDown: true),
+            let up = CGEvent(keyboardEventSource: nil, virtualKey: 9, keyDown: false)
+        else {
+            throw TextInsertionError.pasteEventCreationFailed
+        }
+        down.flags = .maskCommand
+        up.flags = .maskCommand
+        down.post(tap: .cgSessionEventTap)
+        up.post(tap: .cgSessionEventTap)
+    }
 }

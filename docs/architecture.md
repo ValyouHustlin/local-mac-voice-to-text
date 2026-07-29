@@ -68,11 +68,14 @@ This file describes the intended architecture for that product. Features marked
 Verified by source inspection and dated receipts on 2026-07-28:
 
 - Swift Package Manager library, executable, and test targets for macOS 14+;
-- WhisperKit transcription with three registered local Whisper models;
-- `AVAudioEngine` capture converted to 16 kHz mono Float32;
+- WhisperKit transcription with four registered local Whisper models; optimized
+  Large v3 (626 MB) is the accuracy-first default;
+- `AVAudioEngine` capture converted to 16 kHz mono Float32, using 1024-frame
+  input buffers and an 80 ms post-release tail to retain final phonemes;
 - configurable global shortcuts through `CGEventTap`, including hold-to-talk
   and tap-to-start/tap-to-stop modes;
-- direct Unicode cursor insertion through `CGEvent`;
+- paste-first cursor insertion with rich clipboard restoration, copy-only mode,
+  direct Unicode fallback, and Secure Input detection;
 - native recording overlay, branded menu bar control, Dock presence, and
   Settings window;
 - persistent custom dictionary with immediate correction flow;
@@ -82,15 +85,15 @@ Verified by source inspection and dated receipts on 2026-07-28:
 - permission doctor, setup, and LaunchAgent commands;
 - macOS continuous integration for tests and release builds.
 
-Paste-based insertion, the remaining preferences surfaces, signed app bundle,
-notarization, and updates remain planned. Only measured receipts may promote
-latency or compatibility claims.
+The remaining preferences surfaces, signed app bundle, notarization, and
+updates remain planned. Only measured receipts may promote latency or
+compatibility claims.
 
 ## Current delivery state
 
 P0 ground truth and P1 foundation are complete as of 2026-07-28. The package
 now has `WordhandCore`, protocol-backed coordinator seams, versioned settings,
-41 deterministic tests, and macOS CI.
+45 deterministic tests, and macOS CI.
 
 P2 custom dictionary is implemented but not yet through its live three-target
 exit gate. Its current runtime path is:
@@ -131,6 +134,24 @@ modifier combinations, ignores repeat events, and recovers if a required
 modifier is released first. See
 `docs/verification/2026-07-28-settings-hotkeys.md` for the automated and live
 receipt plus the remaining three-target exit gate.
+
+Optimized Whisper Large v3 is the default for new installs and is active on
+Aaron's Mac. A repeatable `wordhand models benchmark` command measures model
+load, transcription latency, real-time factor, and exact output against the
+same local audio. Settings exposes model choice, with an explicit relaunch note.
+The smaller 1024-frame microphone tap and 80 ms capture tail prioritize complete
+last words. On the local 11.00-second JFK fixture, Base transcribed in 0.742
+seconds and Large v3 in 1.025 seconds; both were correct, with Large producing
+slightly stronger punctuation.
+
+Paste is now the live default instead of merely a stored setting. Wordhand
+snapshots every pasteboard item/type, stages the transcript, posts Command-V,
+and restores the original clipboard only if no newer clipboard write won the
+race. Copy-only and direct Unicode remain selectable in Settings and update the
+running coordinator without relaunching. Secure Input is checked before
+mutation. Chrome and VS Code accepted complete live transcripts while an RTF
+plus plain-text clipboard item was restored. See
+`docs/verification/2026-07-28-accuracy-paste.md`.
 
 ## Target structure
 
@@ -201,7 +222,7 @@ The hardware-touching paths should conform to protocols:
 ```swift
 protocol AudioCapturing {
     func start() throws
-    func stop() -> [Float]
+    func stop() async -> [Float]
 }
 
 protocol Transcribing {

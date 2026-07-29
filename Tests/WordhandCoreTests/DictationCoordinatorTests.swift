@@ -29,6 +29,24 @@ struct DictationCoordinatorTests {
     }
 
     @Test
+    func insertionModeCanChangeWithoutRestarting() async {
+        let inserter = FakeInserter()
+        let coordinator = DictationCoordinator(
+            capture: FakeCapture(samples: [0.1]),
+            transcriber: FakeTranscriber(result: "hello"),
+            processor: TranscriptProcessor(),
+            inserter: inserter,
+            insertionMode: .unicode
+        )
+
+        coordinator.updateInsertionMode(.paste)
+        await coordinator.handle(.pressed)
+        await coordinator.handle(.released)
+
+        #expect(inserter.modes == [.paste])
+    }
+
+    @Test
     func ignoresSecondPressWhileRecording() async {
         let capture = FakeCapture(samples: [0.1])
         let coordinator = DictationCoordinator(
@@ -186,7 +204,7 @@ private final class FakeCapture: AudioCapturing {
         startCount += 1
     }
 
-    func stop() -> [Float] {
+    func stop() async -> [Float] {
         samples
     }
 }
@@ -210,6 +228,7 @@ private final class FakeTranscriber: Transcribing, @unchecked Sendable {
 
 private final class FakeInserter: TextInserting, @unchecked Sendable {
     private(set) var insertions: [String] = []
+    private(set) var modes: [InsertionMode] = []
     private let error: Error?
     private let onInsert: (() -> Void)?
 
@@ -222,6 +241,7 @@ private final class FakeInserter: TextInserting, @unchecked Sendable {
         onInsert?()
         if let error { throw error }
         insertions.append(text)
+        modes.append(mode)
     }
 }
 

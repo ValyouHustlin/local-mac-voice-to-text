@@ -144,23 +144,32 @@ failed record still needs the full native/browser/Electron lane receipt.
 
 ## P4: reliable paste and clipboard modes
 
-Status: planned.
+Status: core implementation and native/browser/Electron live receipts complete.
+The forced Secure Input receipt and immediate undo/revert remain open.
 
 Goal: make insertion work in apps that reject synthetic Unicode input without
 destroying the user's clipboard.
 
-- Add paste as the default mode.
-- Snapshot and conditionally restore all pasteboard item types.
-- Do not overwrite clipboard changes made by another app during insertion.
-- Keep direct Unicode as a fallback and add copy-only mode.
-- Detect or infer secure-input/inaccessible-target failures and surface them.
+- [x] Add paste as the default mode.
+- [x] Snapshot and conditionally restore all pasteboard item types.
+- [x] Do not overwrite clipboard changes made by another app during insertion.
+- [x] Keep direct Unicode as a fallback and add copy-only mode.
+- [x] Detect Secure Input before clipboard mutation and surface the failure.
 - Add an immediate undo/revert action for the last insertion.
-- Test clipboard races, empty pasteboards, rich content, fallback routing,
-  copy-only, and undo state.
+- [x] Test the clipboard ownership/race policy and live rich-content
+  restoration.
+- Add adapter contract tests for empty pasteboards, write failures, and
+  copy-only behavior when the macOS adapter is extracted into `WordhandMac`.
 
 Exit receipt: paste into native, browser, and Electron targets while preserving
 a preloaded rich clipboard item; verify secure-input failure leaves transcript
 recoverable.
+
+Partial exit receipt: `docs/verification/2026-07-28-accuracy-paste.md`.
+TextEdit, Google Chrome, and Visual Studio Code accepted the complete final
+transcript. Chrome and VS Code preserved a preloaded clipboard containing RTF
+and both UTF-8/UTF-16 plain text. The Secure Input branch is automated and
+implemented but has not been forced in a real password field.
 
 ## P5: configurable hotkeys
 
@@ -214,6 +223,24 @@ surrounding document content.
 
 Exit receipts are defined per slice before implementation and include both unit
 checks and the real affected flow.
+
+### Accuracy and latency checkpoint
+
+Status: complete for the model/capture upgrade; continue measuring Aaron's own
+speech.
+
+- [x] Make optimized Whisper Large v3 (626 MB) the accuracy-first default.
+- [x] Add a repeatable same-audio model benchmark command.
+- [x] Expose model choice and honest relaunch behavior in Settings.
+- [x] Reduce microphone tap size from 4096 to 1024 frames.
+- [x] Retain an 80 ms capture tail after shortcut release.
+- [x] Benchmark Base and Large v3 on the same 11.00-second fixture.
+- Keep speculative/partial transcription off by default until Aaron's
+  post-release measurements justify a second pipeline or a streaming
+  architecture. The measured final pass is currently 0.76–1.06 seconds; a
+  naive concurrent preview could delay the authoritative transcript.
+
+Receipt: `docs/verification/2026-07-28-accuracy-paste.md`.
 
 ## P7: ship quality
 

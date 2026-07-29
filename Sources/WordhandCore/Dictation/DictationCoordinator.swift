@@ -24,7 +24,7 @@ public enum DictationState: Equatable, Sendable {
 
 public protocol AudioCapturing: AnyObject {
     func start() throws
-    func stop() -> [Float]
+    func stop() async -> [Float]
 }
 
 public protocol HotkeyMonitoring: AnyObject {
@@ -62,7 +62,7 @@ public final class DictationCoordinator {
     private let processor: TranscriptProcessing
     private let inserter: TextInserting
     private let history: TranscriptRecording?
-    private let insertionMode: InsertionMode
+    private var insertionMode: InsertionMode
     private let language: String?
     private let audioSampleRate: Double
     private let currentTarget: () -> TranscriptTarget
@@ -111,7 +111,7 @@ public final class DictationCoordinator {
 
         case .released:
             guard state == .recording else { return }
-            let samples = capture.stop()
+            let samples = await capture.stop()
             onCapture?(samples)
             guard !samples.isEmpty else {
                 state = .idle
@@ -190,5 +190,9 @@ public final class DictationCoordinator {
     public func resetFailure() {
         guard case .failed = state else { return }
         state = .idle
+    }
+
+    public func updateInsertionMode(_ insertionMode: InsertionMode) {
+        self.insertionMode = insertionMode
     }
 }

@@ -6,7 +6,11 @@ struct ModelRegistryTests {
     @Test
     func registryHasExactlyOneRecommendedModel() {
         #expect(ModelRegistry.shared.filter(\.recommended).count == 1)
-        #expect(ModelRegistry.recommended()?.id == "whisper-base.en")
+        #expect(ModelRegistry.recommended()?.id == "whisper-large-v3")
+        #expect(
+            ModelRegistry.recommended()?.whisperKitID
+                == "openai_whisper-large-v3-v20240930_626MB"
+        )
     }
 
     @Test

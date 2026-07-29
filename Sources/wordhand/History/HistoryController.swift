@@ -60,7 +60,7 @@ final class HistoryController {
             try? await Task.sleep(nanoseconds: 180_000_000)
             guard let self else { return }
             do {
-                try await inserter.insert(record.text, mode: .unicode)
+                try await inserter.insert(record.text, mode: .paste)
             } catch {
                 showHistory()
                 presentError(

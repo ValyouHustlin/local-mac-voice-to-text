@@ -121,7 +121,7 @@ struct Run: ParsableCommand {
             DictionaryController(store: DictionaryStore(fileURL: dictionaryURL))
         }
         let processor = dictionary.processor
-        let inserter = UnicodeTextInserter()
+        let inserter = MacTextInserter()
         let historyStore = try TranscriptHistoryStore(fileURL: historyURL)
         let retentionDays: Int? = settings.historyRetentionDays
         if let retentionDays,
@@ -157,10 +157,24 @@ struct Run: ParsableCommand {
         let appDelegate = MainActor.assumeIsolated {
             WordhandAppDelegate(onOpenPrimaryWindow: { settingsController.showSettings() })
         }
+        let coordinator = MainActor.assumeIsolated {
+            DictationCoordinator(
+                capture: capture,
+                transcriber: transcriber,
+                processor: processor,
+                inserter: inserter,
+                history: historyStore,
+                insertionMode: settings.insertionMode,
+                language: chosenModel.languages.first,
+                audioSampleRate: AudioCapture.targetSampleRate,
+                currentTarget: currentTranscriptTarget
+            )
+        }
         MainActor.assumeIsolated {
             app.delegate = appDelegate
             settingsController.onSettingsChange = { updated in
                 monitor.updateBindings(updated.hotkeys)
+                coordinator.updateInsertionMode(updated.insertionMode)
                 menuBar.updateSettings(updated)
                 if !updated.showOverlay {
                     overlay?.hide()
@@ -169,21 +183,6 @@ struct Run: ParsableCommand {
             settingsController.onShortcutCaptureChange = { capturing in
                 monitor.setSuspended(capturing)
             }
-        }
-        let coordinator = MainActor.assumeIsolated {
-            DictationCoordinator(
-                capture: capture,
-                transcriber: transcriber,
-                processor: processor,
-                inserter: inserter,
-                history: historyStore,
-                insertionMode: .unicode,
-                language: chosenModel.languages.first,
-                audioSampleRate: AudioCapture.targetSampleRate,
-                currentTarget: currentTranscriptTarget
-            )
-        }
-        MainActor.assumeIsolated {
             coordinator.onStateChange = { state in
                 switch state {
                 case .idle:
@@ -293,7 +292,7 @@ struct Doctor: ParsableCommand {
 struct Models: ParsableCommand {
     static let configuration = CommandConfiguration(
         abstract: "Manage transcription models.",
-        subcommands: [List.self, Download.self]
+        subcommands: [List.self, Download.self, Benchmark.self]
     )
 
     struct List: ParsableCommand {
@@ -329,4 +328,97 @@ struct Models: ParsableCommand {
             if let e = capturedError { throw e }
         }
     }
+
+    struct Benchmark: ParsableCommand {
+        static let configuration = CommandConfiguration(
+            abstract: "Measure one model against a local audio file."
+        )
+
+        @Argument(help: "Path to an audio file.")
+        var audioPath: String
+
+        @Option(name: .long, help: "Model id. Defaults to the recommended model.")
+        var model: String?
+
+        func run() throws {
+            let modelID = model ?? ModelRegistry.recommended()?.id
+            guard let modelID, let selectedModel = ModelRegistry.find(modelID) else {
+                FileHandle.standardError.write(Data("unknown model: \(model ?? "none")\n".utf8))
+                throw ExitCode(1)
+            }
+
+            let expandedPath = NSString(string: audioPath).expandingTildeInPath
+            let audio = try AudioProcessor.loadAudioAsFloatArray(fromPath: expandedPath)
+            guard !audio.isEmpty else {
+                FileHandle.standardError.write(Data("audio file contained no samples\n".utf8))
+                throw ExitCode(1)
+            }
+
+            let transcriber = WhisperKitTranscriber(model: selectedModel)
+            let semaphore = DispatchSemaphore(value: 0)
+            let resultBox = ModelBenchmarkResultBox()
+            Task.detached {
+                do {
+                    let warmupStarted = ProcessInfo.processInfo.systemUptime
+                    try await transcriber.warmUp()
+                    let warmupDuration =
+                        ProcessInfo.processInfo.systemUptime - warmupStarted
+
+                    let transcriptionStarted = ProcessInfo.processInfo.systemUptime
+                    let transcript = try await transcriber.transcribe(audio)
+                    let transcriptionDuration =
+                        ProcessInfo.processInfo.systemUptime - transcriptionStarted
+                    resultBox.store(.success(ModelBenchmarkResult(
+                        transcript: transcript,
+                        warmupDuration: warmupDuration,
+                        transcriptionDuration: transcriptionDuration
+                    )))
+                } catch {
+                    resultBox.store(.failure(error))
+                }
+                semaphore.signal()
+            }
+            semaphore.wait()
+            let result = try resultBox.load().get()
+
+            let audioDuration = Double(audio.count) / AudioCapture.targetSampleRate
+            let realTimeFactor = result.transcriptionDuration / audioDuration
+            print("model: \(selectedModel.id)")
+            print(String(format: "audio: %.2fs", audioDuration))
+            print(String(format: "warmup: %.3fs", result.warmupDuration))
+            print(String(format: "transcription: %.3fs", result.transcriptionDuration))
+            print(String(format: "real-time factor: %.3fx", realTimeFactor))
+            print(
+                "transcript: "
+                    + result.transcript.trimmingCharacters(in: .whitespacesAndNewlines)
+            )
+        }
+    }
+}
+
+private struct ModelBenchmarkResult {
+    let transcript: String
+    let warmupDuration: TimeInterval
+    let transcriptionDuration: TimeInterval
+}
+
+private final class ModelBenchmarkResultBox: @unchecked Sendable {
+    private let lock = NSLock()
+    private var result: Result<ModelBenchmarkResult, Error>?
+
+    func store(_ result: Result<ModelBenchmarkResult, Error>) {
+        lock.withLock {
+            self.result = result
+        }
+    }
+
+    func load() -> Result<ModelBenchmarkResult, Error> {
+        lock.withLock {
+            result ?? .failure(ModelBenchmarkError.missingResult)
+        }
+    }
+}
+
+private enum ModelBenchmarkError: Error {
+    case missingResult
 }

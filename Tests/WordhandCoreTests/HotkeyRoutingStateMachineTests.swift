@@ -95,6 +95,35 @@ struct HotkeyRoutingStateMachineTests {
         )
     }
 
+    @Test
+    func consumesOnlyConfiguredShortcutKeyEdges() {
+        var state = HotkeyRoutingStateMachine(bindings: [
+            HotkeyBinding(
+                key: "z",
+                keyCode: 6,
+                modifiers: ["control", "option"],
+                action: .toggleRecording
+            ),
+        ])
+
+        let shortcutDown = keyDown(6, [.control, .option])
+        #expect(state.shouldConsume(shortcutDown))
+        #expect(state.handle(shortcutDown) == .pressed)
+
+        let shortcutRepeat = keyDown(6, [.control, .option], isRepeat: true)
+        #expect(state.shouldConsume(shortcutRepeat))
+        #expect(state.handle(shortcutRepeat) == nil)
+
+        let unrelatedDown = keyDown(0, [])
+        #expect(!state.shouldConsume(unrelatedDown))
+        #expect(state.handle(unrelatedDown) == nil)
+
+        let shortcutUp = keyUp(6, [.control, .option])
+        #expect(state.shouldConsume(shortcutUp))
+        #expect(state.handle(shortcutUp) == nil)
+        #expect(!state.shouldConsume(shortcutUp))
+    }
+
     private func keyDown(
         _ keyCode: UInt16,
         _ modifiers: Set<HotkeyModifier>,

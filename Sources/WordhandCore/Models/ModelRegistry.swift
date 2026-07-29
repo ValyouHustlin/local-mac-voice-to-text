@@ -9,14 +9,23 @@ public enum ModelRegistry {
             whisperKitID: "openai_whisper-base.en",
             sizeMB: 145,
             languages: ["en"],
+            recommended: false
+        ),
+        TranscriptionModel(
+            id: "whisper-large-v3",
+            displayName: "Whisper Large v3 (Accuracy)",
+            engine: .whisperKit,
+            whisperKitID: "openai_whisper-large-v3-v20240930_626MB",
+            sizeMB: 626,
+            languages: ["multi"],
             recommended: true
         ),
         TranscriptionModel(
             id: "whisper-large-v3-turbo",
-            displayName: "Whisper Large v3 Turbo",
+            displayName: "Whisper Large v3 Turbo (Balanced)",
             engine: .whisperKit,
-            whisperKitID: "openai_whisper-large-v3-v20240930_turbo",
-            sizeMB: 1_620,
+            whisperKitID: "openai_whisper-large-v3-v20240930_turbo_632MB",
+            sizeMB: 632,
             languages: ["multi"],
             recommended: false
         ),

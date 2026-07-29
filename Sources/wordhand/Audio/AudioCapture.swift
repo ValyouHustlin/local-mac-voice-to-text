@@ -12,6 +12,7 @@ final class AudioCapture: AudioCapturing {
     }
 
     static let targetSampleRate: Double = 16_000
+    private static let tailCaptureNanoseconds: UInt64 = 80_000_000
 
     private let engine = AVAudioEngine()
     private var converter: AVAudioConverter?
@@ -47,7 +48,10 @@ final class AudioCapture: AudioCapturing {
         lock.unlock()
 
         // Tap with input format; convert inside the callback.
-        input.installTap(onBus: 0, bufferSize: 4096, format: inputFormat) { [weak self] buffer, _ in
+        // Smaller buffers surface speech about four times more frequently than
+        // the previous 4096-frame tap on a 48 kHz USB microphone. That lowers
+        // level/preview latency and reduces the unflushed tail at key release.
+        input.installTap(onBus: 0, bufferSize: 1024, format: inputFormat) { [weak self] buffer, _ in
             self?.process(buffer: buffer, converter: converter, targetFormat: targetFormat)
         }
 
@@ -63,18 +67,23 @@ final class AudioCapture: AudioCapturing {
     }
 
     /// Stop recording and return all captured samples (16 kHz mono Float32).
+    ///
+    /// AVAudioEngine taps deliver fixed-size buffers. Keep the tap alive for
+    /// one short grace interval after the hotkey release so the buffer holding
+    /// the final phoneme is delivered instead of being discarded by stop().
     @discardableResult
-    func stop() -> [Float] {
+    func stop() async -> [Float] {
         guard isRecording else { return [] }
+        try? await Task.sleep(nanoseconds: Self.tailCaptureNanoseconds)
         engine.stop()
         engine.inputNode.removeTap(onBus: 0)
         isRecording = false
 
-        lock.lock()
-        let captured = samples
-        samples.removeAll(keepingCapacity: true)
-        lock.unlock()
-        return captured
+        return lock.withLock {
+            let captured = samples
+            samples.removeAll(keepingCapacity: true)
+            return captured
+        }
     }
 
     private func process(
