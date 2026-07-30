@@ -29,7 +29,8 @@ order:
 1. [x] crash-safe rolling capture so acknowledged audio survives process
    failure, sleep interruption, or accidental quit and is recovered to History
    after restart without automatic insertion;
-2. safe work-during-speech that lowers stop-to-final latency while preserving
+2. [ ] **Deferred at current engine:** safe work-during-speech that lowers
+   stop-to-final latency while preserving
    full-buffer authority until retained English fixtures prove beginnings,
    endings, numbers, negations, technical terms, and dictionary spellings;
 3. local self-learning from explicit corrections and retained recordings that
@@ -101,6 +102,26 @@ oracle; textual splice heuristics remain rejected. Daily runtime is unchanged.
 Receipts: `docs/verification/2026-07-30-completeness-latency-oracle.md` and
 `docs/verification/2026-07-30-overlap-composition-oracle.md` and
 `docs/verification/2026-07-30-cumulative-prefix-candidate.md`.
+
+The fresh-context non-splice attempt used exact Core ML tensor memoization
+through WhisperKit's public feature and encoder seams. It preserved the normal
+full-buffer decoder, tail audit, integrity selector, and prompt-free recovery.
+Every corpus transcript and protected check passed. Median stop-to-final
+improved 23.2% on the 49.26-second fixture, but only 9.6% on the 53.71-second
+fixture; the locked bar required 15% on both. The short fixture stayed within
+its 100 ms ceiling. The gate correctly exited nonzero, so this candidate also
+remains offline-only.
+
+Safe work-during-speech is now deferred at the pinned engine boundary rather
+than left open to more splice/cache variants. Reopen it only for a decoder-native
+incremental API or a design with a predeclared, materially stronger oracle.
+The active next product slice is local self-learning: evidence-backed,
+suggestion-only vocabulary, pronunciation, model, and configuration
+recommendations from explicit corrections and retained recordings, with no
+silent behavior changes.
+
+Receipt:
+`docs/verification/2026-07-30-exact-inference-cache-candidate.md`.
 
 ## Public checkpoint cadence
 

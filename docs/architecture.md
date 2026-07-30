@@ -488,6 +488,30 @@ nonzero. Daily runtime remains unchanged. See
 `docs/verification/2026-07-30-overlap-composition-oracle.md` and
 `docs/verification/2026-07-30-cumulative-prefix-candidate.md`.
 
+A second and final bounded latency experiment replaced text reuse with exact
+Core ML inference memoization. It wraps WhisperKit's public feature-extractor
+and audio-encoder seams with session-bounded caches keyed by the complete tensor
+data type, shape, strides, and bytes. An entry can be reused only when the
+authoritative full-buffer pipeline independently produces an identical tensor;
+all decoding, VAD ordering, vocabulary conditioning, tail audit, integrity
+selection, and prompt-free recovery remain unchanged. Cache misses are ordinary
+inference, and the public/default strategy still bypasses and clears the cache.
+
+The retained corpus proved exact output but rejected daily promotion. The
+49.26-second recovery-heavy fixture improved from 6.315 to 4.851 seconds
+median (23.2%), while the 53.71-second ambiguity fixture improved from 4.734
+to 4.281 seconds (9.6%). The predeclared bar required at least 15% on both long
+fixtures; the command therefore exited nonzero. The 12.57-second fixture
+improved from 1.427 to 1.410 seconds, within its 100 ms regression ceiling.
+Both long fixtures reported deterministic exact feature and encoder hits in
+every run, and all protected spans, WER, CER, and integrity outcomes passed.
+Because the benefit did not clear the product bar consistently and required
+7.97–12.0 seconds of speculative inference during long speech, the experiment
+remains offline-only. No current safe work-during-speech candidate is promoted;
+the roadmap advances to local self-learning until a decoder-native incremental
+API or stronger measured design changes the tradeoff. See
+`docs/verification/2026-07-30-exact-inference-cache-candidate.md`.
+
 The authoritative decode has layered local integrity checks. First, the coordinator
 compares the monotonic recording-session duration with the number of captured
 16 kHz samples. If the audio buffer is more than 750 ms shorter than the

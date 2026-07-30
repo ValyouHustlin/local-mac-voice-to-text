@@ -103,8 +103,11 @@ actual_fixture_ids=$(jq -r '.fixtures[].fixtureID' "$aggregate_report" | sort)
 baseline_implementation=$(jq -r '.baselineImplementationID' "$corpus_manifest")
 candidate_implementation=$(jq -r '.candidateImplementationID' "$corpus_manifest")
 require_long_pre_release=$(jq -r '.requireLongPreReleaseDecodes' "$corpus_manifest")
-require_composed_long=$(jq -r '.requireComposedLongCandidate' "$corpus_manifest")
+required_long_authority=$(jq -r '.requiredLongAuthorityPath' "$corpus_manifest")
+require_long_cache_hits=$(jq -r '.requireLongCacheHits' "$corpus_manifest")
 require_long_latency=$(jq -r '.requireLongMedianLatencyImprovement' "$corpus_manifest")
+minimum_long_improvement=$(jq -r '.minimumLongMedianImprovementFraction' "$corpus_manifest")
+maximum_short_regression=$(jq -r '.maximumShortMedianRegressionSeconds' "$corpus_manifest")
 
 if ! jq -e \
     --argjson expected_count "$expected_fixture_count" \
@@ -112,8 +115,11 @@ if ! jq -e \
     --arg candidate "$candidate_implementation" \
     --arg model "$corpus_model" \
     --argjson require_long_pre_release "$require_long_pre_release" \
-    --argjson require_composed_long "$require_composed_long" \
+    --arg required_long_authority "$required_long_authority" \
+    --argjson require_long_cache_hits "$require_long_cache_hits" \
     --argjson require_long_latency "$require_long_latency" \
+    --argjson minimum_long_improvement "$minimum_long_improvement" \
+    --argjson maximum_short_regression "$maximum_short_regression" \
     '
         .fixtureCount == $expected_count
         and .everyComparisonPassed
@@ -130,26 +136,40 @@ if ! jq -e \
             )
         )
         and (
-            ($require_composed_long | not)
-            or any(.fixtures[];
+            all(.fixtures[];
+                .audioDurationSeconds < 30
+                or (
                 .audioDurationSeconds >= 30
                 and all(.provenance[];
-                    .candidate.authorityPath == "composed"
-                    and .candidate.reusedSampleCount > 0
+                    .candidate.authorityPath == $required_long_authority
+                    and (
+                        ($require_long_cache_hits | not)
+                        or (
+                            .candidate.featureCacheHits
+                                + .candidate.encoderCacheHits
+                        ) > 0
+                    )
                 )
                 and (
                     ($require_long_latency | not)
                     or .candidateMedianStopToFinalSeconds
-                        < .baselineMedianStopToFinalSeconds
+                        <= (
+                            .baselineMedianStopToFinalSeconds
+                            * (1 - $minimum_long_improvement)
+                        )
+                )
                 )
             )
         )
         and (
             ($require_long_latency | not)
-            or any(.fixtures[];
+            or all(.fixtures[];
                 .audioDurationSeconds >= 30
-                and .candidateMedianStopToFinalSeconds
-                    < .baselineMedianStopToFinalSeconds
+                or .candidateMedianStopToFinalSeconds
+                    <= (
+                        .baselineMedianStopToFinalSeconds
+                        + $maximum_short_regression
+                    )
             )
         )
     ' "$aggregate_report" >/dev/null

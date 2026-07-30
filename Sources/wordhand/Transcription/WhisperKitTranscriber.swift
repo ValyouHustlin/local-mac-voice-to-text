@@ -28,6 +28,9 @@ actor WhisperKitTranscriber:
     private var streamingSnapshotGeneration = 0
     private var streamingDecodeProvenance: StreamingDecodeProvenance?
     private var streamingDecodeOptions: DecodingOptions?
+    private var exactFeatureCache: ExactFeatureCache?
+    private var exactAudioEncoderCache: ExactAudioEncoderCache?
+    private var exactCacheSessionActive = false
     private var streamingDecodeTask: Task<Void, Never>?
     private var streamingFailure: Error?
     private var streamingIsFinishing = false
@@ -365,6 +368,13 @@ actor WhisperKitTranscriber:
         streamingStabilizer = StreamingTranscriptStabilizer(
             correctionHorizonSegments: configuration.correctionHorizonSegments
         )
+        if configuration.finalizationStrategy
+            == .exactInferenceCacheAuthorityExperiment
+        {
+            guard let pipeline else { return }
+            beginExactInferenceCacheSession(pipeline: pipeline)
+            return
+        }
         guard configuration.finalizationStrategy
             == .cumulativePrefixAuthorityExperiment,
               let sessionID = streamingSessionID
@@ -415,9 +425,7 @@ actor WhisperKitTranscriber:
         streamingDecodeTask = nil
         streamingAudio = finalAudio
 
-        guard streamingConfiguration.finalizationStrategy
-            == .cumulativePrefixAuthorityExperiment
-        else {
+        if streamingConfiguration.finalizationStrategy == .fullBufferControl {
             return try await fullBufferStreamingResult(
                 finalAudio: finalAudio,
                 finalizationStarted: finalizationStarted,
@@ -425,6 +433,34 @@ actor WhisperKitTranscriber:
                 preReleaseDecodeCount: preReleaseDecodeCount,
                 cancellationDrainDuration: cancellationDrainDuration,
                 fallbackReason: nil
+            )
+        }
+        if streamingConfiguration.finalizationStrategy
+            == .exactInferenceCacheAuthorityExperiment
+        {
+            guard streamingFailure == nil, exactCacheSessionActive else {
+                endExactInferenceCacheSession()
+                return try await fullBufferStreamingResult(
+                    finalAudio: finalAudio,
+                    finalizationStarted: finalizationStarted,
+                    preReleaseInferenceDuration: preReleaseInferenceDuration,
+                    preReleaseDecodeCount: preReleaseDecodeCount,
+                    cancellationDrainDuration: cancellationDrainDuration,
+                    fallbackReason: streamingFailure == nil
+                        ? "exact_cache_unavailable"
+                        : "pre_release_cache_population_failed"
+                )
+            }
+            let releaseCacheStatistics = exactCacheStatistics()
+            return try await fullBufferStreamingResult(
+                finalAudio: finalAudio,
+                finalizationStarted: finalizationStarted,
+                preReleaseInferenceDuration: preReleaseInferenceDuration,
+                preReleaseDecodeCount: preReleaseDecodeCount,
+                cancellationDrainDuration: cancellationDrainDuration,
+                fallbackReason: nil,
+                authorityPath: "full_buffer_exact_inference_cache",
+                cacheStatisticsAtRelease: releaseCacheStatistics
             )
         }
         guard frozenFailure == nil,
@@ -607,13 +643,18 @@ actor WhisperKitTranscriber:
         preReleaseInferenceDuration: TimeInterval,
         preReleaseDecodeCount: Int,
         cancellationDrainDuration: TimeInterval,
-        fallbackReason: String?
+        fallbackReason: String?,
+        authorityPath: String = "full_buffer_control",
+        cacheStatisticsAtRelease: ExactCacheStatistics? = nil
     ) async throws -> StreamingTranscriptionResult {
         let decodeStarted = ProcessInfo.processInfo.systemUptime
         let text = try await transcribe(finalAudio)
             .trimmingCharacters(in: .whitespacesAndNewlines)
         streamingInferenceDuration +=
             ProcessInfo.processInfo.systemUptime - decodeStarted
+        let cacheDelta = cacheStatisticsAtRelease.map {
+            exactCacheStatistics() - $0
+        } ?? .zero
         let result = StreamingTranscriptionResult(
             text: text,
             totalInferenceDuration: streamingInferenceDuration,
@@ -622,8 +663,12 @@ actor WhisperKitTranscriber:
             preReleaseInferenceDuration: preReleaseInferenceDuration,
             preReleaseDecodeCount: preReleaseDecodeCount,
             cancellationDrainDuration: cancellationDrainDuration,
-            authorityPath: "full_buffer_control",
-            fallbackReason: fallbackReason
+            authorityPath: authorityPath,
+            fallbackReason: fallbackReason,
+            featureCacheHits: cacheDelta.feature.hits,
+            featureCacheMisses: cacheDelta.feature.misses,
+            encoderCacheHits: cacheDelta.encoder.hits,
+            encoderCacheMisses: cacheDelta.encoder.misses
         )
         return result
     }
@@ -664,13 +709,19 @@ actor WhisperKitTranscriber:
             streamingDecodeTask = nil
             return
         }
-        let cumulativeExperiment = streamingConfiguration.finalizationStrategy
+        let cumulativeAuthorityExperiment =
+            streamingConfiguration.finalizationStrategy
             == .cumulativePrefixAuthorityExperiment
+        let exactCacheExperiment =
+            streamingConfiguration.finalizationStrategy
+            == .exactInferenceCacheAuthorityExperiment
+        let cumulativeInput =
+            cumulativeAuthorityExperiment || exactCacheExperiment
         let maximumWindowSamples = Int(
             streamingConfiguration.maximumWindowSeconds * Double(WhisperKit.sampleRate)
         )
-        let windowStart = cumulativeExperiment ? 0 : streamingStartSample
-        let windowEnd = cumulativeExperiment
+        let windowStart = cumulativeInput ? 0 : streamingStartSample
+        let windowEnd = cumulativeInput
             ? streamingAudio.count
             : min(streamingAudio.count, streamingStartSample + maximumWindowSamples)
         guard windowEnd > windowStart else {
@@ -679,17 +730,19 @@ actor WhisperKitTranscriber:
         }
         streamingLastDecodeSample = windowEnd
         let window = Array(streamingAudio[windowStart..<windowEnd])
-        if cumulativeExperiment {
+        if cumulativeAuthorityExperiment {
             streamingSnapshotGeneration += 1
         }
         let snapshotGeneration = streamingSnapshotGeneration
-        let audioSHA256 = Self.sha256Audio(window)
+        let audioSHA256 = cumulativeAuthorityExperiment
+            ? Self.sha256Audio(window)
+            : ""
         let decodeStarted = ProcessInfo.processInfo.systemUptime
 
         do {
             let transcription = try await transcribeWindow(
                 window,
-                wordLevelSegments: cumulativeExperiment
+                wordLevelSegments: cumulativeAuthorityExperiment
             )
             streamingInferenceDuration +=
                 ProcessInfo.processInfo.systemUptime - decodeStarted
@@ -699,7 +752,20 @@ actor WhisperKitTranscriber:
                 return
             }
             let segments = transcription.segments
-            if cumulativeExperiment,
+            if exactCacheExperiment {
+                let statistics = exactCacheStatistics()
+                FileHandle.standardError.write(Data(
+                    "exact cache precompute: feature "
+                        .appending("\(statistics.feature.hits) hits/")
+                        .appending("\(statistics.feature.misses) misses, encoder ")
+                        .appending("\(statistics.encoder.hits) hits/")
+                        .appending("\(statistics.encoder.misses) misses\n").utf8
+                ))
+                streamingDecodeTask = nil
+                scheduleStreamingDecodeIfNeeded()
+                return
+            }
+            if cumulativeAuthorityExperiment,
                let provenance = streamingDecodeProvenance
             {
                 let observation = streamingSnapshotTracker?.observe(
@@ -887,6 +953,59 @@ actor WhisperKitTranscriber:
         SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
     }
 
+    private struct ExactCacheStatistics {
+        var feature: ExactInferenceCacheStatistics
+        var encoder: ExactInferenceCacheStatistics
+
+        static let zero = ExactCacheStatistics(
+            feature: .zero,
+            encoder: .zero
+        )
+
+        static func - (
+            lhs: ExactCacheStatistics,
+            rhs: ExactCacheStatistics
+        ) -> ExactCacheStatistics {
+            ExactCacheStatistics(
+                feature: lhs.feature - rhs.feature,
+                encoder: lhs.encoder - rhs.encoder
+            )
+        }
+    }
+
+    private func beginExactInferenceCacheSession(pipeline: WhisperKit) {
+        if exactFeatureCache == nil {
+            let featureCache = ExactFeatureCache(
+                base: pipeline.featureExtractor
+            )
+            pipeline.featureExtractor = featureCache
+            exactFeatureCache = featureCache
+        }
+        if exactAudioEncoderCache == nil {
+            let encoderCache = ExactAudioEncoderCache(
+                base: pipeline.audioEncoder
+            )
+            pipeline.audioEncoder = encoderCache
+            exactAudioEncoderCache = encoderCache
+        }
+        exactFeatureCache?.beginSession()
+        exactAudioEncoderCache?.beginSession()
+        exactCacheSessionActive = true
+    }
+
+    private func endExactInferenceCacheSession() {
+        exactFeatureCache?.endSession()
+        exactAudioEncoderCache?.endSession()
+        exactCacheSessionActive = false
+    }
+
+    private func exactCacheStatistics() -> ExactCacheStatistics {
+        ExactCacheStatistics(
+            feature: exactFeatureCache?.statistics ?? .zero,
+            encoder: exactAudioEncoderCache?.statistics ?? .zero
+        )
+    }
+
     private static let tailRecoverySampleCount = Int(
         20 * WhisperKit.sampleRate
     )
@@ -933,6 +1052,7 @@ actor WhisperKitTranscriber:
     }
 
     private func clearStreamingState() {
+        endExactInferenceCacheSession()
         streamingDecodeTask = nil
         streamingSessionID = nil
         streamingAudio = []

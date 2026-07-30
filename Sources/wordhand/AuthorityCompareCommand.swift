@@ -163,7 +163,7 @@ extension Models {
                 modelID: selectedModel.id,
                 baselineImplementationID: "full-buffer-authoritative-v1",
                 candidateImplementationID:
-                    "cumulative-prefix-overlap-final-v1",
+                    "exact-inference-cache-full-buffer-v1",
                 decoderConfigurationID: "wordhand-english-default-v1",
                 audioSHA256: audioSHA256,
                 fixtureSHA256: Self.sha256(fixtureData),
@@ -266,6 +266,10 @@ extension Models {
                     suffixStartSample: nil,
                     suffixSampleCount: nil,
                     overlapWordCount: 0,
+                    featureCacheHits: 0,
+                    featureCacheMisses: 0,
+                    encoderCacheHits: 0,
+                    encoderCacheMisses: 0,
                     diagnostics: diagnostics
                 )
             )
@@ -278,9 +282,8 @@ extension Models {
             await transcriber.beginStreaming(
                 configuration: StreamingTranscriptionConfiguration(
                     decodeIntervalSeconds: 8,
-                    correctionHorizonSegments: 8,
                     finalizationStrategy:
-                        .cumulativePrefixAuthorityExperiment
+                        .exactInferenceCacheAuthorityExperiment
                 )
             )
             let chunkSize = Int(AudioCapture.targetSampleRate / 2)
@@ -311,6 +314,10 @@ extension Models {
                     suffixStartSample: result.suffixStartSample,
                     suffixSampleCount: result.suffixSampleCount,
                     overlapWordCount: result.overlapWordCount,
+                    featureCacheHits: result.featureCacheHits,
+                    featureCacheMisses: result.featureCacheMisses,
+                    encoderCacheHits: result.encoderCacheHits,
+                    encoderCacheMisses: result.encoderCacheMisses,
                     diagnostics: diagnostics
                 )
             )
@@ -354,6 +361,10 @@ private struct AuthorityRunProvenance: Codable, Sendable {
     let suffixStartSample: Int?
     let suffixSampleCount: Int?
     let overlapWordCount: Int
+    let featureCacheHits: Int
+    let featureCacheMisses: Int
+    let encoderCacheHits: Int
+    let encoderCacheMisses: Int
     let diagnostics: TranscriptionRunDiagnostics
 }
 

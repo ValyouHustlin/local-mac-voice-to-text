@@ -9,11 +9,18 @@ struct CumulativeTranscriptSnapshotTrackerTests {
         let experiment = StreamingTranscriptionConfiguration(
             finalizationStrategy: .cumulativePrefixAuthorityExperiment
         )
+        let cacheExperiment = StreamingTranscriptionConfiguration(
+            finalizationStrategy: .exactInferenceCacheAuthorityExperiment
+        )
 
         #expect(daily.finalizationStrategy == .fullBufferControl)
         #expect(
             experiment.finalizationStrategy
                 == .cumulativePrefixAuthorityExperiment
+        )
+        #expect(
+            cacheExperiment.finalizationStrategy
+                == .exactInferenceCacheAuthorityExperiment
         )
     }
 

@@ -3,6 +3,7 @@ import Foundation
 public enum StreamingFinalizationStrategy: Equatable, Sendable {
     case fullBufferControl
     case cumulativePrefixAuthorityExperiment
+    case exactInferenceCacheAuthorityExperiment
 }
 
 public struct StreamingTranscriptionConfiguration: Equatable, Sendable {
@@ -267,6 +268,10 @@ public struct StreamingTranscriptionResult: Equatable, Sendable {
     public var suffixStartSample: Int?
     public var suffixSampleCount: Int?
     public var overlapWordCount: Int
+    public var featureCacheHits: Int
+    public var featureCacheMisses: Int
+    public var encoderCacheHits: Int
+    public var encoderCacheMisses: Int
 
     public init(
         text: String,
@@ -280,7 +285,11 @@ public struct StreamingTranscriptionResult: Equatable, Sendable {
         reusedSampleCount: Int = 0,
         suffixStartSample: Int? = nil,
         suffixSampleCount: Int? = nil,
-        overlapWordCount: Int = 0
+        overlapWordCount: Int = 0,
+        featureCacheHits: Int = 0,
+        featureCacheMisses: Int = 0,
+        encoderCacheHits: Int = 0,
+        encoderCacheMisses: Int = 0
     ) {
         self.text = text
         self.totalInferenceDuration = totalInferenceDuration
@@ -294,6 +303,10 @@ public struct StreamingTranscriptionResult: Equatable, Sendable {
         self.suffixStartSample = suffixStartSample
         self.suffixSampleCount = suffixSampleCount
         self.overlapWordCount = overlapWordCount
+        self.featureCacheHits = featureCacheHits
+        self.featureCacheMisses = featureCacheMisses
+        self.encoderCacheHits = encoderCacheHits
+        self.encoderCacheMisses = encoderCacheMisses
     }
 }
 

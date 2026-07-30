@@ -2,10 +2,13 @@
   "id": "english-authority-corpus-v1",
   "modelID": "whisper-large-v3",
   "baselineImplementationID": "full-buffer-authoritative-v1",
-  "candidateImplementationID": "cumulative-prefix-overlap-final-v1",
+  "candidateImplementationID": "exact-inference-cache-full-buffer-v1",
   "requireLongPreReleaseDecodes": true,
-  "requireComposedLongCandidate": true,
+  "requiredLongAuthorityPath": "full_buffer_exact_inference_cache",
+  "requireLongCacheHits": true,
   "requireLongMedianLatencyImprovement": true,
+  "minimumLongMedianImprovementFraction": 0.15,
+  "maximumShortMedianRegressionSeconds": 0.1,
   "fixtures": [
     {
       "audio": "english-completeness-v1.aiff",
