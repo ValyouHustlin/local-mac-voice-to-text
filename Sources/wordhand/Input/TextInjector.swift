@@ -12,6 +12,17 @@ protocol TextEventPosting: Sendable {
 struct TextInsertionCheckpoint: Equatable, Sendable {
     let id: UUID
     let selection: NSRange
+    let allowsAutomaticPasteRetry: Bool
+
+    init(
+        id: UUID,
+        selection: NSRange,
+        allowsAutomaticPasteRetry: Bool = true
+    ) {
+        self.id = id
+        self.selection = selection
+        self.allowsAutomaticPasteRetry = allowsAutomaticPasteRetry
+    }
 }
 
 struct TextInsertionUndoToken: Equatable, Sendable {
@@ -190,7 +201,10 @@ final class MacTextInserter: TextInserting, @unchecked Sendable {
 
             // Give browser/Electron targets time to consume the paste, then
             // confirm delivery from the target's cursor. A proven no-op gets
-            // one retry; unsupported fields keep the compatibility fallback.
+            // one retry only when the target exposes a reliable editor cursor.
+            // Terminal accessibility surfaces can leave their reported cursor
+            // unchanged after a successful paste, so retrying there duplicates
+            // the transcript.
             try? await Task.sleep(nanoseconds: 360_000_000)
             var observationError: Error?
             if let checkpoint {
@@ -200,19 +214,21 @@ final class MacTextInserter: TextInserting, @unchecked Sendable {
                         insertedUTF16Count: text.utf16.count
                     ) {
                     case .unchanged:
-                        try await MainActor.run {
-                            try eventPoster.postPasteShortcut()
+                        if checkpoint.allowsAutomaticPasteRetry {
+                            try await MainActor.run {
+                                try eventPoster.postPasteShortcut()
+                            }
+                            try? await Task.sleep(nanoseconds: 360_000_000)
+                            try finalizeObservation(
+                                checkpoint,
+                                insertedUTF16Count: text.utf16.count
+                            )
                         }
-                        try? await Task.sleep(nanoseconds: 360_000_000)
-                        try finalizeObservation(
-                            checkpoint,
-                            insertedUTF16Count: text.utf16.count
-                        )
-                case .verified(let token):
-                    setUndo(token)
-                case .verifiedWithoutUndo:
-                    break
-                case .unavailable:
+                    case .verified(let token):
+                        setUndo(token)
+                    case .verifiedWithoutUndo:
+                        break
+                    case .unavailable:
                         break
                     case .targetChanged:
                         throw TextInsertionError.insertionTargetChanged
@@ -339,7 +355,11 @@ final class AXTextInsertionObserver: TextInsertionObserving, @unchecked Sendable
         lock.withLock {
             checkpoints = [id: StoredCheckpoint(element: element, selection: selection)]
         }
-        return TextInsertionCheckpoint(id: id, selection: selection)
+        return TextInsertionCheckpoint(
+            id: id,
+            selection: selection,
+            allowsAutomaticPasteRetry: Self.allowsAutomaticPasteRetry(for: element)
+        )
     }
 
     func verify(
@@ -429,6 +449,20 @@ final class AXTextInsertionObserver: TextInsertionObserving, @unchecked Sendable
         return unsafeBitCast(value, to: AXUIElement.self)
     }
 
+    private static func allowsAutomaticPasteRetry(for element: AXUIElement) -> Bool {
+        var processIdentifier: pid_t = 0
+        guard AXUIElementGetPid(element, &processIdentifier) == .success,
+              let bundleIdentifier = NSRunningApplication(
+                processIdentifier: processIdentifier
+              )?.bundleIdentifier
+        else {
+            // An unknown accessibility surface is not enough evidence to
+            // safely send the same paste a second time.
+            return false
+        }
+        return !TerminalPastePolicy.bundleIdentifiers.contains(bundleIdentifier)
+    }
+
     private static func selection(of element: AXUIElement) -> NSRange? {
         var value: CFTypeRef?
         guard AXUIElementCopyAttributeValue(
@@ -447,6 +481,17 @@ final class AXTextInsertionObserver: TextInsertionObserving, @unchecked Sendable
         guard AXValueGetValue(axValue, .cfRange, &range) else { return nil }
         return NSRange(location: range.location, length: range.length)
     }
+}
+
+private enum TerminalPastePolicy {
+    static let bundleIdentifiers: Set<String> = [
+        "com.apple.Terminal",
+        "com.github.wez.wezterm",
+        "com.googlecode.iterm2",
+        "com.mitchellh.ghostty",
+        "dev.warp.Warp-Stable",
+        "net.kovidgoyal.kitty",
+    ]
 }
 
 private struct PasteboardTransaction: @unchecked Sendable {

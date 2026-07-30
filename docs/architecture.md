@@ -112,8 +112,8 @@ Verified by source inspection and dated receipts through 2026-07-29:
   and tap-to-start/tap-to-stop modes;
 - paste-first cursor insertion with rich clipboard restoration, copy-only mode,
   direct Unicode fallback, Secure Input detection, cursor acknowledgement,
-  one safe retry after a proven no-op, and guarded undo of the last verified
-  insertion;
+  one safe retry after a proven no-op in editor surfaces with reliable cursor
+  reporting, and guarded undo of the last verified insertion;
 - native recording overlay, branded menu bar control, Dock presence, and
   Settings window;
 - quiet local start/stop/cancel cues, an expressive eleven-bar waveform, a
@@ -281,10 +281,15 @@ race. The first paste from each process receives a 120 ms pasteboard settle
 interval; later pastes use 40 ms before Wordhand
 posts a complete Command-down, V-down, V-up, Command-up chord from a combined
 session event source. Cursor observation waits 360 ms for slower targets.
-When Accessibility exposes the focused element and selection, an unchanged
-cursor proves a no-op and permits exactly one retry. A moved or changed target
-is a recoverable failure, not a success. Fields that do not expose selection
-retain the compatibility fallback and cannot be honestly marked as verified.
+When Accessibility exposes a reliable editor element and selection, an
+unchanged cursor proves a no-op and permits exactly one retry. Terminal
+accessibility surfaces are not reliable editor cursors: Ghostty was observed
+leaving its reported selection unchanged after consuming a paste. Wordhand
+therefore sends exactly one paste to known terminal applications and treats an
+unchanged selection there like an unsupported compatibility surface. A moved
+or changed target is still a recoverable failure. Fields that do not expose
+selection retain the same compatibility fallback and cannot be honestly marked
+as verified.
 The previous clipboard is restored on both success and failure.
 Copy-only and direct Unicode remain selectable in Settings and update the
 running coordinator without relaunching. Secure Input is checked before
@@ -597,8 +602,8 @@ Paste insertion:
 4. send a complete Command-V key chord;
 5. wait for the target to consume the paste and, where supported, confirm the
    expected cursor advance;
-6. retry exactly once only when the same focused field proves the cursor did
-   not move;
+6. retry exactly once only when the same focused field has a reliable editor
+   cursor and proves it did not move; never retry from terminal cursor evidence;
 7. restore the previous pasteboard only if no third party changed it in the
    meantime;
 8. report a recoverable failure instead of silently discarding text.
@@ -607,11 +612,13 @@ A posted paste event is not sufficient evidence that the intended field
 received text. Wordhand captures the focused Accessibility element and selection
 immediately before insertion where the target exposes them. It accepts an
 expected UTF-16 cursor advance as acknowledgement, retries a proven no-op once,
-and rejects a changed element or unexpected range. Some browser, Electron, and
-custom-canvas fields do not expose a selection; their compatibility fallback
-still means a history status of `inserted` records successful event posting,
-not verified field contents. A future history schema should distinguish those
-two outcomes explicitly.
+and rejects a changed element or unexpected range. Known terminal applications
+receive one paste because their Accessibility cursor can stay unchanged after
+successful delivery. Some browser, Electron, terminal, and custom-canvas fields
+do not expose reliable selection; their compatibility fallback still means a
+history status of `inserted` records successful event posting, not verified
+field contents. A future history schema should distinguish those two outcomes
+explicitly.
 
 Direct Unicode insertion remains a fallback. Copy-only intentionally leaves the
 transcript on the clipboard. The last verified insertion keeps enough local

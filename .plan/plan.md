@@ -165,7 +165,8 @@ destroying the user's clipboard.
 - [x] Harden the first post-launch paste with a 120 ms pasteboard settle
   (40 ms thereafter), explicit four-event Command-V chord, and cursor
   acknowledgement where Accessibility exposes a selection.
-- [x] Retry exactly once only after the same field proves the paste was a no-op.
+- [x] Retry exactly once only after a reliable editor field proves the paste
+  was a no-op; never retry from an unchanged terminal Accessibility cursor.
 - [x] Add an immediate guarded undo/revert action for the last verified
   insertion; refuse if focus or the cursor changed.
 - [x] Test the clipboard ownership/race policy and live rich-content
@@ -199,6 +200,13 @@ The 2026-07-29 acknowledgement slice adds fake-backed no-op retry, changed-focus
 failure, and safe range-only undo. It does not claim the first-paste symptom is
 closed until the installed app is observed in native, browser, and Electron
 targets. Receipt: `docs/verification/2026-07-29-quality-lab-insertion.md`.
+
+The 2026-07-29 Ghostty regression showed that an unchanged terminal
+Accessibility cursor is not proof of a failed paste. Known terminals now
+receive exactly one paste while reliable editor surfaces keep their verified
+single retry. Build 13 is installed and fake-backed; the attended Ghostty
+receipt remains open. Receipt:
+`docs/verification/2026-07-29-terminal-paste-regression.md`.
 
 ## P5: configurable hotkeys
 

@@ -77,6 +77,29 @@ struct GlobalInputAdapterTests {
     }
 
     @Test
+    func terminalPasteDoesNotDuplicateWhenAccessibilityCursorIsUnchanged() async throws {
+        let poster = FakeTextEventPoster()
+        let observer = FakeTextInsertionObserver(
+            checkpoint: TextInsertionCheckpoint(
+                id: UUID(),
+                selection: NSRange(location: 0, length: 0),
+                allowsAutomaticPasteRetry: false
+            ),
+            results: [.unchanged]
+        )
+        let inserter = MacTextInserter(
+            eventPoster: poster,
+            observer: observer,
+            secureInputEnabled: { false }
+        )
+
+        try await inserter.insert("hello", mode: .paste)
+
+        #expect(poster.pasteShortcutCount == 1)
+        #expect(!inserter.canUndoLastInsertion)
+    }
+
+    @Test
     func pasteFailsHonestlyWhenTheRetryIsAlsoANoOp() async {
         let poster = FakeTextEventPoster()
         let observer = FakeTextInsertionObserver(
