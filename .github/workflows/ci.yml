@@ -9,6 +9,8 @@ jobs:
     runs-on: macos-26
     env:
       DEVELOPER_DIR: /Applications/Xcode_26.4.1.app/Contents/Developer
+      WORDHAND_SAFE: 1
+      SWT_EXPERIMENTAL_MAXIMUM_PARALLELIZATION_WIDTH: 1
     steps:
       - uses: actions/checkout@v5
       - name: Run tests

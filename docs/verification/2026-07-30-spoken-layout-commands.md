@@ -111,6 +111,19 @@ Result: the final post-review run passed in 49.364 seconds. The model reported c
 loading with network disabled. No microphone, clipboard, event tap, synthetic
 keyboard input, installed-app replacement, or process restart was used.
 
+## CI harness stability
+
+The first hosted exact-head run compiled and began all tests, then stopped
+making progress after the new layout tests had passed. It remained inside
+`swiftpm-testing` until canceled after 23 minutes. One unchanged rerun
+reproduced the post-test stall, while a fresh local scratch build passed all
+280 tests and a single-worker run passed all 280 tests in 5.966 seconds.
+
+CI now sets `WORDHAND_SAFE=1` and
+`SWT_EXPERIMENTAL_MAXIMUM_PARALLELIZATION_WIDTH=1`. This keeps the shipping
+gate deterministic and prevents unrelated parallel tests from sharing
+process-global state on the hosted macOS runner.
+
 ## Remaining boundary
 
 This proves one fixed synthetic English voice and the real offline model /
