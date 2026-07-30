@@ -406,8 +406,8 @@ Receipts: `docs/verification/2026-07-28-accuracy-paste.md`,
 
 ### Spoken corrections and Maximum Performance checkpoint
 
-Status: implementation and offline verification complete. The installed app
-was intentionally not replaced or restarted while Aaron was working.
+Status: implementation, offline verification, and signed build 10 installation
+complete. Natural-voice latency and tail receipts remain open.
 
 - [x] Resolve explicit `wait, no`, `I meant`, `make that`, `correction`,
   `scratch that`, and `start over` repairs before formatting.
@@ -424,9 +424,11 @@ was intentionally not replaced or restarted while Aaron was working.
 - [x] Use a complete full-buffer decode as the authoritative final result on
   every release, not only after streaming failure.
 - [x] Exercise the correction path through the real offline CLI formatter and
-  pass the complete 107-test suite, release build, and Thread Sanitizer suite.
-- [ ] Install the new bundle, select Maximum, and record attended short and
-  long natural-voice receipts without interrupting active work.
+  pass the complete 114-test suite, release build, and Thread Sanitizer suite.
+- [x] Install signed build 10 with Maximum selected and confirm all three
+  privacy permissions plus Control-Space remain ready.
+- [ ] Record attended short and long natural-voice receipts without
+  interrupting active work.
 
 Receipt: `docs/verification/2026-07-29-corrections-streaming.md`.
 

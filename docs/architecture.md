@@ -153,7 +153,7 @@ receipts may promote latency or compatibility claims.
 
 P0 ground truth and P1 foundation are complete as of 2026-07-28. The package
 now has `WordhandCore`, protocol-backed coordinator seams, versioned settings,
-113 deterministic tests across core and macOS adapter targets, and macOS CI.
+114 deterministic tests across core and macOS adapter targets, and macOS CI.
 
 The daily-driver bundle is built by `scripts/build-app.sh` and installed by
 `scripts/install-app.sh`. The installer prefers `/Applications`, falls back to

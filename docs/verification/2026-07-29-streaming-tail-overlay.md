@@ -131,7 +131,7 @@ Test run with 114 tests in 14 suites passed
 Observed:
 
 ```text
-Test run with 113 tests in 14 suites passed
+Test run with 114 tests in 14 suites passed
 ```
 
 ```sh
@@ -150,3 +150,47 @@ Build complete!
    confirm that the first paste arrives exactly once.
 2. Dictate longer than 45 seconds with a unique spoken tail marker and confirm
    the marker exists in the raw history field and inserted text.
+
+## Installed build 10
+
+Build and install command:
+
+```sh
+WORDHAND_BUILD_NUMBER=10 WORDHAND_VERSION=0.1.0 \
+  ./scripts/install-app.sh --launch-at-login
+```
+
+Observed:
+
+```text
+Version 0.1.0 (10)
+Signature: Wordhand Local Signing
+Wordhand will launch when you sign in
+Installed /Applications/Wordhand.app
+```
+
+The exact installed bundle then passed strict code-signature verification and
+reported:
+
+```text
+Identifier=com.valyou.wordhand
+CFBundleVersion=10
+Authority=Wordhand Local Signing
+microphone: ok
+accessibility: ok
+input monitoring: ok
+Control-Space: ok
+```
+
+One installed runtime process remained:
+
+```text
+63406 /Applications/Wordhand.app/Contents/MacOS/wordhand
+```
+
+The exact installed executable decoded the 61.72-second fixture through the
+shipping full-buffer path in 4.755 seconds at a 0.077× real-time factor and
+retained the complete final clause. User settings remained Maximum performance,
+paste insertion, and `whisper-large-v3-turbo`; the controlled fixture
+explicitly selected `whisper-large-v3` so it remains comparable with prior
+receipts.
