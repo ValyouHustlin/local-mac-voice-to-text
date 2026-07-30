@@ -40,6 +40,22 @@ final class HistoryController {
         try store.records(matching: query)
     }
 
+    func vocabularySuggestions() throws -> [VocabularySuggestion] {
+        guard let qualityAudioArchive else { return [] }
+        let records = try store.records(limit: 5_000)
+        let retainedRecordingIDs = try qualityAudioArchive.retainedTranscriptIDs()
+        return VocabularySuggestionOracle.suggestions(
+            records: records,
+            retainedRecordingIDs: retainedRecordingIDs,
+            existingEntries: dictionary.entries
+        )
+    }
+
+    @discardableResult
+    func reviewVocabularySuggestion(_ suggestion: VocabularySuggestion) -> Bool {
+        dictionary.reviewVocabularySuggestion(suggestion)
+    }
+
     @discardableResult
     func copy(_ record: TranscriptRecord) -> Bool {
         let pasteboard = NSPasteboard.general
@@ -222,11 +238,13 @@ func currentTranscriptTarget() -> TranscriptTarget {
 }
 
 @MainActor
-private final class HistoryWindowController: NSWindowController, NSTableViewDataSource,
+final class HistoryWindowController: NSWindowController, NSTableViewDataSource,
     NSTableViewDelegate
 {
     private unowned let history: HistoryController
     private var records: [TranscriptRecord] = []
+    private var vocabularySuggestions: [VocabularySuggestion] = []
+    private var currentVocabularySuggestion: VocabularySuggestion?
 
     private let searchField = NSSearchField()
     private let countLabel = NSTextField(labelWithString: "")
@@ -247,6 +265,9 @@ private final class HistoryWindowController: NSWindowController, NSTableViewData
     private let failureLabel = NSTextField(wrappingLabelWithString: "")
     private let qualityLabel = NSTextField(wrappingLabelWithString: "")
     private let recoveryLabel = NSTextField(wrappingLabelWithString: "")
+    private let learningView = NSStackView()
+    private let learningLabel = NSTextField(wrappingLabelWithString: "")
+    private let reviewSuggestionButton = NSButton()
     private let copyButton = NSButton()
     private let reinsertButton = NSButton()
     private let correctionButton = NSButton()
@@ -276,6 +297,7 @@ private final class HistoryWindowController: NSWindowController, NSTableViewData
         let selectedID = selectedRecord?.id
         do {
             records = try history.records(matching: searchField.stringValue)
+            vocabularySuggestions = (try? history.vocabularySuggestions()) ?? []
             updateCount()
             tableView.reloadData()
 
@@ -511,6 +533,12 @@ private final class HistoryWindowController: NSWindowController, NSTableViewData
         qualityLabel.font = .systemFont(ofSize: 12, weight: .medium)
         qualityLabel.textColor = .systemGreen
         qualityLabel.maximumNumberOfLines = 2
+        learningLabel.font = .systemFont(ofSize: 12, weight: .semibold)
+        learningLabel.textColor = .systemPurple
+        learningLabel.maximumNumberOfLines = 2
+        learningLabel.identifier = NSUserInterfaceItemIdentifier(
+            "VocabularySuggestionLabel"
+        )
         recoveryLabel.font = .systemFont(ofSize: 12, weight: .semibold)
         recoveryLabel.textColor = .systemBlue
         recoveryLabel.maximumNumberOfLines = 2
@@ -543,6 +571,33 @@ private final class HistoryWindowController: NSWindowController, NSTableViewData
         )
         deleteButton.contentTintColor = .systemRed
 
+        reviewSuggestionButton.title = "Review Suggestion…"
+        reviewSuggestionButton.image = NSImage(
+            systemSymbolName: "sparkles",
+            accessibilityDescription: nil
+        )
+        reviewSuggestionButton.imagePosition = .imageLeading
+        reviewSuggestionButton.bezelStyle = .rounded
+        reviewSuggestionButton.controlSize = .regular
+        reviewSuggestionButton.target = self
+        reviewSuggestionButton.action = #selector(reviewSuggestionClicked)
+        reviewSuggestionButton.setAccessibilityLabel(
+            "Review suggested vocabulary term"
+        )
+        reviewSuggestionButton.identifier = NSUserInterfaceItemIdentifier(
+            "VocabularySuggestionReviewButton"
+        )
+
+        let learningSpacer = NSView()
+        learningView.setViews(
+            [learningLabel, learningSpacer, reviewSuggestionButton],
+            in: .leading
+        )
+        learningView.orientation = .horizontal
+        learningView.alignment = .centerY
+        learningView.spacing = 10
+        learningView.isHidden = true
+
         let buttonSpacer = NSView()
         let actions = NSStackView(
             views: [reinsertButton, copyButton, correctionButton, buttonSpacer, deleteButton]
@@ -559,6 +614,7 @@ private final class HistoryWindowController: NSWindowController, NSTableViewData
                 failureLabel,
                 recoveryLabel,
                 qualityLabel,
+                learningView,
                 actions,
             ]
         )
@@ -584,6 +640,7 @@ private final class HistoryWindowController: NSWindowController, NSTableViewData
             failureLabel.widthAnchor.constraint(equalTo: stack.widthAnchor),
             recoveryLabel.widthAnchor.constraint(equalTo: stack.widthAnchor),
             qualityLabel.widthAnchor.constraint(equalTo: stack.widthAnchor),
+            learningView.widthAnchor.constraint(equalTo: stack.widthAnchor),
             actions.widthAnchor.constraint(equalTo: stack.widthAnchor),
         ])
     }
@@ -684,6 +741,19 @@ private final class HistoryWindowController: NSWindowController, NSTableViewData
             qualityLabel.isHidden = true
             correctionButton.title = "Improve Accuracy…"
         }
+
+        currentVocabularySuggestion = vocabularySuggestions.first {
+            $0.latestSupportingTranscriptID == record.id
+        }
+        if let suggestion = currentVocabularySuggestion {
+            learningLabel.stringValue =
+                "Wordhand noticed “\(suggestion.canonicalTerm)” in "
+                + "\(suggestion.supportCount) corrected transcripts."
+            learningView.isHidden = false
+        } else {
+            learningLabel.stringValue = ""
+            learningView.isHidden = true
+        }
     }
 
     private func showEmptyState(symbol: String, title: String, message: String) {
@@ -751,6 +821,16 @@ private final class HistoryWindowController: NSWindowController, NSTableViewData
             return
         }
         history.improveAccuracy(of: selectedRecord)
+    }
+
+    @objc private func reviewSuggestionClicked() {
+        guard let currentVocabularySuggestion else {
+            NSSound.beep()
+            return
+        }
+        if history.reviewVocabularySuggestion(currentVocabularySuggestion) {
+            reload()
+        }
     }
 
     @objc private func deleteClicked() {

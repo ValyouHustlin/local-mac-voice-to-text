@@ -157,6 +157,10 @@ Verified by source inspection and dated receipts through 2026-07-30:
   aggregate storage ceiling, owner-only storage, corrected-reference labeling,
   and a local cached-model evaluator; public installs keep retention disabled by
   default;
+- suggestion-only local learning that can recognize the same conservative
+  canonical vocabulary correction across two explicitly corrected transcripts
+  with retained recordings, show one contextual History action, and update the
+  live local vocabulary only after explicit confirmation;
 - versioned settings and automatic migration from the legacy product name;
 - permission doctor and visible in-app recovery that independently checks
   Microphone, Input Monitoring, and Accessibility instead of reporting a
@@ -511,6 +515,39 @@ remains offline-only. No current safe work-during-speech candidate is promoted;
 the roadmap advances to local self-learning until a decoder-native incremental
 API or stronger measured design changes the tradeoff. See
 `docs/verification/2026-07-30-exact-inference-cache-candidate.md`.
+
+## Suggestion-only local learning
+
+The first learning slice is deliberately narrower than automatic adaptation.
+Wordhand can recommend one canonical vocabulary term only when all of these
+local facts agree:
+
+- two distinct History records contain explicit nonempty corrected references;
+- both UUIDs still have their opt-in Quality Lab recordings;
+- each processed transcript differs from its reference in one bounded lexical
+  region, and the raw authoritative decode contains the same missed source
+  words;
+- both corrections resolve to the same distinctive canonical term;
+- the change is not punctuation, capitalization-only, a number, negation,
+  modal, common spelling variant, broad rewrite, competing correction, or an
+  already represented dictionary term.
+
+Suggestions are recomputed from current History, recordings, and Dictionary
+state. Nothing is persisted or mutated by evaluation. Only the newest
+supporting History record shows one contextual `Review Suggestion…` action.
+Reviewing opens a confirmation; accepting writes `term -> term` through the
+existing `DictionaryStore` and live `DictionaryVocabularySource`. That form
+conditions local decoding without introducing a global post-decode
+pronunciation replacement. Ignoring the action, missing or pruned recordings,
+deleted History, evaluator abstention, and ordinary dictation all leave
+behavior unchanged.
+
+This is not yet a claim that Wordhand has enough real corrected evidence to
+recommend a term for Aaron, nor that a suggested term improves a retained
+recording on replay. Pronunciation aliases, candidate-vs-corpus replay, model
+selection, and configuration suggestions require their own evidence gates
+before promotion. See
+`docs/verification/2026-07-30-canonical-vocabulary-suggestions.md`.
 
 The authoritative decode has layered local integrity checks. First, the coordinator
 compares the monotonic recording-session duration with the number of captured

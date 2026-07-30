@@ -36,6 +36,9 @@ struct LocalQualityAudioArchiveTests {
         let fileMode = try posixPermissions(at: url)
         #expect(directoryMode == 0o700)
         #expect(fileMode == 0o600)
+        #expect(fixture.archive.containsRecording(for: transcriptID))
+        #expect(!fixture.archive.containsRecording(for: UUID()))
+        #expect(try fixture.archive.retainedTranscriptIDs() == [transcriptID])
     }
 
     @Test

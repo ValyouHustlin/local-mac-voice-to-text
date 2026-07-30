@@ -33,8 +33,11 @@ order:
    stop-to-final latency while preserving
    full-buffer authority until retained English fixtures prove beginnings,
    endings, numbers, negations, technical terms, and dictionary spellings;
-3. local self-learning from explicit corrections and retained recordings that
-   suggests improvements without silently changing behavior;
+3. [ ] local self-learning from explicit corrections and retained recordings
+   that suggests improvements without silently changing behavior; the first
+   canonical-vocabulary recommendation slice is implemented and isolated-
+   verified, while pronunciation, replay-proven vocabulary, model, and
+   configuration suggestions remain;
 4. optional application-to-profile routing behind one understandable global
    default;
 5. deeper explicit spoken correction and editing commands;
@@ -115,13 +118,30 @@ remains offline-only.
 Safe work-during-speech is now deferred at the pinned engine boundary rather
 than left open to more splice/cache variants. Reopen it only for a decoder-native
 incremental API or a design with a predeclared, materially stronger oracle.
-The active next product slice is local self-learning: evidence-backed,
-suggestion-only vocabulary, pronunciation, model, and configuration
-recommendations from explicit corrections and retained recordings, with no
-silent behavior changes.
+The first local self-learning slice is implemented without automatic behavior
+changes. Two distinct explicit corrections with their paired retained
+recordings can produce one conservative canonical-term recommendation in
+History. The oracle requires one bounded lexical change in each record, proves
+the missed source words were present in the raw decode, rejects formatting,
+semantic, number, negation, common-spelling, multi-edit, conflicting, and
+already-covered cases, and emits a deterministic suggestion only at two-record
+support. Missing or pruned audio yields no suggestion.
+
+The contextual action appears only on the newest supporting History record.
+Review does not mutate state; the user must confirm `Add to Vocabulary`.
+Acceptance stores `term -> term`, immediately updates decode-time conditioning,
+creates no pronunciation alias or broad post-decode substitution, and removes
+the now-covered suggestion. An isolated native AppKit render confirmed the
+single action fits the existing History detail pane.
+
+The next learning slice should replay a candidate term or pronunciation alias
+against its source recording and the available paired local corpus, then
+recommend it only when the source score improves without aggregate regression.
+Model or configuration suggestions remain behind larger-corpus stability gates.
 
 Receipt:
-`docs/verification/2026-07-30-exact-inference-cache-candidate.md`.
+`docs/verification/2026-07-30-exact-inference-cache-candidate.md` and
+`docs/verification/2026-07-30-canonical-vocabulary-suggestions.md`.
 
 ## Public checkpoint cadence
 

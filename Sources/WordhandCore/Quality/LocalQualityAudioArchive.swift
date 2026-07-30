@@ -200,6 +200,23 @@ public final class LocalQualityAudioArchive: @unchecked Sendable {
         )
     }
 
+    public func containsRecording(for transcriptID: UUID) -> Bool {
+        lock.withLock {
+            fileManager.fileExists(atPath: fileURL(for: transcriptID).path)
+        }
+    }
+
+    public func retainedTranscriptIDs() throws -> Set<UUID> {
+        try lock.withLock {
+            guard fileManager.fileExists(atPath: directoryURL.path) else {
+                return []
+            }
+            return Set(try recordingURLs().compactMap {
+                UUID(uuidString: $0.deletingPathExtension().lastPathComponent)
+            })
+        }
+    }
+
     private func prepareDirectory() throws {
         try fileManager.createDirectory(
             at: directoryURL,

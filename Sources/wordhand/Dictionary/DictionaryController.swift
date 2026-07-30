@@ -39,6 +39,63 @@ final class DictionaryController {
         NSApp.activate(ignoringOtherApps: true)
     }
 
+    @discardableResult
+    func addVocabularyTerm(_ term: String) throws -> DictionaryEntry {
+        let canonical = term.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !canonical.isEmpty else {
+            throw DictionaryStoreError.emptyReplacement
+        }
+        let normalized = Self.normalizedVocabularyTerm(canonical)
+        if var canonicalEntry = entries.first(where: {
+            Self.normalizedVocabularyTerm($0.spokenForm) == normalized
+                && Self.normalizedVocabularyTerm($0.replacement) == normalized
+        }) {
+            guard !canonicalEntry.isEnabled else { return canonicalEntry }
+            canonicalEntry.isEnabled = true
+            canonicalEntry.updatedAt = Date()
+            let document = try store.upsert(canonicalEntry)
+            apply(document.entries)
+            return canonicalEntry
+        }
+        if let conflicting = entries.first(where: {
+            Self.normalizedVocabularyTerm($0.spokenForm) == normalized
+        }) {
+            throw DictionaryStoreError.duplicateSpokenForm(
+                conflicting.spokenForm
+            )
+        }
+        let entry = DictionaryEntry(
+            spokenForm: canonical,
+            replacement: canonical,
+            matchMode: .phrase
+        )
+        let document = try store.upsert(entry)
+        apply(document.entries)
+        return entry
+    }
+
+    @discardableResult
+    func reviewVocabularySuggestion(_ suggestion: VocabularySuggestion) -> Bool {
+        let alert = NSAlert()
+        alert.messageText = "Teach Wordhand “\(suggestion.canonicalTerm)”?"
+        alert.informativeText = """
+        You corrected this term in \(suggestion.supportCount) transcripts with \
+        retained local recordings. Adding it to Vocabulary helps the local \
+        recognizer expect the spelling without creating a replacement rule.
+        """
+        alert.addButton(withTitle: "Add to Vocabulary")
+        alert.addButton(withTitle: "Not Now")
+        guard alert.runModal() == .alertFirstButtonReturn else { return false }
+
+        do {
+            try addVocabularyTerm(suggestion.canonicalTerm)
+            return true
+        } catch {
+            presentError("Couldn’t add the vocabulary term: \(error)")
+            return false
+        }
+    }
+
     func correctLatestTranscript() {
         guard let latestTranscript else {
             NSSound.beep()
@@ -171,6 +228,13 @@ final class DictionaryController {
         alert.informativeText = message
         alert.alertStyle = .warning
         alert.runModal()
+    }
+
+    private static func normalizedVocabularyTerm(_ value: String) -> String {
+        value.trimmingCharacters(in: .whitespacesAndNewlines).folding(
+            options: [.caseInsensitive, .diacriticInsensitive],
+            locale: Locale(identifier: "en_US_POSIX")
+        )
     }
 }
 
