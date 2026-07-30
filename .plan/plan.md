@@ -61,6 +61,27 @@ Large v3 runs produced identical transcripts and passed the control-equivalence
 gate. Their median times were equal within 0.1 ms, so this is not a latency win
 and does not authorize an incremental candidate. Runtime remains unchanged.
 
+The corpus now includes a 49.26-second retained fixture that crosses both the
+20- and 40-second rolling boundaries. One fail-closed script runs the short and
+long cases and emits an aggregate JSON decision. Two balanced paired Large v3
+runs per fixture preserved every protected span with identical baseline/control
+transcripts. The long control was slightly slower (6.278 versus 6.274 seconds
+median stop-to-final), confirming again that discarded rolling work has no
+daily-use value. Stage provenance then measured the same result more precisely:
+the control completed 11.48–11.66 seconds of inference across ten pre-release
+decodes, reused zero samples, waited about 10 ms for cancellation, then spent
+about 2.42 seconds on the primary, 1.21 on the independent tail audit, and 2.65
+on the prompt-free full retry.
+
+The next candidate is not a VAD-chunk splice. It will decode cumulative
+snapshots from sample zero, retain only segments agreed across successive
+snapshots, and at release decode an eight-second-overlapping suffix. A unique
+six-word textual overlap—not window-local timestamps—must authorize the join.
+Any sample-prefix mismatch, ambiguous overlap, integrity divergence, stale
+task, or decode failure falls back to the current full-buffer path. Before that
+experiment, add an ambiguity fixture and require at least one long run to report
+nonzero reused samples; fallback-only equality cannot pass as a latency win.
+
 Receipt: `docs/verification/2026-07-30-completeness-latency-oracle.md`.
 
 ## Public checkpoint cadence

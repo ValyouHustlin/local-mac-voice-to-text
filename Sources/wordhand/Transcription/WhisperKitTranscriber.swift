@@ -21,6 +21,7 @@ actor WhisperKitTranscriber:
     private var streamingLastDecodeSample = 0
     private var streamingCommittedText: [String] = []
     private var streamingInferenceDuration: TimeInterval = 0
+    private var streamingDecodeCount = 0
     private var streamingStabilizer = StreamingTranscriptStabilizer()
     private var streamingDecodeTask: Task<Void, Never>?
     private var streamingFailure: Error?
@@ -122,12 +123,15 @@ actor WhisperKitTranscriber:
             }
         }
         let primaryOptions = decodingOptions(for: pipeline)
+        let primaryDecodeStarted = ProcessInfo.processInfo.systemUptime
         let primary = try await decode(
             audio,
             pipeline: pipeline,
             options: primaryOptions,
             token: token
         )
+        let primaryDecodeSeconds =
+            ProcessInfo.processInfo.systemUptime - primaryDecodeStarted
         let isVocabularyConditioned =
             primaryOptions.promptTokens?.isEmpty == false
         let conditionedTerms = isVocabularyConditioned
@@ -155,7 +159,8 @@ actor WhisperKitTranscriber:
         guard !integrityIssues.isEmpty else {
             latestRunDiagnostics = TranscriptionRunDiagnostics(
                 primaryWordCount: primaryWordCount,
-                finalWordCount: primaryWordCount
+                finalWordCount: primaryWordCount,
+                primaryDecodeSeconds: primaryDecodeSeconds
             )
             return primary.text
         }
@@ -163,6 +168,7 @@ actor WhisperKitTranscriber:
         var tailRequiresFullRetry = false
         var tailAuditFailed = false
         var tailAuditVerifiedCovered = false
+        var tailAuditDecodeSeconds: TimeInterval = 0
         if integrityIssues.contains(.activeAudioAfterDecodedEnding),
            audio.count > Self.tailRecoverySampleCount
         {
@@ -170,6 +176,7 @@ actor WhisperKitTranscriber:
                 "transcript integrity tail audit: decoding final 20 seconds "
                     .appending("without vocabulary prompt\n").utf8
             ))
+            let tailAuditStarted = ProcessInfo.processInfo.systemUptime
             do {
                 let tailRetry = try await decode(
                     Array(audio.suffix(Self.tailRecoverySampleCount)),
@@ -177,6 +184,8 @@ actor WhisperKitTranscriber:
                     options: Self.makeDecodingOptions(promptTokens: nil),
                     token: token
                 )
+                tailAuditDecodeSeconds =
+                    ProcessInfo.processInfo.systemUptime - tailAuditStarted
                 switch TranscriptionIntegrityGuard.reconcileTail(
                     primary: primary.text,
                     recovery: tailRetry.text
@@ -193,7 +202,9 @@ actor WhisperKitTranscriber:
                             tailRecoveryOutcome: .merged,
                             primaryWordCount: primaryWordCount,
                             finalWordCount: Self.wordCount(selected),
-                            promptArtifactDetected: promptArtifactDetected
+                            promptArtifactDetected: promptArtifactDetected,
+                            primaryDecodeSeconds: primaryDecodeSeconds,
+                            tailAuditDecodeSeconds: tailAuditDecodeSeconds
                         )
                         return selected
                     }
@@ -204,7 +215,9 @@ actor WhisperKitTranscriber:
                         latestRunDiagnostics = TranscriptionRunDiagnostics(
                             tailRecoveryOutcome: .verifiedCovered,
                             primaryWordCount: primaryWordCount,
-                            finalWordCount: primaryWordCount
+                            finalWordCount: primaryWordCount,
+                            primaryDecodeSeconds: primaryDecodeSeconds,
+                            tailAuditDecodeSeconds: tailAuditDecodeSeconds
                         )
                         return primary.text
                     }
@@ -212,6 +225,8 @@ actor WhisperKitTranscriber:
                     tailRequiresFullRetry = true
                 }
             } catch {
+                tailAuditDecodeSeconds =
+                    ProcessInfo.processInfo.systemUptime - tailAuditStarted
                 if token.isCancelled {
                     throw error
                 }
@@ -236,7 +251,9 @@ actor WhisperKitTranscriber:
                 ) ? .noImprovement : .notAudited,
                 primaryWordCount: primaryWordCount,
                 finalWordCount: primaryWordCount,
-                promptArtifactDetected: promptArtifactDetected
+                promptArtifactDetected: promptArtifactDetected,
+                primaryDecodeSeconds: primaryDecodeSeconds,
+                tailAuditDecodeSeconds: tailAuditDecodeSeconds
             )
             return primary.text
         }
@@ -245,6 +262,8 @@ actor WhisperKitTranscriber:
             "transcript integrity retry: decoding without vocabulary prompt\n".utf8
         ))
         let retry: DecodedTranscript
+        let fullRetryStarted = ProcessInfo.processInfo.systemUptime
+        var fullRetryDecodeSeconds: TimeInterval = 0
         do {
             retry = try await decode(
                 audio,
@@ -252,7 +271,11 @@ actor WhisperKitTranscriber:
                 options: Self.makeDecodingOptions(promptTokens: nil),
                 token: token
             )
+            fullRetryDecodeSeconds =
+                ProcessInfo.processInfo.systemUptime - fullRetryStarted
         } catch {
+            fullRetryDecodeSeconds =
+                ProcessInfo.processInfo.systemUptime - fullRetryStarted
             if token.isCancelled {
                 throw error
             }
@@ -271,7 +294,10 @@ actor WhisperKitTranscriber:
                 primaryWordCount: primaryWordCount,
                 finalWordCount: primaryWordCount,
                 fullRetryPerformed: true,
-                promptArtifactDetected: promptArtifactDetected
+                promptArtifactDetected: promptArtifactDetected,
+                primaryDecodeSeconds: primaryDecodeSeconds,
+                tailAuditDecodeSeconds: tailAuditDecodeSeconds,
+                fullRetryDecodeSeconds: fullRetryDecodeSeconds
             )
             return primary.text
         }
@@ -295,7 +321,10 @@ actor WhisperKitTranscriber:
             primaryWordCount: primaryWordCount,
             finalWordCount: Self.wordCount(selected),
             fullRetryPerformed: true,
-            promptArtifactDetected: promptArtifactDetected
+            promptArtifactDetected: promptArtifactDetected,
+            primaryDecodeSeconds: primaryDecodeSeconds,
+            tailAuditDecodeSeconds: tailAuditDecodeSeconds,
+            fullRetryDecodeSeconds: fullRetryDecodeSeconds
         )
         return selected
     }
@@ -327,6 +356,9 @@ actor WhisperKitTranscriber:
         let finalizationStarted = ProcessInfo.processInfo.systemUptime
         streamingIsFinishing = true
         defer { clearStreamingState() }
+        let preReleaseInferenceDuration = streamingInferenceDuration
+        let preReleaseDecodeCount = streamingDecodeCount
+        let cancellationDrainStarted = ProcessInfo.processInfo.systemUptime
         if let task = streamingDecodeTask {
             // A rolling decode only improves perceived progress while speech is
             // continuing. Once the user stops, it is stale work: cancel it so
@@ -334,6 +366,8 @@ actor WhisperKitTranscriber:
             task.cancel()
             await task.value
         }
+        let cancellationDrainDuration =
+            ProcessInfo.processInfo.systemUptime - cancellationDrainStarted
         streamingDecodeTask = nil
         streamingAudio = finalAudio
 
@@ -351,7 +385,10 @@ actor WhisperKitTranscriber:
             text: text,
             totalInferenceDuration: streamingInferenceDuration,
             finalizationDuration:
-                ProcessInfo.processInfo.systemUptime - finalizationStarted
+                ProcessInfo.processInfo.systemUptime - finalizationStarted,
+            preReleaseInferenceDuration: preReleaseInferenceDuration,
+            preReleaseDecodeCount: preReleaseDecodeCount,
+            cancellationDrainDuration: cancellationDrainDuration
         )
         return result
     }
@@ -411,6 +448,7 @@ actor WhisperKitTranscriber:
             let transcription = try await transcribeWindow(window)
             streamingInferenceDuration +=
                 ProcessInfo.processInfo.systemUptime - decodeStarted
+            streamingDecodeCount += 1
             guard streamingSessionID == sessionID else {
                 streamingDecodeTask = nil
                 return
@@ -576,6 +614,7 @@ actor WhisperKitTranscriber:
         streamingLastDecodeSample = 0
         streamingCommittedText = []
         streamingInferenceDuration = 0
+        streamingDecodeCount = 0
         streamingFailure = nil
         streamingIsFinishing = false
         streamingStabilizer.reset()

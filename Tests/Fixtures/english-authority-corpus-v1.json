@@ -1,0 +1,17 @@
+{
+  "id": "english-authority-corpus-v1",
+  "modelID": "whisper-large-v3",
+  "baselineImplementationID": "full-buffer-authoritative-v1",
+  "candidateImplementationID": "rolling-precompute-full-buffer-final-control-v1",
+  "requireLongPreReleaseDecodes": true,
+  "fixtures": [
+    {
+      "audio": "english-completeness-v1.aiff",
+      "definition": "english-completeness-v1.json"
+    },
+    {
+      "audio": "english-boundary-long-v1.aiff",
+      "definition": "english-boundary-long-v1.json"
+    }
+  ]
+}

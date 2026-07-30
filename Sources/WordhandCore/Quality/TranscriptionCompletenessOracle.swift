@@ -143,10 +143,7 @@ public struct ProtectedTranscriptResult: Codable, Equatable, Sendable {
     public let expectedOccurrences: Int
     public let matchedOccurrenceCount: Int
     public let matchedForm: String?
-
-    public var passed: Bool {
-        matchedOccurrenceCount == expectedOccurrences
-    }
+    public let passed: Bool
 }
 
 public struct TranscriptionAuthorityComparison: Codable, Equatable, Sendable {
@@ -242,7 +239,8 @@ public enum TranscriptionCompletenessOracle {
                 placement: span.placement,
                 expectedOccurrences: span.expectedOccurrences,
                 matchedOccurrenceCount: matchedOccurrenceCount,
-                matchedForm: match
+                matchedForm: match,
+                passed: matchedOccurrenceCount == span.expectedOccurrences
             )
         }
     }

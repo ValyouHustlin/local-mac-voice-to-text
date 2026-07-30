@@ -236,31 +236,37 @@ struct TranscriptionCompletenessOracleTests {
     }
 
     @Test
-    func retainedManifestIsBoundToCheckedInAudio() throws {
+    func retainedManifestsAreBoundToCheckedInAudio() throws {
         let fixtureDirectory = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()
             .deletingLastPathComponent()
             .appendingPathComponent("Fixtures", isDirectory: true)
-        let fixtureData = try Data(
-            contentsOf: fixtureDirectory
-                .appendingPathComponent("english-completeness-v1.json")
-        )
-        let retainedFixture = try JSONDecoder().decode(
-            TranscriptionCompletenessFixture.self,
-            from: fixtureData
-        )
-        let audioData = try Data(
-            contentsOf: fixtureDirectory
-                .appendingPathComponent("english-completeness-v1.aiff")
-        )
-        let audioHash = SHA256.hash(data: audioData)
-            .map { String(format: "%02x", $0) }
-            .joined()
+        let fixtures = [
+            ("english-completeness-v1", 201_154),
+            ("english-boundary-long-v1", 788_154),
+        ]
+        for (name, sampleCount) in fixtures {
+            let fixtureData = try Data(
+                contentsOf: fixtureDirectory.appendingPathComponent("\(name).json")
+            )
+            let retainedFixture = try JSONDecoder().decode(
+                TranscriptionCompletenessFixture.self,
+                from: fixtureData
+            )
+            let audioData = try Data(
+                contentsOf: fixtureDirectory.appendingPathComponent("\(name).aiff")
+            )
+            let audioHash = SHA256.hash(data: audioData)
+                .map { String(format: "%02x", $0) }
+                .joined()
 
-        #expect(retainedFixture.validationIssues(requireAudioIdentity: true).isEmpty)
-        #expect(retainedFixture.audioSHA256 == audioHash)
-        #expect(retainedFixture.sampleCount == 201_154)
-        #expect(retainedFixture.sampleRate == 16_000)
+            #expect(
+                retainedFixture.validationIssues(requireAudioIdentity: true).isEmpty
+            )
+            #expect(retainedFixture.audioSHA256 == audioHash)
+            #expect(retainedFixture.sampleCount == sampleCount)
+            #expect(retainedFixture.sampleRate == 16_000)
+        }
     }
 }
 

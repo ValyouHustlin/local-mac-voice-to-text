@@ -103,15 +103,24 @@ public struct StreamingTranscriptionResult: Equatable, Sendable {
     public var text: String
     public var totalInferenceDuration: TimeInterval
     public var finalizationDuration: TimeInterval
+    public var preReleaseInferenceDuration: TimeInterval
+    public var preReleaseDecodeCount: Int
+    public var cancellationDrainDuration: TimeInterval
 
     public init(
         text: String,
         totalInferenceDuration: TimeInterval,
-        finalizationDuration: TimeInterval
+        finalizationDuration: TimeInterval,
+        preReleaseInferenceDuration: TimeInterval = 0,
+        preReleaseDecodeCount: Int = 0,
+        cancellationDrainDuration: TimeInterval = 0
     ) {
         self.text = text
         self.totalInferenceDuration = totalInferenceDuration
         self.finalizationDuration = finalizationDuration
+        self.preReleaseInferenceDuration = preReleaseInferenceDuration
+        self.preReleaseDecodeCount = preReleaseDecodeCount
+        self.cancellationDrainDuration = cancellationDrainDuration
     }
 }
 

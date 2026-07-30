@@ -252,9 +252,22 @@ extension Models {
         ) async throws -> AuthorityTranscriptRun {
             let started = ProcessInfo.processInfo.systemUptime
             let transcript = try await transcriber.transcribe(audio)
+            let diagnostics = await transcriber.lastRunDiagnostics()
             return AuthorityTranscriptRun(
                 transcript: transcript.trimmingCharacters(in: .whitespacesAndNewlines),
-                stopToFinalSeconds: ProcessInfo.processInfo.systemUptime - started
+                stopToFinalSeconds: ProcessInfo.processInfo.systemUptime - started,
+                provenance: AuthorityRunProvenance(
+                    authorityPath: "full_buffer_baseline",
+                    fallbackReason: nil,
+                    preReleaseDecodeCount: 0,
+                    preReleaseInferenceSeconds: 0,
+                    cancellationDrainSeconds: 0,
+                    reusedSampleCount: 0,
+                    suffixStartSample: nil,
+                    suffixSampleCount: nil,
+                    overlapWordCount: 0,
+                    diagnostics: diagnostics
+                )
             )
         }
 
@@ -277,9 +290,24 @@ extension Models {
             }
             let started = ProcessInfo.processInfo.systemUptime
             let result = try await transcriber.finishStreaming(finalAudio: audio)
+            let diagnostics = await transcriber.lastRunDiagnostics()
             return AuthorityTranscriptRun(
                 transcript: result.text.trimmingCharacters(in: .whitespacesAndNewlines),
-                stopToFinalSeconds: ProcessInfo.processInfo.systemUptime - started
+                stopToFinalSeconds: ProcessInfo.processInfo.systemUptime - started,
+                provenance: AuthorityRunProvenance(
+                    authorityPath: "full_buffer_control",
+                    fallbackReason: "incremental_authority_not_implemented",
+                    preReleaseDecodeCount: result.preReleaseDecodeCount,
+                    preReleaseInferenceSeconds:
+                        result.preReleaseInferenceDuration,
+                    cancellationDrainSeconds:
+                        result.cancellationDrainDuration,
+                    reusedSampleCount: 0,
+                    suffixStartSample: nil,
+                    suffixSampleCount: nil,
+                    overlapWordCount: 0,
+                    diagnostics: diagnostics
+                )
             )
         }
 
@@ -308,6 +336,20 @@ extension Models {
 private struct AuthorityTranscriptRun: Codable, Sendable {
     let transcript: String
     let stopToFinalSeconds: Double
+    let provenance: AuthorityRunProvenance
+}
+
+private struct AuthorityRunProvenance: Codable, Sendable {
+    let authorityPath: String
+    let fallbackReason: String?
+    let preReleaseDecodeCount: Int
+    let preReleaseInferenceSeconds: Double
+    let cancellationDrainSeconds: Double
+    let reusedSampleCount: Int
+    let suffixStartSample: Int?
+    let suffixSampleCount: Int?
+    let overlapWordCount: Int
+    let diagnostics: TranscriptionRunDiagnostics
 }
 
 private struct AuthorityCompareRun: Codable, Sendable {

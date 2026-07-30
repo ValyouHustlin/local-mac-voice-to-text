@@ -1,0 +1,63 @@
+{
+  "id": "english-boundary-long-v1",
+  "reference": "Boundary alpha opens this long test. This retained recording deliberately continues across several rolling windows. The first section uses ordinary English sentences about planning a careful software release. Each sentence gives the decoder steady speech while the complete audio buffer remains authoritative. Near the middle, the measured value is fourteen point five. Do not remove the safety check on Friday. WhisperKit and GitHub support Aaron Browne-Moore during this local evaluation. Another section continues with calm words about preserving every beginning, every ending, and every correction. The recording now approaches its final rolling boundary without changing the required meaning. Boundary maple closes this long test.",
+  "audioSHA256": "9fd0eaedd9ca1cae15653093c9d771b53c00cd344ae4d42dcbc01ec011a4c2f3",
+  "sampleCount": 788154,
+  "sampleRate": 16000,
+  "vocabularyTerms": [
+    "WhisperKit",
+    "GitHub",
+    "Aaron Browne-Moore"
+  ],
+  "protectedSpans": [
+    {
+      "id": "opening",
+      "category": "beginning",
+      "acceptedForms": ["Boundary alpha opens this long test"],
+      "placement": "prefix",
+      "expectedOccurrences": 1
+    },
+    {
+      "id": "closing",
+      "category": "ending",
+      "acceptedForms": ["Boundary maple closes this long test"],
+      "placement": "suffix",
+      "expectedOccurrences": 1
+    },
+    {
+      "id": "decimal",
+      "category": "number",
+      "acceptedForms": ["fourteen point five", "14.5"],
+      "placement": "anywhere",
+      "expectedOccurrences": 1
+    },
+    {
+      "id": "negation",
+      "category": "negation",
+      "acceptedForms": ["do not remove the safety check on Friday"],
+      "placement": "anywhere",
+      "expectedOccurrences": 1
+    },
+    {
+      "id": "whisperkit",
+      "category": "technicalTerm",
+      "acceptedForms": ["WhisperKit"],
+      "placement": "anywhere",
+      "expectedOccurrences": 1
+    },
+    {
+      "id": "github",
+      "category": "technicalTerm",
+      "acceptedForms": ["GitHub"],
+      "placement": "anywhere",
+      "expectedOccurrences": 1
+    },
+    {
+      "id": "name",
+      "category": "dictionarySpelling",
+      "acceptedForms": ["Aaron Browne-Moore"],
+      "placement": "anywhere",
+      "expectedOccurrences": 1
+    }
+  ]
+}
