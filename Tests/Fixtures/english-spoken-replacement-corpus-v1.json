@@ -1,0 +1,94 @@
+{
+  "schemaVersion": 1,
+  "id": "english-spoken-replacement-corpus-v1",
+  "modelID": "whisper-large-v3",
+  "decoderConfigurationID": "full-buffer-v1-no-vocabulary",
+  "provenance": "syntheticNamespaceEvidence",
+  "generator": {
+    "path": "/usr/bin/say",
+    "voice": "Samantha",
+    "locale": "en_US",
+    "operatingSystem": "macOS 26.5.2 (25F84)",
+    "generatedAt": "2026-07-30T16:02:00-07:00"
+  },
+  "fixtures": [
+    {
+      "id": "english-spoken-replacement-positive-v1",
+      "purpose": "uniqueReplacement",
+      "audio": "english-spoken-replacement-positive-v1.aiff",
+      "rate": 175,
+      "source": "Boundary amber begins this edit test. The release label is alpha draft. Boundary copper ends the dictated body. Command correction, replace alpha draft with beta draft.",
+      "sourceSHA256": "65ac34ab9dd6092338f7671f2bd309b2f0cda7211d4e2f4108ead95c58d4559a",
+      "audioSHA256": "97c20be15547530758ffc903d8860a65c147791020b1cdaaf9a96417ab74bdb9",
+      "nativeSampleRate": 22050,
+      "nativeSampleCount": 225118,
+      "decodedSampleRate": 16000,
+      "decodedSampleCount": 163350,
+      "durationSeconds": 10.209433,
+      "expectedDecodedText": "Boundary amber begins this edit test. The release label is alpha draft. Boundary copper ends the dictated body. Command correction. Replace alpha draft with beta draft.",
+      "expectedDecodedSHA256": "db3521ce877f872a8314cc32896effc258008754a734176e0d00398d11cbb56a",
+      "expectedProcessedText": "Boundary amber begins this edit test. The release label is beta draft. Boundary copper ends the dictated body.",
+      "expectedProcessedSHA256": "d20af378d59f94a31a9f2c33e1c8fe366cf4053ce43193a52aea68cf505a6a0d",
+      "expectedOutcome": "applied",
+      "oldPhrase": "alpha draft",
+      "newPhrase": "beta draft",
+      "expectedOldOccurrences": 1,
+      "protectedSpans": [
+        "Boundary amber begins this edit test",
+        "Boundary copper ends the dictated body"
+      ]
+    },
+    {
+      "id": "english-spoken-replacement-repeated-v1",
+      "purpose": "repeatedTargetLiteralNoOp",
+      "audio": "english-spoken-replacement-repeated-v1.aiff",
+      "rate": 195,
+      "source": "Boundary amber begins this edit test. Alpha draft is in the title, and alpha draft is in the note. Boundary copper ends the dictated body. Command correction, replace alpha draft with beta draft.",
+      "sourceSHA256": "b798c426a2eb2bc6b9c08d7de9b363dfb3dcafa51e4d0731650bbd56188487f8",
+      "audioSHA256": "f3414cbf2c6169ea54474993fe81dfd08c0fe4ba339f53a46b65233f2cf36fd7",
+      "nativeSampleRate": 22050,
+      "nativeSampleCount": 236692,
+      "decodedSampleRate": 16000,
+      "decodedSampleCount": 171749,
+      "durationSeconds": 10.734331,
+      "expectedDecodedText": "Boundary amber begins this edit test. Alpha draft is in the title. And alpha draft is in the note. Boundary copper ends the dictated body. Command correction. Replace alpha draft with beta draft.",
+      "expectedDecodedSHA256": "036029c430c3d8f331ee86a33a11a9a08a63dd76c49a8fd5cec92aea00d2ee2f",
+      "expectedProcessedText": "Boundary amber begins this edit test. Alpha draft is in the title. And alpha draft is in the note. Boundary copper ends the dictated body. Command correction. Replace alpha draft with beta draft.",
+      "expectedProcessedSHA256": "036029c430c3d8f331ee86a33a11a9a08a63dd76c49a8fd5cec92aea00d2ee2f",
+      "expectedOutcome": "rejected:target_repeated",
+      "oldPhrase": "alpha draft",
+      "newPhrase": "beta draft",
+      "expectedOldOccurrences": 2,
+      "protectedSpans": [
+        "Boundary amber begins this edit test",
+        "Boundary copper ends the dictated body"
+      ]
+    },
+    {
+      "id": "english-spoken-replacement-semantic-v1",
+      "purpose": "semanticDiscussionLiteralNoOp",
+      "audio": "english-spoken-replacement-semantic-v1.aiff",
+      "rate": 205,
+      "source": "Boundary amber begins this edit test. The guide documents the phrase command correction replace alpha draft with beta draft for reviewers. Boundary copper ends this edit test.",
+      "sourceSHA256": "7f4804512a7984adcc752b9a05966409764efe86b5bad5bf8e750fec87cb73ca",
+      "audioSHA256": "5d0d81c71c0e15b5fea29eabdb5e8f1f8da738097a390ebbffe7798c66bc126e",
+      "nativeSampleRate": 22050,
+      "nativeSampleCount": 194736,
+      "decodedSampleRate": 16000,
+      "decodedSampleCount": 141305,
+      "durationSeconds": 8.831565,
+      "expectedDecodedText": "Boundary amber begins this edit test. The guide documents the phrase command correction replace alpha draft with beta draft for reviewers. Boundary copper ends this edit test.",
+      "expectedDecodedSHA256": "7f4804512a7984adcc752b9a05966409764efe86b5bad5bf8e750fec87cb73ca",
+      "expectedProcessedText": "Boundary amber begins this edit test. The guide documents the phrase command correction replace alpha draft with beta draft for reviewers. Boundary copper ends this edit test.",
+      "expectedProcessedSHA256": "7f4804512a7984adcc752b9a05966409764efe86b5bad5bf8e750fec87cb73ca",
+      "expectedOutcome": "rejected:non_standalone",
+      "oldPhrase": "alpha draft",
+      "newPhrase": "beta draft",
+      "expectedOldOccurrences": 1,
+      "protectedSpans": [
+        "Boundary amber begins this edit test",
+        "Boundary copper ends this edit test"
+      ]
+    }
+  ]
+}

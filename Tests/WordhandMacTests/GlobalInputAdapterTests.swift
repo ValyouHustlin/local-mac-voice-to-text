@@ -662,6 +662,114 @@ struct GlobalInputAdapterTests {
         #expect(calls.allSatisfy { $0.text.contains("WORDHAND_LAYOUT_0_0") })
     }
 
+    @Test
+    func appliedEarlierReplacementFormatsOnlyTheEditedBody() async {
+        let rewriter = RecordingLocalTranscriptRewriter(
+            responses: ["Send the proposal Monday."]
+        )
+        let processor = AppAwareTranscriptProcessor(
+            dictionaryProcessor: MutableTranscriptProcessor(),
+            profile: .formatted,
+            rewriter: rewriter
+        )
+
+        let result = await processor.processResult(
+            "Send the proposal Friday. "
+                + "Command correction. Replace Friday with Monday.",
+            target: .unknown
+        )
+        let calls = await rewriter.recordedCalls()
+
+        #expect(result.text == "Send the proposal Monday.")
+        #expect(result.notices.isEmpty)
+        #expect(calls.count == 1)
+        #expect(calls[0].text == "Send the proposal Monday.")
+        #expect(!calls[0].text.localizedCaseInsensitiveContains("command"))
+    }
+
+    @Test
+    func rejectedEarlierReplacementBypassesFormatterAndPreservesLiteralCommand() async {
+        let rewriter = RecordingLocalTranscriptRewriter(
+            responses: ["This response must never be used."]
+        )
+        let processor = AppAwareTranscriptProcessor(
+            dictionaryProcessor: MutableTranscriptProcessor(),
+            profile: .professional,
+            rewriter: rewriter
+        )
+        let input =
+            "Friday is possible. Friday is preferred. "
+            + "Command correction, replace Friday with Monday."
+
+        let result = await processor.processResult(
+            input,
+            target: .unknown
+        )
+        let calls = await rewriter.recordedCalls()
+
+        #expect(result.text == input)
+        #expect(
+            result.notices
+                == [.spokenReplacementRejected(.targetRepeated)]
+        )
+        #expect(calls.isEmpty)
+    }
+
+    @Test
+    @MainActor
+    func rejectedEarlierReplacementWithOverlappingTargetsBypassesFormatter() async {
+        let rewriter = RecordingLocalTranscriptRewriter(
+            responses: ["This response must never be used."]
+        )
+        let processor = AppAwareTranscriptProcessor(
+            dictionaryProcessor: MutableTranscriptProcessor(),
+            profile: .professional,
+            rewriter: rewriter
+        )
+        let input =
+            "Alpha alpha alpha. "
+            + "Command correction, replace alpha alpha with beta."
+
+        let result = await processor.processResult(
+            input,
+            target: .unknown
+        )
+        let calls = await rewriter.recordedCalls()
+
+        #expect(result.text == input)
+        #expect(
+            result.notices
+                == [.spokenReplacementRejected(.targetRepeated)]
+        )
+        #expect(calls.isEmpty)
+    }
+
+    @Test
+    @MainActor
+    func menuBarNoticeIsImmediatelyVisibleAndClearsForNewRecording() {
+        let controller = MenuBarController(
+            modelID: "test",
+            settings: AppSettings(),
+            onOpenSettings: {},
+            onOpenHistory: {},
+            onOpenDictionary: {},
+            onCorrectLast: {},
+            onImproveLast: {},
+            onUndoLast: {}
+        )
+
+        controller.setNotice("correction not applied · text preserved")
+
+        #expect(
+            controller.visibleNoticeText
+                == "correction not applied · text preserved"
+        )
+
+        controller.setRecording(true)
+
+        #expect(controller.visibleNoticeText == nil)
+    }
+
     @Test(
         .enabled(
             if: ProcessInfo.processInfo.environment[

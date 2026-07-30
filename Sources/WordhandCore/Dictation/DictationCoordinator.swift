@@ -72,8 +72,42 @@ public protocol TranscriptProcessing: Sendable {
     func process(_ text: String, target: TranscriptTarget) async -> String
 }
 
+public enum TranscriptProcessingNotice: Equatable, Sendable {
+    case spokenReplacementRejected(SpokenReplacementCommandRejection)
+}
+
+public struct TranscriptProcessingResult: Equatable, Sendable {
+    public let text: String
+    public let notices: [TranscriptProcessingNotice]
+
+    public init(
+        text: String,
+        notices: [TranscriptProcessingNotice] = []
+    ) {
+        self.text = text
+        self.notices = notices
+    }
+}
+
+public protocol ReportingTranscriptProcessing: TranscriptProcessing {
+    func processResult(
+        _ text: String,
+        target: TranscriptTarget
+    ) async -> TranscriptProcessingResult
+}
+
 public protocol ContextualTranscriptProcessing: TranscriptProcessing {
     func process(_ text: String, context: TranscriptProcessingContext) async -> String
+}
+
+public protocol ContextualReportingTranscriptProcessing:
+    ContextualTranscriptProcessing,
+    ReportingTranscriptProcessing
+{
+    func processResult(
+        _ text: String,
+        context: TranscriptProcessingContext
+    ) async -> TranscriptProcessingResult
 }
 
 public protocol TextInserting: Sendable {
@@ -91,6 +125,7 @@ public final class DictationCoordinator {
     public var onTranscript: ((String, TimeInterval) -> Void)?
     public var onQualityAudio: ((QualityAudioSample) -> Void)?
     public var onProcessingDuration: ((TimeInterval) -> Void)?
+    public var onProcessingNotice: ((TranscriptProcessingNotice) -> Void)?
     public var onStreamingFinalizationDuration: ((TimeInterval) -> Void)?
     public var onHistoryChange: (() -> Void)?
     public var onRecordingLimitReached: (() -> Void)?
@@ -416,15 +451,24 @@ public final class DictationCoordinator {
                 ?? TranscriptProcessingContext(target: .unknown)
             let target = processingContext.target
             let processingStarted = now()
-            let text = await process(raw, context: processingContext)
+            let processingResult = await process(
+                raw,
+                context: processingContext
+            )
+            let text = processingResult.text
             let processingElapsed = now() - processingStarted
             onProcessingDuration?(processingElapsed)
+            recordProcessingNotices(
+                processingResult.notices,
+                dictationID: operationID
+            )
             recordDiagnostic(
                 name: "processing.completed",
                 dictationID: operationID,
                 metrics: [
                     "processing_seconds": processingElapsed,
                     "processed_character_count": Double(text.count),
+                    "notice_count": Double(processingResult.notices.count),
                 ],
                 attributes: [
                     "target_bundle_id": target.bundleIdentifier ?? "unknown",
@@ -570,6 +614,9 @@ public final class DictationCoordinator {
                     ),
                 ]
             )
+            for notice in processingResult.notices {
+                onProcessingNotice?(notice)
+            }
 
             if let history {
                 do {
@@ -666,11 +713,26 @@ public final class DictationCoordinator {
     private func process(
         _ text: String,
         context: TranscriptProcessingContext
-    ) async -> String {
-        if let contextual = processor as? any ContextualTranscriptProcessing {
-            return await contextual.process(text, context: context)
+    ) async -> TranscriptProcessingResult {
+        if let contextual =
+            processor as? any ContextualReportingTranscriptProcessing
+        {
+            return await contextual.processResult(text, context: context)
         }
-        return await processor.process(text, target: context.target)
+        if let contextual = processor as? any ContextualTranscriptProcessing {
+            return TranscriptProcessingResult(
+                text: await contextual.process(text, context: context)
+            )
+        }
+        if let reporting = processor as? any ReportingTranscriptProcessing {
+            return await reporting.processResult(
+                text,
+                target: context.target
+            )
+        }
+        return TranscriptProcessingResult(
+            text: await processor.process(text, target: context.target)
+        )
     }
 
     /// Replays an orphaned audio journal through the same complete-buffer
@@ -698,9 +760,14 @@ public final class DictationCoordinator {
         }
         let transcriptionElapsed = now() - started
         state = .processing
-        let text = await process(
+        let processingResult = await process(
             raw,
             context: TranscriptProcessingContext(target: .unknown)
+        )
+        let text = processingResult.text
+        recordProcessingNotices(
+            processingResult.notices,
+            dictationID: recovered.id
         )
         guard !text.isEmpty else {
             recordDiagnostic(
@@ -774,6 +841,23 @@ public final class DictationCoordinator {
         )
         state = .idle
         return true
+    }
+
+    private func recordProcessingNotices(
+        _ notices: [TranscriptProcessingNotice],
+        dictationID: UUID
+    ) {
+        for notice in notices {
+            switch notice {
+            case .spokenReplacementRejected(let reason):
+                recordDiagnostic(
+                    severity: .warning,
+                    name: "processing.command_rejected",
+                    dictationID: dictationID,
+                    attributes: ["reason": reason.rawValue]
+                )
+            }
+        }
     }
 
     public func updateInsertionMode(_ insertionMode: InsertionMode) {

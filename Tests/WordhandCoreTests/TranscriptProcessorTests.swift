@@ -134,6 +134,35 @@ struct TranscriptProcessorTests {
     }
 
     @Test
+    func appliesEarlierPhraseReplacementAfterImmediateRepairs() async {
+        let processor = TranscriptProcessor()
+        let result = await processor.processResult(
+            "Send Friday—wait, no, Tuesday. "
+                + "Command correction. Replace Tuesday with Monday."
+        )
+
+        #expect(result.text == "Send Monday.")
+        #expect(result.notices.isEmpty)
+    }
+
+    @Test
+    func rejectedEarlierPhraseReplacementPreservesTextAndReportsReason() async {
+        let processor = TranscriptProcessor(
+            formattingProfile: .professional
+        )
+        let input =
+            "Friday is possible. Friday is preferred. "
+            + "Command correction, replace Friday with Monday."
+        let result = await processor.processResult(input)
+
+        #expect(result.text == input)
+        #expect(
+            result.notices
+                == [.spokenReplacementRejected(.targetRepeated)]
+        )
+    }
+
+    @Test
     func migratesLegacyWritingStyleValues() throws {
         let decoder = JSONDecoder()
         let legacyValues: [(String, TranscriptFormattingProfile)] = [

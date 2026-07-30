@@ -96,4 +96,13 @@ struct SpokenCorrectionEngineTests {
                 == "Send it Friday."
         )
     }
+
+    @Test
+    func preservesReservedEarlierReplacementCommandForItsDedicatedEngine() {
+        let input =
+            "Friday is possible. Friday is preferred. "
+            + "Command correction, replace Friday with Monday."
+
+        #expect(SpokenCorrectionEngine.apply(to: input) == input)
+    }
 }

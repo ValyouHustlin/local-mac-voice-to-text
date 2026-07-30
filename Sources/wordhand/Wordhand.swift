@@ -715,6 +715,14 @@ struct Run: ParsableCommand {
                     String(format: "  local formatting %.2fs\n", elapsed).utf8
                 ))
             }
+            coordinator.onProcessingNotice = { notice in
+                switch notice {
+                case .spokenReplacementRejected:
+                    menuBar.setNotice(
+                        "correction not applied · text preserved"
+                    )
+                }
+            }
             coordinator.onStreamingFinalizationDuration = { elapsed in
                 FileHandle.standardError.write(Data(
                     String(format: "  streaming finalization %.2fs\n", elapsed).utf8

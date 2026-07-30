@@ -19,7 +19,7 @@ extension LocalTranscriptRewriting {
 }
 
 final class AppAwareTranscriptProcessor:
-    ContextualTranscriptProcessing,
+    ContextualReportingTranscriptProcessing,
     @unchecked Sendable
 {
     private let dictionaryProcessor: MutableTranscriptProcessor
@@ -77,18 +77,39 @@ final class AppAwareTranscriptProcessor:
     }
 
     func process(_ text: String, target: TranscriptTarget) async -> String {
-        await process(text, context: context(for: target))
+        await processResult(text, context: context(for: target)).text
+    }
+
+    func processResult(
+        _ text: String,
+        target: TranscriptTarget
+    ) async -> TranscriptProcessingResult {
+        await processResult(text, context: context(for: target))
     }
 
     func process(
         _ text: String,
         context: TranscriptProcessingContext
     ) async -> String {
+        await processResult(text, context: context).text
+    }
+
+    func processResult(
+        _ text: String,
+        context: TranscriptProcessingContext
+    ) async -> TranscriptProcessingResult {
         let cleaned = await dictionaryProcessor.process(
             text,
             target: context.target
         )
-        let layout = SpokenLayoutCommandEngine.protect(cleaned)
+        let replacement = SpokenReplacementCommandEngine.apply(to: cleaned)
+        if case .rejected(let reason) = replacement.outcome {
+            return TranscriptProcessingResult(
+                text: replacement.text,
+                notices: [.spokenReplacementRejected(reason)]
+            )
+        }
+        let layout = SpokenLayoutCommandEngine.protect(replacement.text)
         let selectedProfile = context.formattingProfile
             ?? resolvedProfile(for: context.target)
 
@@ -118,7 +139,10 @@ final class AppAwareTranscriptProcessor:
                 layout: layout
             )
         }
-        return layout.render(formatted)
+        return TranscriptProcessingResult(
+            text: layout.render(formatted),
+            notices: []
+        )
     }
 
     func context(for target: TranscriptTarget) -> TranscriptProcessingContext {

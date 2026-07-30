@@ -22,7 +22,7 @@ public enum SpokenCorrectionEngine {
             .replaceSentence
         ),
         (
-            #"(?i)(?:\s*[—–-]\s*(?:(?:wait|sorry)[,\s]+)?(?:no[,\s]+)?i\s+meant|\s+(?:(?:wait|sorry)[,\s]+|no[,\s]+)i\s+meant|(?:\s*[—–,:-]\s*|\s+)(?:make\s+that|correction))(?:\s*[:,—–-]\s*|\s+)"#,
+            #"(?i)(?:\s*[—–-]\s*(?:(?:wait|sorry)[,\s]+)?(?:no[,\s]+)?i\s+meant|\s+(?:(?:wait|sorry)[,\s]+|no[,\s]+)i\s+meant|(?:\s*[—–,:-]\s*|\s+)(?:make\s+that|(?<!command\s)correction))(?:\s*[:,—–-]\s*|\s+)"#,
             .replaceTail
         ),
         (

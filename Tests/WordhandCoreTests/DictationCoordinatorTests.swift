@@ -527,6 +527,71 @@ struct DictationCoordinatorTests {
     }
 
     @Test
+    func rejectedReplacementIsInsertedLiterallyAndSurfacesTextFreeNotice() async throws {
+        let raw =
+            "Friday is possible. Friday is preferred. "
+            + "Command correction, replace Friday with Monday."
+        let history = FakeHistory()
+        let inserter = FakeInserter()
+        let coordinator = DictationCoordinator(
+            capture: FakeCapture(samples: [0.1]),
+            transcriber: FakeTranscriber(result: raw),
+            processor: TranscriptProcessor(),
+            inserter: inserter,
+            history: history
+        )
+        var notices: [TranscriptProcessingNotice] = []
+        var events: [OperationalDiagnosticEvent] = []
+        coordinator.onProcessingNotice = { notices.append($0) }
+        coordinator.onDiagnosticEvent = { events.append($0) }
+
+        await coordinator.handle(.pressed)
+        await coordinator.handle(.released)
+
+        let saved = try #require(history.saved.first)
+        #expect(saved.rawText == raw)
+        #expect(saved.text == raw)
+        #expect(inserter.insertions == [raw])
+        #expect(
+            notices == [.spokenReplacementRejected(.targetRepeated)]
+        )
+        let rejection = try #require(
+            events.first {
+                $0.name == "processing.command_rejected"
+            }
+        )
+        #expect(rejection.attributes == ["reason": "target_repeated"])
+        #expect(!rejection.attributes.values.contains(raw))
+    }
+
+    @Test
+    func rejectedReplacementNoticeSurvivesHistoryStatusFailure() async throws {
+        let raw =
+            "Friday is possible. Friday is preferred. "
+            + "Command correction, replace Friday with Monday."
+        let history = FakeHistory(updateError: FakeError.failure)
+        let inserter = FakeInserter()
+        let coordinator = DictationCoordinator(
+            capture: FakeCapture(samples: [0.1]),
+            transcriber: FakeTranscriber(result: raw),
+            processor: TranscriptProcessor(),
+            inserter: inserter,
+            history: history
+        )
+        var notices: [TranscriptProcessingNotice] = []
+        coordinator.onProcessingNotice = { notices.append($0) }
+
+        await coordinator.handle(.pressed)
+        await coordinator.handle(.released)
+
+        #expect(inserter.insertions == [raw])
+        #expect(
+            notices == [.spokenReplacementRejected(.targetRepeated)]
+        )
+        #expect(coordinator.state == .failed(.historyStatus("failure")))
+    }
+
+    @Test
     func failedInsertionRemainsRecoverableInHistory() async throws {
         let history = FakeHistory()
         let coordinator = DictationCoordinator(
@@ -970,12 +1035,20 @@ private final class FakeInserter: TextInserting, @unchecked Sendable {
 private final class FakeHistory: TranscriptRecording, @unchecked Sendable {
     private(set) var saved: [TranscriptRecord] = []
     private(set) var updates: [(UUID, TranscriptInsertionStatus)] = []
+    private let updateError: Error?
+
+    init(updateError: Error? = nil) {
+        self.updateError = updateError
+    }
 
     func save(_ record: TranscriptRecord) throws {
         saved.append(record)
     }
 
     func updateStatus(id: UUID, status: TranscriptInsertionStatus) throws {
+        if let updateError {
+            throw updateError
+        }
         updates.append((id, status))
     }
 }

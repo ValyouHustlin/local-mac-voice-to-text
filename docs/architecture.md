@@ -806,12 +806,35 @@ Initial order:
 5. resolve explicit spoken repairs such as `wait, no`, `I meant`, `make that`,
    `correction`, `scratch that`, and immediate false starts; ambiguous language
    is preserved rather than guessed;
-6. apply the explicit Casual, Formatted, Professional, or AI Communication
+6. apply one exact earlier-phrase replacement only from the reserved terminal
+   grammar `command correction, replace <old> with <new>`;
+7. apply the explicit Casual, Formatted, Professional, or AI Communication
    writing style;
-7. validate on-device rewrites for facts, constraints, perspective, modality,
+8. validate on-device rewrites for facts, constraints, perspective, modality,
    and uncertainty, retry conservatively once, then use safe local fallback;
-8. interpret explicitly supported voice commands;
-9. produce the final transcript stored in history.
+9. interpret explicitly supported layout commands;
+10. produce the final transcript stored in history.
+
+Earlier-phrase replacement is limited to the current dictation and never reads
+the active application's text, selection, cursor, or surrounding document. The
+reserved command must be the final standalone clause, survive as the exact
+normalized words `command correction replace`, contain one standalone `with`
+delimiter, and provide 1–8 lexical tokens on each side. The old phrase must
+occur exactly once before the command using Unicode-aware token boundaries.
+Matching is case-insensitive so explicit spelling/casing corrections work, but
+replacement preserves the newly dictated casing exactly. There is no fuzzy
+match, stemming, semantic inference, or partial numeric/domain-token match.
+
+Every rejected command returns the literal cleaned input with a text-free
+reason enum. The processor bypasses both deterministic polish and the
+Foundation Models formatter on rejection, so no later stage can hide or
+rewrite the failed command. After successful insertion, the menu-bar status
+temporarily expands to show `correction not applied · text preserved`. That
+notice is emitted before History status bookkeeping so a bookkeeping failure
+cannot suppress it, and it clears after four seconds or when a new recording
+starts. Private operational diagnostics store only the enum reason. Raw
+recognition remains unchanged in History, while a successful command appears
+only in the processed text.
 
 Layout commands are protected before local style formatting with collision-free
 opaque tokens plus the nearest words on both sides as structural anchors. A

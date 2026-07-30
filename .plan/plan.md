@@ -42,9 +42,9 @@ order:
    evidence, model, and configuration suggestions remain;
 4. [x] optional application-to-profile routing behind one understandable
    global default;
-5. [ ] deeper explicit spoken correction and editing commands; the first
-   exact layout-command slice is implemented and isolated-verified, while
-   earlier-phrase replacement remains;
+5. [x] deeper explicit spoken correction and editing commands; exact layout
+   commands and one fail-closed earlier-phrase replacement are implemented and
+   isolated-verified, while attended natural-command coverage remains;
 6. a native evidence-based diagnostics and quality view;
 7. fresh-Mac onboarding plus the signed, notarized, permission-stable updater.
 
@@ -198,13 +198,37 @@ line` decoded as `word and new line`. A fixed Samantha utterance using
 `command new line` decoded exactly through cached Whisper Large v3. The
 opt-in end-to-end receipt drove it through the real model and formatted
 TextEdit pipeline to one exact line break and one exact paragraph break. This
-is synthetic-voice evidence, not an attended natural-dictation claim. The next
-editing slice should add fail-closed earlier-phrase replacement only after
-command rejection has visible local feedback and retained audio proves its
-spoken namespace.
+is synthetic-voice evidence, not an attended natural-dictation claim.
 
 Receipt:
 `docs/verification/2026-07-30-spoken-layout-commands.md`.
+
+The bounded earlier-phrase replacement slice now uses the reserved terminal
+grammar `command correction, replace <old> with <new>`. `Wordhand correction`
+was rejected after Large v3 decoded it as `word and correction`; the selected
+namespace survived multiple fixed synthetic utterances while presenting less
+literal collision surface than bare `command replace`.
+
+The pure engine accepts only one standalone terminal command, one `with`
+delimiter, 1–8 bounded lexical tokens on each side, and exactly one
+case-insensitive token-bounded match in the already-dictated body. It never
+fuzzy-matches or reads the surrounding document. Missing, repeated, malformed,
+embedded, quoted, question, oversized, or nonterminal commands preserve the
+literal cleaned transcript and bypass every formatter. After successful
+insertion, a menu-bar notice says the correction was not applied and the text
+was preserved; the visible menu-bar item carries that notice even if History
+status bookkeeping fails, while private diagnostics retain only the text-free
+rejection enum.
+
+Three identity-bound public Samantha fixtures cover one unique replacement,
+one repeated-target rejection, and one semantic-discussion rejection. Four
+cached Large v3 full-buffer replays per fixture produced the exact bound decode
+and expected processed hash, and the real CLI formatter matched all three.
+This is retained synthetic namespace and collision evidence, not natural-voice
+or field-delivery proof.
+
+Receipt:
+`docs/verification/2026-07-30-spoken-replacement-command.md`.
 
 ## Public checkpoint cadence
 

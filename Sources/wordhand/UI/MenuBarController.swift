@@ -19,6 +19,7 @@ final class MenuBarController {
     private let onCorrectLast: () -> Void
     private let onImproveLast: () -> Void
     private let onUndoLast: () -> Void
+    private var noticeGeneration = 0
 
     init(
         modelID: String,
@@ -125,18 +126,24 @@ final class MenuBarController {
     }
 
     func setRecording(_ recording: Bool) {
+        if recording {
+            clearNotice()
+        }
         stateLabel.title = recording ? "● recording" : Self.idleTitle(for: settings)
     }
 
     func setLoadingModel(_ modelID: String) {
+        clearNotice()
         stateLabel.title = "loading \(modelID)…"
     }
 
     func setReady() {
+        clearNotice()
         stateLabel.title = Self.idleTitle(for: settings)
     }
 
     func setTranscribing() {
+        clearNotice()
         stateLabel.title = "transcribing…"
     }
 
@@ -153,9 +160,28 @@ final class MenuBarController {
         stateLabel.title = message
     }
 
+    func setNotice(_ message: String) {
+        noticeGeneration += 1
+        stateLabel.title = message
+        statusItem.button?.title = "  \(message)"
+        statusItem.button?.toolTip = message
+        let generation = noticeGeneration
+        DispatchQueue.main.asyncAfter(deadline: .now() + 4) { [weak self] in
+            guard self?.noticeGeneration == generation else { return }
+            self?.clearNotice()
+        }
+    }
+
     func updateSettings(_ settings: AppSettings) {
+        clearNotice()
         self.settings = settings
         stateLabel.title = Self.idleTitle(for: settings)
+    }
+
+    var visibleNoticeText: String? {
+        let title = statusItem.button?.title
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return title?.isEmpty == false ? title : nil
     }
 
     private func configureButton(recording: Bool) {
@@ -164,6 +190,12 @@ final class MenuBarController {
         image?.isTemplate = true
         button.image = image
         button.toolTip = "Wordhand"
+    }
+
+    private func clearNotice() {
+        noticeGeneration += 1
+        statusItem.button?.title = ""
+        statusItem.button?.toolTip = "Wordhand"
     }
 
     // The Wordhand W plus text cursor, simplified for a monochrome 18pt menu icon.

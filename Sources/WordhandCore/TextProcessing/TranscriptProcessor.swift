@@ -1,6 +1,6 @@
 import Foundation
 
-public struct TranscriptProcessor: TranscriptProcessing, Sendable {
+public struct TranscriptProcessor: ReportingTranscriptProcessing, Sendable {
     private let dictionary: DictionaryMatcher
     private let formattingProfile: TranscriptFormattingProfile?
 
@@ -13,20 +13,47 @@ public struct TranscriptProcessor: TranscriptProcessing, Sendable {
     }
 
     public func process(_ text: String, target: TranscriptTarget = .unknown) async -> String {
+        await processResult(text, target: target).text
+    }
+
+    public func processResult(
+        _ text: String,
+        target: TranscriptTarget = .unknown
+    ) async -> TranscriptProcessingResult {
         let withoutFillers = Self.removeSpeechFillers(
             dictionary.apply(to: Self.sanitize(text))
         )
         let cleaned = SpokenCorrectionEngine.apply(to: withoutFillers)
-        let layout = SpokenLayoutCommandEngine.protect(cleaned)
+        let replacement = SpokenReplacementCommandEngine.apply(to: cleaned)
+        if case .rejected = replacement.outcome {
+            return TranscriptProcessingResult(
+                text: replacement.text,
+                notices: notices(for: replacement.outcome)
+            )
+        }
+        let layout = SpokenLayoutCommandEngine.protect(replacement.text)
         guard let formattingProfile else {
-            return layout.render(layout.protectedText)
+            return TranscriptProcessingResult(
+                text: layout.render(layout.protectedText),
+                notices: notices(for: replacement.outcome)
+            )
         }
         let formatted: String
         switch formattingProfile {
         case .casual, .formatted, .professional, .aiCommunication:
             formatted = Self.polish(layout.protectedText)
         }
-        return layout.render(formatted)
+        return TranscriptProcessingResult(
+            text: layout.render(formatted),
+            notices: notices(for: replacement.outcome)
+        )
+    }
+
+    private func notices(
+        for outcome: SpokenReplacementCommandOutcome
+    ) -> [TranscriptProcessingNotice] {
+        guard case .rejected(let reason) = outcome else { return [] }
+        return [.spokenReplacementRejected(reason)]
     }
 
     public static func sanitize(_ text: String) -> String {
