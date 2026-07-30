@@ -375,7 +375,7 @@ Receipts: `docs/verification/2026-07-28-decode-vocabulary.md` and
 
 ### Transcript integrity regression checkpoint
 
-Status: complete for the reported Ghostty regressions. Development build 15 is
+Status: complete for the reported Ghostty regressions. Development build 16 is
 installed; broader target-specific compatibility gates remain in their phases.
 
 - [x] Detect a truncated vocabulary term leaking at the beginning of a
@@ -413,6 +413,9 @@ installed; broader target-specific compatibility gates remain in their phases.
 - [x] Replay the exact retained 28.79-second cutoff recording five times through
   both build 15 and the new path. All ten runs retained the known final sentence;
   median transcription time improved from 5.681 to 4.542 seconds.
+- [x] Install development build 16 with the stable local signing identity,
+  confirm all three privacy permissions plus Control-Space remain ready, and
+  relaunch the installed app without exercising microphone or insertion paths.
 
 Receipts: `docs/verification/2026-07-29-transcription-integrity-regressions.md`
 and `docs/verification/2026-07-29-tail-recovery-speed.md`.

@@ -116,8 +116,44 @@ Observed:
 Build complete!
 ```
 
-## Remaining live receipt
+## Installed development build
 
-This change is verified through the real local model and the exact retained
-failure audio, but it is not installed during this pass and no live microphone
-or insertion flow was exercised while Aaron was working.
+Exact installation command:
+
+```sh
+WORDHAND_SAFE=1 WORDHAND_BUILD_NUMBER=16 ./scripts/install-app.sh
+```
+
+Observed:
+
+```text
+Version 0.1.0 (16)
+Channel: development
+Bundle identifier: com.valyou.wordhand.dev
+Signature: Wordhand Local Signing
+Installed /Applications/Wordhand Dev.app
+```
+
+The installer preserved build 15 as a non-launchable `.app-backup` under
+Wordhand's Application Support directory and did not register a login item.
+Because `WORDHAND_SAFE=1` deliberately neutralizes runtime setup, the installed
+app was then opened normally:
+
+```sh
+/usr/bin/open '/Applications/Wordhand Dev.app'
+```
+
+The installed process remained alive at its canonical path. Its bundle reported
+build 16, `com.valyou.wordhand.dev`, and signing authority
+`Wordhand Local Signing`. The installed doctor observed:
+
+```text
+microphone: ok
+accessibility: ok
+input monitoring: ok
+Control-Space: ok
+```
+
+No live microphone, transcription, hotkey gesture, clipboard mutation, or text
+insertion was exercised while Aaron was working. The exact retained failure
+audio remains the runtime transcription receipt for this change.
