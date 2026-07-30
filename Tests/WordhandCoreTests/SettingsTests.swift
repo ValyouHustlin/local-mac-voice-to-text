@@ -63,6 +63,12 @@ struct SettingsTests {
     }
 
     @Test
+    func dailyRuntimeKeepsFullBufferTranscriptionAuthoritative() {
+        #expect(!ProcessingPerformanceMode.adaptive.enablesRollingTranscription)
+        #expect(!ProcessingPerformanceMode.maximum.enablesRollingTranscription)
+    }
+
+    @Test
     func rejectsUnknownModelAndInvalidRetention() {
         do {
             _ = try AppSettings(modelID: "missing").validated()

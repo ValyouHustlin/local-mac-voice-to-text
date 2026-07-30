@@ -124,7 +124,8 @@ Verified by source inspection and dated receipts through 2026-07-29:
   `wait, no`, `I meant`, `make that`, and `scratch that`, while preserving
   ordinary semantic uses of `no` and `I meant`;
 - Adaptive and Maximum processing modes; Maximum keeps the local formatter
-  prepared and incrementally transcribes ordered audio chunks while recording;
+  prepared while both daily-runtime modes use authoritative full-buffer
+  transcription;
 - duplicate-process prevention, a 10-minute recording safety stop, active
   Whisper cancellation, and rewrite validation that rejects dropped numbers,
   technical tokens, or negated constraints;
@@ -327,15 +328,16 @@ identity used by macOS privacy permissions.
 Explicit self-corrections are resolved deterministically before the selected
 writing style runs. Maximum processing mode prewarms the matching local
 Foundation Models session at startup and recording start, while bounding the
-prepared-session cache. It also enables ordered rolling Whisper decoding every
-two seconds over a maximum 20-second working window. Two trailing segments
-remain revisable so a phrase such as `Friday—wait, no, Monday` is not committed
-prematurely. The complete audio buffer is always authoritative: after any
-in-flight rolling decode settles, release re-decodes the full captured buffer
-with silence-aware chunking. Rolling composites are never inserted. This adds
-one final full-buffer pass but removes the boundary math that lost the end of a
+prepared-session cache. The rolling Whisper engine remains available to the
+offline benchmark, where it decodes ordered audio every two seconds over a
+maximum 20-second working window and keeps two trailing segments revisable. It
+is disabled in the daily runtime because its composite cannot be trusted and
+discarding that composite before a full decode only adds release latency. Both
+runtime modes therefore decode the complete captured buffer once with
+silence-aware chunking. This removes the boundary math that lost the end of a
 48.69-second natural dictation and leaked decoder control tokens in an offline
-replay. Quality takes priority over the lower-latency unsafe merge.
+replay without making users wait for unused rolling work. Quality takes
+priority over the unsafe merge, and speed comes from avoiding redundant work.
 Adaptive remains the public default and retains the lower-work single batch
 path. See `docs/verification/2026-07-29-streaming-tail-overlay.md`.
 
@@ -383,17 +385,16 @@ field, or a loaded Whisper model to run its tests.
 shortcut event
   -> recording coordinator
   -> audio capture
-       in Maximum mode, forward chunks through one ordered local stream
+       daily runtime retains one complete captured buffer
+       offline rolling benchmark forwards chunks through one ordered stream
   -> local transcriber
        snapshot enabled canonical dictionary spellings
        prioritize recent user corrections; cap prompt at 24 terms
        tokenize them into WhisperKit promptTokens
        guard forced prompt prefill from premature completion
        decode locally with Core ML
-       in Maximum mode, stabilize repeated rolling results
-       keep the last two segments revisable
-       finalize only the uncommitted tail at release
-       fall back to the complete captured buffer on preview failure
+       offline rolling benchmark stabilizes repeated rolling results
+       daily runtime decodes the complete captured buffer once at release
   -> transcript processor
        sanitize model tokens
        apply dictionary corrections as a fallback

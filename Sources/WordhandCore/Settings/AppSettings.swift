@@ -9,6 +9,13 @@ public enum InsertionMode: String, Codable, CaseIterable, Sendable {
 public enum ProcessingPerformanceMode: String, Codable, CaseIterable, Sendable {
     case adaptive
     case maximum
+
+    /// Rolling Whisper windows are retained as an offline experiment until
+    /// their result can be finalized without dropped boundary speech. Both
+    /// daily-runtime modes use the faster authoritative full-buffer path.
+    public var enablesRollingTranscription: Bool {
+        false
+    }
 }
 
 public struct HotkeyBinding: Codable, Equatable, Sendable {

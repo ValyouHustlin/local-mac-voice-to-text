@@ -22,10 +22,11 @@ segment timestamps are local to each decode window. Treating them as a lossless
 audio cursor can skip speech at a boundary. The same path also emitted raw
 Whisper control tokens during the controlled replay below.
 
-Rolling decodes may continue while recording, but their composite is no longer
-authoritative. On release, Wordhand lets any in-flight preview settle and
-decodes the complete captured buffer with silence-aware chunking. Only that
-full-buffer result can proceed to formatting, history, and insertion.
+The rolling engine remains available to the offline benchmark, but is disabled
+in the daily runtime. Its composite is not authoritative, and waiting for
+unused rolling work before a complete decode made release slower. Both runtime
+modes now decode the complete captured buffer once with silence-aware chunking.
+Only that full-buffer result can proceed to formatting, history, and insertion.
 
 Paste delivery now gives the first pasteboard transaction 40 milliseconds to
 settle, posts an explicit Command-down, V-down, V-up, Command-up sequence, and
@@ -71,6 +72,25 @@ This receipt proves full synthetic-fixture tail retention through the same
 rolling/finalization code. It does not claim a new natural four-minute
 microphone result.
 
+The exact installed build 9 repeated the safe rolling benchmark in 8.916
+seconds from stop to final. That measured penalty is why runtime build 10 no
+longer launches rolling preview work. The rolling CLI remains a regression
+reproducer, not a shipping latency claim.
+
+The source for build 10 then decoded the same complete fixture through the
+shipping full-buffer path:
+
+```text
+path: full buffer
+audio: 61.72s
+transcription: 4.763s
+real-time factor: 0.077x
+```
+
+The final clause remained complete. Removing redundant preview work reduced
+the controlled release wait by 4.153 seconds, or 46.6 percent, compared with
+the exact installed build 9 rolling replay.
+
 ## Overlay receipt
 
 Command:
@@ -101,7 +121,7 @@ an appropriate repository artifact.
 Observed:
 
 ```text
-Test run with 113 tests in 14 suites passed
+Test run with 114 tests in 14 suites passed
 ```
 
 ```sh

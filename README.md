@@ -33,7 +33,7 @@ and inserts the result into ordinary Mac apps.
 | **Ready after login** | The installed app can register as a native macOS login item. Its interface and shortcut become available immediately while the selected speech model warms in the background. |
 | **Accuracy-first local model** | Optimized Whisper Large v3 is the default on capable Macs. Balanced and smaller Whisper models remain selectable. |
 | **Natural self-corrections** | Say “wait, no,” “I meant,” “make that,” or “scratch that.” Wordhand removes the abandoned wording locally before formatting. |
-| **Maximum Performance preview** | On high-end Apple silicon, opt into formatter prewarming and rolling local transcription while you speak. Adaptive remains the efficient default; attended latency verification is still open. |
+| **Maximum Performance preview** | On high-end Apple silicon, opt into formatter prewarming while you speak. Final transcription uses the complete audio buffer in every mode so speed never comes from risking dropped words. |
 | **Reliable insertion** | Paste-first insertion works across native, browser, and Electron targets while restoring the previous rich clipboard. Direct typing and copy-only modes are available. |
 | **Flow-focused feedback** | Quiet start/stop tones, an expressive live waveform, a display-following recording control, and one-click cancellation keep dictation legible without demanding attention. |
 | **Four writing styles** | Choose Casual, Formatted, Professional, or AI Communication. AI mode keeps connected reasoning as prose and uses lists, steps, or lightweight sections only when the content calls for them. The three richer modes use Apple’s on-device model with meaning-preservation checks and safe local fallback. |

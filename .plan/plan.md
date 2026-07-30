@@ -227,7 +227,8 @@ Current ranking:
 
 1. [x] conservative auto-formatting and filler-word cleanup;
 2. [x] explicit spoken self-corrections plus an accuracy-first Maximum
-   Performance mode with rolling transcription and formatter prewarming;
+   Performance mode with formatter prewarming and authoritative full-buffer
+   transcription;
 3. onboarding and model-download recovery; permission repair now distinguishes
    Microphone, Input Monitoring, and Accessibility, while the broader
    fresh-account onboarding flow remains;
@@ -363,9 +364,10 @@ Receipt: `docs/verification/2026-07-28-global-input-safety.md`.
 
 ### Accuracy and latency checkpoint
 
-Status: complete for the model/capture upgrade. Maximum-mode rolling
-transcription is implemented and isolated-test verified; its attended
-microphone latency receipt remains open.
+Status: complete for the model/capture upgrade. The rolling engine is retained
+as an isolated offline experiment, but daily runtime uses the authoritative
+single full-buffer path after a natural dictation exposed dropped boundary
+speech. Its attended microphone latency receipt remains open.
 
 - [x] Make optimized Whisper Large v3 (626 MB) the accuracy-first default.
 - [x] Add a repeatable same-audio model benchmark command.
@@ -374,8 +376,8 @@ microphone latency receipt remains open.
 - [x] Retain an 80 ms capture tail after shortcut release.
 - [x] Benchmark Base and Large v3 on the same 11.00-second fixture.
 - [x] Keep Adaptive as the public default single-batch path.
-- [x] Add a user-selected Maximum mode that prewarms the local formatter and
-  incrementally decodes ordered audio chunks every two seconds.
+- [x] Add a user-selected Maximum mode that prewarms the local formatter; its
+  rolling experiment decodes ordered audio chunks every two seconds offline.
 - [x] Stabilize successive rolling results while keeping the last two segments
   revisable for corrections.
 - [x] Bound the working decode window at 20 seconds and retain the complete
@@ -384,6 +386,11 @@ microphone latency receipt remains open.
   mode release; never insert the rolling window composite.
 - [x] Add a no-microphone `models benchmark --streaming` replay path that
   exercises rolling decode plus release finalization against a local file.
+- [x] Disable rolling previews in the daily runtime after measuring that
+  discarding them for an authoritative full decode only increased release
+  latency.
+- [ ] Re-enable live partial decoding only after it produces visible partial
+  value and passes a boundary-safe finalization oracle.
 - [x] Enable WhisperKit silence-aware chunking for recordings longer than one
   model window so long batch and streaming-fallback decodes split at pauses and
   use the Mac's concurrent decode workers.

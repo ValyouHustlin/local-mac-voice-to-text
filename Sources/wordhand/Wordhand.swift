@@ -235,7 +235,7 @@ struct Run: ParsableCommand {
                 inserter: inserter,
                 history: historyStore,
                 insertionMode: settings.insertionMode,
-                streamingEnabled: settings.performanceMode == .maximum,
+                streamingEnabled: settings.performanceMode.enablesRollingTranscription,
                 language: chosenModel.languages.first,
                 audioSampleRate: AudioCapture.targetSampleRate,
                 currentTarget: currentTranscriptTarget
@@ -260,7 +260,9 @@ struct Run: ParsableCommand {
             settingsController.onSettingsChange = { updated in
                 monitor.updateBindings(updated.hotkeys)
                 coordinator.updateInsertionMode(updated.insertionMode)
-                coordinator.updateStreamingEnabled(updated.performanceMode == .maximum)
+                coordinator.updateStreamingEnabled(
+                    updated.performanceMode.enablesRollingTranscription
+                )
                 processor.update(
                     profile: updated.formattingProfile,
                     performanceMode: updated.performanceMode
