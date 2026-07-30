@@ -225,7 +225,9 @@ struct DictionaryStoreTests {
         #expect(source.terms() == ["Valyou", "Blumira"])
         #expect(
             source.prompt()
-                == "Vocabulary: Blumira, Valyou. Preferred spellings: Blumira, Valyou."
+                == """
+                Vocabulary: Blumira, Valyou. Pronunciation guide: value is written Valyou; blue mirror is written Blumira; val you is written valyou. Preferred spellings: Blumira, Valyou.
+                """
         )
 
         source.update(entries: [
@@ -233,7 +235,9 @@ struct DictionaryStoreTests {
         ])
         #expect(
             source.prompt()
-                == "Vocabulary: Wordhand. Preferred spellings: Wordhand."
+                == """
+                Vocabulary: Wordhand. Pronunciation guide: word hand is written Wordhand. Preferred spellings: Wordhand.
+                """
         )
     }
 
@@ -265,8 +269,46 @@ struct DictionaryStoreTests {
         #expect(
             source.prompt()
                 == """
-                Vocabulary: Valyou, OlderTerm, NewestTerm. Preferred spellings: Valyou, OlderTerm, NewestTerm.
+                Vocabulary: Valyou, OlderTerm, NewestTerm. Pronunciation guide: new correction is written NewestTerm; older correction is written OlderTerm. Preferred spellings: Valyou, OlderTerm, NewestTerm.
                 """
+        )
+    }
+
+    @Test
+    func vocabularyPromptConditionsOnEditablePronunciationAliases() async {
+        let timestamp = Date(timeIntervalSince1970: 1_000)
+        let entries = [
+            DictionaryEntry(
+                spokenForm: "Aaron Brown Moore",
+                replacement: "Aaron Browne-Moore",
+                updatedAt: timestamp.addingTimeInterval(2)
+            ),
+            DictionaryEntry(
+                spokenForm: "tee mux",
+                replacement: "tmux",
+                updatedAt: timestamp.addingTimeInterval(1)
+            ),
+            DictionaryEntry(
+                spokenForm: "Wordhand",
+                replacement: "Wordhand",
+                origin: .starterVocabulary,
+                starterVocabularyOrder: 0,
+                createdAt: timestamp,
+                updatedAt: timestamp
+            ),
+        ]
+        let source = DictionaryVocabularySource(entries: entries)
+
+        #expect(
+            source.prompt()
+                == """
+                Vocabulary: Wordhand, tmux, Aaron Browne-Moore. Pronunciation guide: Aaron Brown Moore is written Aaron Browne-Moore; tee mux is written tmux. Preferred spellings: Wordhand, tmux, Aaron Browne-Moore.
+                """
+        )
+        let fallback = MutableTranscriptProcessor(dictionaryEntries: entries)
+        #expect(
+            await fallback.process("Aaron Brown Moore uses tee mux.")
+                == "Aaron Browne-Moore uses tmux."
         )
     }
 

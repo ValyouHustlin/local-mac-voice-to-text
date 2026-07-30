@@ -110,7 +110,10 @@ does not silently return at the same seed version. Dictionary files are
 owner-readable only (`0600`), as are settings and history; their containing
 directory is owner-accessible only (`0700`). Wordhand prioritizes recent user
 corrections and uses at most 24 canonical terms per decode so a large dictionary
-does not drown out the terms that matter now.
+does not drown out the terms that matter now. Editable pronunciation variants
+also tell the recognizer that, for example, a commonly heard phrase is written
+with a particular canonical spelling; the same entry remains a deterministic
+post-processing fallback.
 
 If macOS uses `Control-Space` to switch input sources, disable **Select the
 previous input source** under **System Settings > Keyboard > Keyboard
@@ -125,6 +128,7 @@ wordhand doctor                          # diagnose permissions and shortcut con
 wordhand models list                     # list local transcription models
 wordhand models download <id>            # download a model before first use
 wordhand models benchmark <audio> --model <id>
+wordhand dictionary add --heard-as "tee mux" --replace-with "tmux"
 wordhand format "dictated text" --style professional
 wordhand install --launch-at-login       # register Wordhand at login
 wordhand install --uninstall             # remove launch-at-login registration

@@ -298,10 +298,16 @@ gesture remains.
 - [x] Force local dictionary files to owner-only `0600` permissions.
 - [x] Pass the five-term identical-audio before/after benchmark (`2/5` to
   `5/5` exact terms).
+- [x] Condition decode-time recognition on editable pronunciation aliases, not
+  canonical spellings alone, while retaining the same rows as post-hoc
+  fallback corrections.
+- [x] Pass an identical-audio pronunciation benchmark for
+  `Aaron Browne-Moore` and `tmux` (`2/4` to `4/4` exact occurrences).
 - [ ] Drive a new correction through the live Dictionary UI, then observe the
   next transcription use it.
 
-Receipt: `docs/verification/2026-07-28-decode-vocabulary.md`.
+Receipts: `docs/verification/2026-07-28-decode-vocabulary.md` and
+`docs/verification/2026-07-29-pronunciation-aliases.md`.
 
 ### Application hardening checkpoint
 

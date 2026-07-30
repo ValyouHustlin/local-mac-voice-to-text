@@ -15,6 +15,7 @@ struct Wordhand: ParsableCommand {
             Setup.self,
             Doctor.self,
             Models.self,
+            DictionaryCommands.self,
             Install.self,
         ],
         defaultSubcommand: Run.self
@@ -604,6 +605,12 @@ struct Models: ParsableCommand {
         )
         var defaultVocabulary: Bool = false
 
+        @Flag(
+            name: .long,
+            help: "Condition decoding with the current user's local editable dictionary."
+        )
+        var userDictionary: Bool = false
+
         @Option(
             name: .long,
             help: "Comma-separated vocabulary terms for a controlled conditioning benchmark."
@@ -615,6 +622,18 @@ struct Models: ParsableCommand {
             guard let modelID, let selectedModel = ModelRegistry.find(modelID) else {
                 FileHandle.standardError.write(Data("unknown model: \(model ?? "none")\n".utf8))
                 throw ExitCode(1)
+            }
+
+            let vocabularySelectionCount = [
+                defaultVocabulary,
+                userDictionary,
+                vocabularyTerms != nil,
+            ].filter(\.self).count
+            guard vocabularySelectionCount <= 1 else {
+                throw ValidationError(
+                    "Choose only one vocabulary source: --default-vocabulary, "
+                        + "--user-dictionary, or --vocabulary-terms."
+                )
             }
 
             let expandedPath = NSString(string: audioPath).expandingTildeInPath
@@ -646,6 +665,11 @@ struct Models: ParsableCommand {
                         updatedAt: installedAt
                     )
                 })
+            } else if userDictionary {
+                let document = try DictionaryStore(
+                    fileURL: DictionaryStore.defaultFileURL()
+                ).installBundledDefaults()
+                vocabulary = DictionaryVocabularySource(entries: document.entries)
             } else {
                 vocabulary = DictionaryVocabularySource()
             }

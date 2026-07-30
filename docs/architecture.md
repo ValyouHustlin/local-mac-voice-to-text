@@ -152,7 +152,7 @@ receipts may promote latency or compatibility claims.
 
 P0 ground truth and P1 foundation are complete as of 2026-07-28. The package
 now has `WordhandCore`, protocol-backed coordinator seams, versioned settings,
-110 deterministic tests across core and macOS adapter targets, and macOS CI.
+111 deterministic tests across core and macOS adapter targets, and macOS CI.
 
 The daily-driver bundle is built by `scripts/build-app.sh` and installed by
 `scripts/install-app.sh`. The installer prefers `/Applications`, falls back to
@@ -200,6 +200,18 @@ transcript context rather than as an instruction; a live `Valyou -> value`
 miss and identical controlled fixture confirmed that proximity plus one bounded
 reinforcement was stronger than a leading vocabulary list. Wordhand does not
 install a broad `value -> Valyou` post-hoc replacement.
+
+When an editable entry's spoken form differs from its canonical replacement,
+Wordhand also writes up to eight recent pronunciation associations into that
+same local prior-transcript context. One entry therefore drives both recognition
+paths: decode-time conditioning first and deterministic `spoken form ->
+replacement` matching afterward if decoding still emits the alias. Multiple
+pronunciations use multiple editable rows with the same canonical replacement;
+the persistence schema does not need a special-case name model. The associations
+are constructed only from the local dictionary and never leave the process.
+An identical silent audio fixture moved `Aaron Browne-Moore` and `tmux` from
+two of four exact occurrences to four of four. See
+`docs/verification/2026-07-29-pronunciation-aliases.md`.
 
 WhisperKit exposes `DecodingOptions.promptTokens`, but its 1.0 decoder can honor
 an end-of-text sample while it is still forcing those prompt tokens. Large v3
@@ -444,7 +456,7 @@ model.
 
 Dictionary entries are local, ordered, and deterministic:
 
-- spoken form;
+- spoken form or editable pronunciation variant;
 - replacement text;
 - match mode such as word, phrase, or case-insensitive;
 - enabled state;
@@ -455,7 +467,8 @@ boundaries. Replacements must not recursively reprocess their own output.
 
 The UI includes normal add/edit/delete management and a one-gesture action that
 uses the most recent transcript to create a correction while the error is still
-fresh.
+fresh. The same rows supply local decode-time pronunciation conditioning and
+post-decode replacement fallback.
 
 ## Transcript history
 

@@ -61,7 +61,7 @@ final class DictionaryController {
         caseCheckbox.state = entry?.isCaseSensitive == true ? .on : .off
 
         let form = NSGridView(views: [
-            [NSTextField(labelWithString: "Heard as"), spokenField],
+            [NSTextField(labelWithString: "Pronounced / heard as"), spokenField],
             [NSTextField(labelWithString: "Replace with"), replacementField],
             [NSTextField(labelWithString: "Match"), modePicker],
             [NSView(), caseCheckbox],
@@ -232,7 +232,7 @@ private final class DictionaryWindowController: NSWindowController, NSTableViewD
         guard let content = window?.contentView else { return }
 
         let heard = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("heard"))
-        heard.title = "Heard as"
+        heard.title = "Pronounced / heard as"
         heard.minWidth = 180
         let replacement = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("replacement"))
         replacement.title = "Replace with"
@@ -259,7 +259,8 @@ private final class DictionaryWindowController: NSWindowController, NSTableViewD
         buttons.spacing = 8
 
         let heading = NSTextField(wrappingLabelWithString:
-            "Teach Wordhand the names, acronyms, and technical terms it mishears."
+            "Teach Wordhand spellings and pronunciation variants for names, acronyms, "
+                + "and technical terms."
         )
         heading.font = .systemFont(ofSize: 13)
         heading.textColor = .secondaryLabelColor
