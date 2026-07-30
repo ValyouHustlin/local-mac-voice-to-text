@@ -22,6 +22,11 @@ public enum DictationState: Equatable, Sendable {
     case failed(DictationFailure)
 }
 
+public enum RecordingEndIntent: Equatable, Sendable {
+    case finish
+    case cancel
+}
+
 public protocol AudioCapturing: AnyObject {
     func start() throws
     func stop() async -> [Float]
@@ -121,6 +126,8 @@ public final class DictationCoordinator {
     }
 
     public var onStateChange: ((DictationState) -> Void)?
+    public var onRecordingStartAccepted: (() -> Void)?
+    public var onRecordingStartRejected: (() -> Void)?
     public var onCapture: (([Float]) -> Void)?
     public var onTranscript: ((String, TimeInterval) -> Void)?
     public var onQualityAudio: ((QualityAudioSample) -> Void)?
@@ -151,6 +158,7 @@ public final class DictationCoordinator {
     private let sleep: @Sendable (UInt64) async throws -> Void
     private var activeOperationID: UUID?
     private var isCaptureStopping = false
+    private var pendingRecordingEndIntent: RecordingEndIntent?
     private var recordingLimitTask: Task<Void, Never>?
     private var activeStreamingCapture: (any StreamingAudioCapturing)?
     private var activeStreamingTranscriber: (any StreamingTranscribing)?
@@ -210,6 +218,8 @@ public final class DictationCoordinator {
                 state = .idle
             }
             guard state == .idle else { return }
+            pendingRecordingEndIntent = nil
+            onRecordingStartAccepted?()
             let operationID = UUID()
             do {
                 try (capture as? any RecoveryManagedAudioCapturing)?.prepareRecovery(
@@ -285,6 +295,8 @@ public final class DictationCoordinator {
                     name: "capture.failed",
                     attributes: ["reason": String(describing: error)]
                 )
+                pendingRecordingEndIntent = nil
+                onRecordingStartRejected?()
                 state = .failed(.capture(String(describing: error)))
             }
 
@@ -296,6 +308,7 @@ public final class DictationCoordinator {
             let operationStartedAt = activeOperationStartedAt
             self.recordingStartedAt = nil
             cancelRecordingLimit()
+            pendingRecordingEndIntent = .finish
             state = .transcribing
             isCaptureStopping = true
             let samples = await capture.stop()
@@ -653,6 +666,7 @@ public final class DictationCoordinator {
     }
 
     public func cancelCurrent() async {
+        markCancellationIntent()
         switch state {
         case .recording:
             let operationID = activeOperationID
@@ -702,6 +716,21 @@ public final class DictationCoordinator {
         case .idle, .inserting, .failed:
             break
         }
+    }
+
+    public func markCancellationIntent() {
+        guard
+            state == .recording
+                || (state == .transcribing && isCaptureStopping)
+        else {
+            return
+        }
+        pendingRecordingEndIntent = .cancel
+    }
+
+    public func consumeRecordingEndIntent() -> RecordingEndIntent? {
+        defer { pendingRecordingEndIntent = nil }
+        return pendingRecordingEndIntent
     }
 
     public func resetFailure() {

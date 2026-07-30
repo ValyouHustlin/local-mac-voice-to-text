@@ -29,6 +29,96 @@ struct DictationCoordinatorTests {
     }
 
     @Test
+    func startAcceptanceFeedbackPrecedesCaptureStartup() async {
+        var events: [String] = []
+        let capture = FakeCapture(
+            samples: [0.1],
+            onStart: { events.append("capture-start") }
+        )
+        let coordinator = DictationCoordinator(
+            capture: capture,
+            transcriber: FakeTranscriber(result: "hello"),
+            processor: TranscriptProcessor(),
+            inserter: FakeInserter()
+        )
+        coordinator.onRecordingStartAccepted = {
+            events.append("start-feedback")
+        }
+
+        await coordinator.handle(.pressed)
+
+        #expect(events == ["start-feedback", "capture-start"])
+        #expect(coordinator.state == .recording)
+    }
+
+    @Test
+    func failedCaptureStartImmediatelyRejectsAcceptedFeedback() async {
+        var events: [String] = []
+        let capture = FakeCapture(
+            samples: [],
+            startError: FakeError.failure,
+            onStart: { events.append("capture-start") }
+        )
+        let coordinator = DictationCoordinator(
+            capture: capture,
+            transcriber: FakeTranscriber(result: "unused"),
+            processor: TranscriptProcessor(),
+            inserter: FakeInserter()
+        )
+        coordinator.onRecordingStartAccepted = {
+            events.append("start-feedback")
+        }
+        coordinator.onRecordingStartRejected = {
+            events.append("rejected-feedback")
+        }
+
+        await coordinator.handle(.pressed)
+
+        #expect(
+            events
+                == [
+                    "start-feedback",
+                    "capture-start",
+                    "rejected-feedback",
+                ]
+        )
+        #expect(coordinator.state == .failed(.capture("failure")))
+    }
+
+    @Test
+    func failedRecoveryPreparationRejectsFeedbackWithoutStartingCapture() async {
+        var events: [String] = []
+        let capture = FailingRecoveryPreparationCapture(
+            onPrepare: { events.append("recovery-prepare") },
+            onStart: { events.append("capture-start") }
+        )
+        let coordinator = DictationCoordinator(
+            capture: capture,
+            transcriber: FakeTranscriber(result: "unused"),
+            processor: TranscriptProcessor(),
+            inserter: FakeInserter()
+        )
+        coordinator.onRecordingStartAccepted = {
+            events.append("start-feedback")
+        }
+        coordinator.onRecordingStartRejected = {
+            events.append("rejected-feedback")
+        }
+
+        await coordinator.handle(.pressed)
+
+        #expect(
+            events
+                == [
+                    "start-feedback",
+                    "recovery-prepare",
+                    "rejected-feedback",
+                ]
+        )
+        #expect(coordinator.state == .failed(.capture("failure")))
+    }
+
+    @Test
     func emitsCorrelatedLifecycleDiagnosticsAndSavesTailOutcome() async throws {
         let history = FakeHistory()
         let transcriber = DiagnosticFakeTranscriber()
@@ -298,6 +388,74 @@ struct DictationCoordinatorTests {
 
         await coordinator.handle(.pressed)
         #expect(capture.startCount == 2)
+    }
+
+    @Test
+    func normalReleaseEmitsOneFinishIntentAtInputStop() async {
+        let capture = SuspendedCapture()
+        let coordinator = DictationCoordinator(
+            capture: capture,
+            transcriber: FakeTranscriber(result: "unused"),
+            processor: TranscriptProcessor(),
+            inserter: FakeInserter()
+        )
+        var stopCueCount = 0
+        capture.onInputStopped = {
+            if coordinator.consumeRecordingEndIntent() == .finish {
+                stopCueCount += 1
+            }
+        }
+
+        await coordinator.handle(.pressed)
+        let release = Task { await coordinator.handle(.released) }
+        await capture.waitUntilStopStarted()
+
+        #expect(stopCueCount == 0)
+
+        capture.finishStop()
+        await release.value
+
+        #expect(stopCueCount == 1)
+        capture.repeatInputStopped()
+        #expect(stopCueCount == 1)
+        #expect(coordinator.consumeRecordingEndIntent() == nil)
+    }
+
+    @Test
+    func cancellationDuringReleaseTailSuppressesNormalFinishIntent() async {
+        let capture = SuspendedCapture()
+        let transcriber = FakeTranscriber(result: "must not run")
+        let inserter = FakeInserter()
+        let coordinator = DictationCoordinator(
+            capture: capture,
+            transcriber: transcriber,
+            processor: TranscriptProcessor(),
+            inserter: inserter
+        )
+        var cancelCueCount = 0
+        var stopCueCount = 0
+        capture.onInputStopped = {
+            if coordinator.consumeRecordingEndIntent() == .finish {
+                stopCueCount += 1
+            }
+        }
+
+        await coordinator.handle(.pressed)
+        let release = Task { await coordinator.handle(.released) }
+        await capture.waitUntilStopStarted()
+
+        coordinator.markCancellationIntent()
+        cancelCueCount += 1
+        await coordinator.cancelCurrent()
+        capture.finishStop()
+        await release.value
+
+        #expect(cancelCueCount == 1)
+        #expect(stopCueCount == 0)
+        #expect(coordinator.state == .idle)
+        #expect(transcriber.callCount == 0)
+        #expect(inserter.insertions.isEmpty)
+        #expect(coordinator.consumeRecordingEndIntent() == nil)
     }
 
     @Test
@@ -681,14 +839,26 @@ private enum FakeError: Error {
 
 private final class FakeCapture: AudioCapturing {
     private let samples: [Float]
+    private let startError: Error?
+    private let onStart: (() -> Void)?
     private(set) var startCount = 0
     private(set) var stopCount = 0
 
-    init(samples: [Float]) {
+    init(
+        samples: [Float],
+        startError: Error? = nil,
+        onStart: (() -> Void)? = nil
+    ) {
         self.samples = samples
+        self.startError = startError
+        self.onStart = onStart
     }
 
     func start() throws {
+        onStart?()
+        if let startError {
+            throw startError
+        }
         startCount += 1
     }
 
@@ -696,6 +866,38 @@ private final class FakeCapture: AudioCapturing {
         stopCount += 1
         return samples
     }
+}
+
+private final class FailingRecoveryPreparationCapture:
+    RecoveryManagedAudioCapturing
+{
+    private let onPrepare: () -> Void
+    private let onStart: () -> Void
+
+    init(
+        onPrepare: @escaping () -> Void,
+        onStart: @escaping () -> Void
+    ) {
+        self.onPrepare = onPrepare
+        self.onStart = onStart
+    }
+
+    func prepareRecovery(id: UUID, createdAt: Date, sampleRate: Int) throws {
+        onPrepare()
+        throw FakeError.failure
+    }
+
+    func start() throws {
+        onStart()
+    }
+
+    func stop() async -> [Float] {
+        []
+    }
+
+    func markRecoveryCommitted(id: UUID) throws {}
+
+    func discardRecovery(id: UUID) throws {}
 }
 
 private final class FakeRecoveryCapture: RecoveryManagedAudioCapturing {
@@ -860,6 +1062,7 @@ private final class SuspendedCapture: AudioCapturing, @unchecked Sendable {
     private var stopStarted = false
     private var stopStartedContinuation: CheckedContinuation<Void, Never>?
     private var stopContinuation: CheckedContinuation<[Float], Never>?
+    var onInputStopped: (@MainActor () -> Void)?
 
     func start() throws {
         lock.withLock {
@@ -898,13 +1101,20 @@ private final class SuspendedCapture: AudioCapturing, @unchecked Sendable {
         }
     }
 
+    @MainActor
     func finishStop() {
+        onInputStopped?()
         let continuation = lock.withLock {
             let continuation = stopContinuation
             stopContinuation = nil
             return continuation
         }
         continuation?.resume(returning: [])
+    }
+
+    @MainActor
+    func repeatInputStopped() {
+        onInputStopped?()
     }
 }
 

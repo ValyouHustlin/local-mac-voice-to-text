@@ -7,6 +7,42 @@ import WordhandCore
 @Suite
 struct GlobalInputAdapterTests {
     @Test
+    @MainActor
+    func audioCuesArePreparedOnceBeforeTheirFirstPlayback() throws {
+        let factory = FakeAudioCueSoundFactory()
+        let player = AudioCuePlayer(
+            isEnabled: true,
+            playerFactory: factory.makeSound
+        )
+
+        #expect(factory.sounds.count == AudioCuePlayer.Cue.allCases.count)
+        #expect(factory.sounds.allSatisfy { $0.prepareCount == 1 })
+
+        #expect(player.play(.start))
+
+        let start = try #require(factory.sounds.first)
+        #expect(start.playCount == 1)
+        #expect(start.prepareCount == 1)
+        #expect(start.currentTime == 0)
+
+        #expect(player.play(.cancel))
+
+        #expect(start.pauseCount == 1)
+        #expect(start.currentTime == 0)
+    }
+
+    @Test
+    @MainActor
+    func overlayCancelControlKeepsSmallGlyphWithLargerHitTarget() {
+        #expect(RecordingOverlay.cancelIconSize == 10)
+        #expect(RecordingOverlay.cancelHitTargetSize == 28)
+        #expect(
+            RecordingOverlay.cancelHitTargetSize
+                > RecordingOverlay.cancelIconSize * 2
+        )
+    }
+
+    @Test
     func hotkeyMonitorUsesInjectedTapAndStopsItWithoutInstallingAGlobalTap() throws {
         let controller = FakeHotkeyTapController()
         let installer = FakeHotkeyTapInstaller(controller: controller)
@@ -949,6 +985,38 @@ private final class FakeHotkeyTapController: HotkeyTapControlling {
 
     func stop() {
         didStop = true
+    }
+}
+
+private final class FakeAudioCueSoundFactory {
+    private(set) var sounds: [FakeAudioCueSound] = []
+
+    func makeSound(_ data: Data) -> (any AudioCueSound)? {
+        let sound = FakeAudioCueSound()
+        sounds.append(sound)
+        return sound
+    }
+}
+
+private final class FakeAudioCueSound: AudioCueSound {
+    var currentTime: TimeInterval = 12
+    var volume: Float = 0
+    private(set) var prepareCount = 0
+    private(set) var playCount = 0
+    private(set) var pauseCount = 0
+
+    func prepareToPlay() -> Bool {
+        prepareCount += 1
+        return true
+    }
+
+    func play() -> Bool {
+        playCount += 1
+        return true
+    }
+
+    func pause() {
+        pauseCount += 1
     }
 }
 

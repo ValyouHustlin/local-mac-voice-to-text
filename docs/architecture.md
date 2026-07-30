@@ -132,6 +132,14 @@ Verified by source inspection and dated receipts through 2026-07-30:
 - quiet local start/stop/cancel cues, an expressive eleven-bar waveform, a
   pointer-display-following capsule overlay, a text-free rotating 3×3 processing
   indicator, and one-click cancellation that discards work before insertion;
+  cue audio is decoded and prepared at launch, accepted-start feedback is
+  requested before capture-engine startup, and finish feedback is requested
+  after the 80 ms tail is secured but before recovery-journal draining; any
+  failed recovery preparation or capture start immediately supersedes the
+  acknowledgement with the descending failure tone; cancellation retains only
+  its own descending cue and never emits the normal finish tone, including an
+  X click during the release-tail interval, because a one-shot explicit end
+  intent replaces ambiguous UI-state inference;
 - four explicit writing profiles: Casual, Formatted, Professional, and AI
   Communication; richer profiles use Apple's on-device system language model
   and fall back to deterministic cleanup when unavailable;
@@ -359,7 +367,9 @@ receipt before being promoted to a three-target runtime claim. See
 The recording surface is intentionally visually quiet: one shadowed matte
 capsule, an eleven-bar mint waveform, and a bare compact cancel glyph. The
 panel's second native shadow, status halo, divider, and outlined cancel control
-are removed. Transcription, local formatting, and insertion use one text-free
+are removed. The cancel glyph remains 10 points while its invisible click target
+is 28 × 28 points, giving more tolerance without adding visual weight.
+Transcription, local formatting, and insertion use one text-free
 3×3 rounded-square grid whose active perimeter square advances clockwise. The
 overlay follows the pointer between displays, so the state stays visible on the
 screen being used. Cancellation invalidates the current coordinator operation

@@ -455,7 +455,22 @@ struct Run: ParsableCommand {
         MainActor.assumeIsolated {
             app.delegate = appDelegate
             coordinator.onDiagnosticEvent = recordDiagnostic
+            capture.onInputStopped = { [weak coordinator] in
+                guard
+                    coordinator?.consumeRecordingEndIntent() == .finish
+                else {
+                    return
+                }
+                audioCues.play(.stop)
+            }
+            coordinator.onRecordingStartAccepted = {
+                audioCues.play(.start)
+            }
+            coordinator.onRecordingStartRejected = {
+                audioCues.play(.cancel)
+            }
             overlay?.onCancel = {
+                coordinator.markCancellationIntent()
                 audioCues.play(.cancel)
                 monitor.cancelActiveRecording()
                 Task { @MainActor in
@@ -596,7 +611,6 @@ struct Run: ParsableCommand {
                     menuBar.setRecording(false)
                 case .recording:
                     FileHandle.standardError.write(Data("● recording\n".utf8))
-                    audioCues.play(.start)
                     if let context = coordinator.activeProcessingContext {
                         Task {
                             await processor.prepare(context: context)
@@ -638,7 +652,6 @@ struct Run: ParsableCommand {
                 }
             }
             coordinator.onCapture = { samples in
-                audioCues.play(.stop)
                 let seconds = Double(samples.count) / AudioCapture.targetSampleRate
                 let rms = computeRMS(samples)
                 FileHandle.standardError.write(Data(

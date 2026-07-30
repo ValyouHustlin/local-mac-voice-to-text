@@ -552,6 +552,8 @@ Receipt: `docs/verification/2026-07-30-operational-diagnostics.md`.
 Status: complete for the second vertical slice.
 
 - [x] Add restrained local start, stop, and cancel tones with a Settings toggle.
+- [x] Pre-prepare cue audio, request accepted-start feedback before capture
+  startup, and decouple finish feedback from recovery-journal drain latency.
 - [x] Replace the passive six-bar indicator with an expressive eleven-bar
   waveform and a modern matte treatment.
 - [x] Remove stage text and the double-shadow/tech-border treatment; use a
@@ -560,6 +562,8 @@ Status: complete for the second vertical slice.
   playback, global event tap, or synthetic insertion.
 - [x] Keep the overlay on the display containing the pointer.
 - [x] Add an accessible X that discards capture/transcription before insertion.
+- [x] Increase the X click target from 20 × 20 to 28 × 28 points without
+  increasing the 10-point glyph.
 - [x] Reset tap-toggle routing on cancellation so the next tap starts normally.
 - [x] Replace inferred Automatic behavior with four explicit choices: Casual,
   Formatted, Professional, and AI Communication.

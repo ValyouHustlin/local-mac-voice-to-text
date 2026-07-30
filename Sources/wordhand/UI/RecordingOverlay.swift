@@ -4,6 +4,9 @@ import SwiftUI
 /// A non-activating recording control that stays on the display where the pointer lives.
 @MainActor
 final class RecordingOverlay {
+    static let cancelHitTargetSize: CGFloat = 28
+    static let cancelIconSize: CGFloat = 10
+
     enum State: Equatable {
         case hidden
         case recording
@@ -166,8 +169,16 @@ private struct OverlayPill: View {
             if model.state == .recording || model.state == .transcribing {
                 Button(action: onCancel) {
                     Image(systemName: "xmark")
-                        .font(.system(size: 10, weight: .semibold))
-                        .frame(width: 20, height: 20)
+                        .font(
+                            .system(
+                                size: RecordingOverlay.cancelIconSize,
+                                weight: .semibold
+                            )
+                        )
+                        .frame(
+                            width: RecordingOverlay.cancelHitTargetSize,
+                            height: RecordingOverlay.cancelHitTargetSize
+                        )
                 }
                 .buttonStyle(.plain)
                 .foregroundStyle(.white.opacity(0.58))

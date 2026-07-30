@@ -1,5 +1,21 @@
 import AppKit
+import AVFoundation
 import Foundation
+
+protocol AudioCueSound: AnyObject {
+    var currentTime: TimeInterval { get set }
+    var volume: Float { get set }
+
+    @discardableResult
+    func prepareToPlay() -> Bool
+
+    @discardableResult
+    func play() -> Bool
+
+    func pause()
+}
+
+extension AVAudioPlayer: AudioCueSound {}
 
 @MainActor
 final class AudioCuePlayer {
@@ -10,12 +26,19 @@ final class AudioCuePlayer {
     }
 
     var isEnabled: Bool
-    private var sounds: [Cue: NSSound] = [:]
+    private var sounds: [Cue: any AudioCueSound] = [:]
 
-    init(isEnabled: Bool) {
+    init(
+        isEnabled: Bool,
+        playerFactory: (Data) -> (any AudioCueSound)? = {
+            try? AVAudioPlayer(data: $0)
+        }
+    ) {
         self.isEnabled = isEnabled
         for cue in Cue.allCases {
-            if let sound = NSSound(data: Self.waveData(for: cue)) {
+            if let sound = playerFactory(Self.waveData(for: cue)) {
+                sound.volume = cue == .cancel ? 0.16 : 0.19
+                sound.prepareToPlay()
                 sounds[cue] = sound
             }
         }
@@ -24,9 +47,11 @@ final class AudioCuePlayer {
     @discardableResult
     func play(_ cue: Cue) -> Bool {
         guard isEnabled, let sound = sounds[cue] else { return false }
-        sound.stop()
+        for (otherCue, otherSound) in sounds where otherCue != cue {
+            otherSound.pause()
+            otherSound.currentTime = 0
+        }
         sound.currentTime = 0
-        sound.volume = cue == .cancel ? 0.16 : 0.19
         let didPlay = sound.play()
         if didPlay {
             FileHandle.standardError.write(Data("sound cue: \(cue)\n".utf8))

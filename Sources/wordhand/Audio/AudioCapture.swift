@@ -31,6 +31,9 @@ final class AudioCapture: StreamingAudioCapturing, RecoveryManagedAudioCapturing
     /// Called for every audio buffer with the buffer's RMS level (0…~1).
     /// Invoked on an arbitrary thread; hop to main if you touch UI.
     var onLevel: ((Float) -> Void)?
+    /// Called after the input tap is stopped, before recovery writes drain.
+    /// This keeps finish feedback independent from journal I/O latency.
+    var onInputStopped: (@MainActor () -> Void)?
 
     init(
         recoveryJournal: CrashSafeCaptureJournal = CrashSafeCaptureJournal()
@@ -117,6 +120,7 @@ final class AudioCapture: StreamingAudioCapturing, RecoveryManagedAudioCapturing
         engine.stop()
         engine.inputNode.removeTap(onBus: 0)
         isRecording = false
+        await onInputStopped?()
 
         let captured = lock.withLock {
             acceptsRecoveryChunks = false
