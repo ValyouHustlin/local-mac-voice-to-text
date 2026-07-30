@@ -138,6 +138,10 @@ Verified by source inspection and dated receipts through 2026-07-30:
 - deterministic spoken-repair handling for explicit phrases such as
   `wait, no`, `I meant`, `make that`, and `scratch that`, while preserving
   ordinary semantic uses of `no` and `I meant`;
+- explicit `command new line` and `command new paragraph` commands only when
+  they occupy a complete punctuation-delimited clause between dictated
+  content; unprefixed, leading, trailing, quoted, or structurally ambiguous
+  uses remain literal;
 - Adaptive and Maximum processing modes; Maximum keeps the local formatter
   prepared while both daily-runtime modes use authoritative full-buffer
   transcription;
@@ -808,6 +812,18 @@ Initial order:
    and uncertainty, retry conservatively once, then use safe local fallback;
 8. interpret explicitly supported voice commands;
 9. produce the final transcript stored in history.
+
+Layout commands are protected before local style formatting with collision-free
+opaque tokens plus the nearest words on both sides as structural anchors. A
+formatted result is accepted only when every token survives exactly once, in
+order, in its anchored segment, with no invented token. Missing, duplicated,
+reordered, moved, or invented tokens force the deterministic protected-source
+fallback, so formatter fluency cannot drop or relocate a requested boundary or
+expose an internal marker. Restoration changes whitespace and capitalization
+only at the exact token boundary: it removes a decoder separator comma, emits
+one newline for `command new line` or two for `command new paragraph`, and
+capitalizes the first English letter after that break. Formatter-created
+whitespace elsewhere is returned unchanged.
 
 The raw model output may be retained inside the same local history record for
 debugging and future reprocessing. Nothing in this pipeline may call a remote

@@ -17,11 +17,16 @@ public struct TranscriptProcessor: TranscriptProcessing, Sendable {
             dictionary.apply(to: Self.sanitize(text))
         )
         let cleaned = SpokenCorrectionEngine.apply(to: withoutFillers)
-        guard let formattingProfile else { return cleaned }
+        let layout = SpokenLayoutCommandEngine.protect(cleaned)
+        guard let formattingProfile else {
+            return layout.render(layout.protectedText)
+        }
+        let formatted: String
         switch formattingProfile {
         case .casual, .formatted, .professional, .aiCommunication:
-            return Self.polish(cleaned)
+            formatted = Self.polish(layout.protectedText)
         }
+        return layout.render(formatted)
     }
 
     public static func sanitize(_ text: String) -> String {

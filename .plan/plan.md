@@ -42,7 +42,9 @@ order:
    evidence, model, and configuration suggestions remain;
 4. [x] optional application-to-profile routing behind one understandable
    global default;
-5. deeper explicit spoken correction and editing commands;
+5. [ ] deeper explicit spoken correction and editing commands; the first
+   exact layout-command slice is implemented and isolated-verified, while
+   earlier-phrase replacement remains;
 6. a native evidence-based diagnostics and quality view;
 7. fresh-Mac onboarding plus the signed, notarized, permission-stable updater.
 
@@ -179,6 +181,30 @@ existing Writing Style card without hiding the default.
 
 Receipt:
 `docs/verification/2026-07-30-application-style-routing.md`.
+
+The first deeper spoken-editing slice adds deterministic `command new line` and
+`command new paragraph` without widening into destructive selection or
+document editing. A command must be an exact punctuation-delimited clause with
+dictated content on both sides; unprefixed, quoted, leading, trailing, or
+question uses remain literal. Collision-free protected tokens cross the local
+formatter only when each survives exactly once, in order, in its anchored
+segment, with no invented marker; otherwise Wordhand formats the protected
+source fallback and restores every boundary. Unrelated formatter whitespace is
+unchanged.
+
+Measurement rejected two nicer-sounding grammars. Bare `new line` decoded
+reliably but was indistinguishable from semantic speech, while `Wordhand new
+line` decoded as `word and new line`. A fixed Samantha utterance using
+`command new line` decoded exactly through cached Whisper Large v3. The
+opt-in end-to-end receipt drove it through the real model and formatted
+TextEdit pipeline to one exact line break and one exact paragraph break. This
+is synthetic-voice evidence, not an attended natural-dictation claim. The next
+editing slice should add fail-closed earlier-phrase replacement only after
+command rejection has visible local feedback and retained audio proves its
+spoken namespace.
+
+Receipt:
+`docs/verification/2026-07-30-spoken-layout-commands.md`.
 
 ## Public checkpoint cadence
 

@@ -88,31 +88,37 @@ final class AppAwareTranscriptProcessor:
             text,
             target: context.target
         )
+        let layout = SpokenLayoutCommandEngine.protect(cleaned)
         let selectedProfile = context.formattingProfile
             ?? resolvedProfile(for: context.target)
 
+        let formatted: String
         switch selectedProfile {
         case .casual:
-            return TranscriptProcessor.polish(cleaned)
+            formatted = TranscriptProcessor.polish(layout.protectedText)
         case .formatted:
-            return await rewrite(
-                cleaned,
+            formatted = await rewrite(
+                layout.protectedText,
                 intent: .formatted,
-                target: context.target
+                target: context.target,
+                layout: layout
             )
         case .professional:
-            return await rewrite(
-                cleaned,
+            formatted = await rewrite(
+                layout.protectedText,
                 intent: .professional,
-                target: context.target
+                target: context.target,
+                layout: layout
             )
         case .aiCommunication:
-            return await rewrite(
-                cleaned,
+            formatted = await rewrite(
+                layout.protectedText,
                 intent: .aiCommunication,
-                target: context.target
+                target: context.target,
+                layout: layout
             )
         }
+        return layout.render(formatted)
     }
 
     func context(for target: TranscriptTarget) -> TranscriptProcessingContext {
@@ -147,7 +153,8 @@ final class AppAwareTranscriptProcessor:
     private func rewrite(
         _ text: String,
         intent: TranscriptRewriteIntent,
-        target: TranscriptTarget
+        target: TranscriptTarget,
+        layout: SpokenLayoutCommandPlan
     ) async -> String {
         guard !text.isEmpty else { return text }
         let wordCount = text.split(whereSeparator: \.isWhitespace).count
@@ -156,6 +163,14 @@ final class AppAwareTranscriptProcessor:
             .sorted()
             .joined(separator: ", ")
         var instructions = intent.instructions(for: target)
+        if layout.commandCount > 0 {
+            instructions += """
+
+            The source contains \(layout.commandCount) opaque WORDHAND_LAYOUT tokens.
+            Keep every token exactly once, in the same order and position between the surrounding thoughts.
+            Do not punctuate, rename, explain, or remove those tokens.
+            """
+        }
         if !meaningMarkers.isEmpty {
             instructions += """
 
@@ -174,7 +189,7 @@ final class AppAwareTranscriptProcessor:
             if TranscriptRewriteValidator.isAcceptable(
                 candidate: candidate,
                 original: text
-            ) {
+            ), layout.preservesCommands(in: candidate) {
                 return finalized(candidate, for: intent)
             }
 
@@ -194,7 +209,7 @@ final class AppAwareTranscriptProcessor:
             guard TranscriptRewriteValidator.isAcceptable(
                 candidate: conservativeCandidate,
                 original: text
-            ) else {
+            ), layout.preservesCommands(in: conservativeCandidate) else {
                 return fallback(text, for: intent)
             }
             return finalized(conservativeCandidate, for: intent)

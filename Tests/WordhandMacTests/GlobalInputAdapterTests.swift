@@ -610,6 +610,124 @@ struct GlobalInputAdapterTests {
     }
 
     @Test
+    func writingStylePreservesAndRendersExplicitLayoutCommands() async {
+        let rewriter = RecordingLocalTranscriptRewriter(
+            responses: [
+                "First thought. WORDHAND_LAYOUT_0_0 Second thought.",
+            ]
+        )
+        let processor = AppAwareTranscriptProcessor(
+            dictionaryProcessor: MutableTranscriptProcessor(),
+            profile: .formatted,
+            rewriter: rewriter
+        )
+
+        let output = await processor.process(
+            "First thought. Command new paragraph. Second thought.",
+            target: .unknown
+        )
+        let calls = await rewriter.recordedCalls()
+
+        #expect(output == "First thought.\n\nSecond thought.")
+        #expect(calls.count == 1)
+        #expect(calls[0].text.contains("WORDHAND_LAYOUT_0_0"))
+        #expect(!calls[0].text.localizedCaseInsensitiveContains(
+            "command new paragraph"
+        ))
+        #expect(calls[0].instructions.contains("Keep every token exactly once"))
+    }
+
+    @Test
+    func droppedLayoutTokenRejectsRewriteAndUsesExactSafeFallback() async {
+        let rewriter = RecordingLocalTranscriptRewriter(
+            responses: [
+                "First thought. Second thought.",
+                "First thought. Second thought.",
+            ]
+        )
+        let processor = AppAwareTranscriptProcessor(
+            dictionaryProcessor: MutableTranscriptProcessor(),
+            profile: .professional,
+            rewriter: rewriter
+        )
+
+        let output = await processor.process(
+            "First thought. Command new line. Second thought.",
+            target: .unknown
+        )
+        let calls = await rewriter.recordedCalls()
+
+        #expect(output == "First thought.\nSecond thought.")
+        #expect(calls.count == 2)
+        #expect(calls.allSatisfy { $0.text.contains("WORDHAND_LAYOUT_0_0") })
+    }
+
+    @Test(
+        .enabled(
+            if: ProcessInfo.processInfo.environment[
+                "WORDHAND_LAYOUT_AUDIO_RECEIPT"
+            ] == "1"
+        )
+    )
+    func syntheticLayoutCommandsSurviveDecodeAndOfflineFormatting() throws {
+        let root = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let audioURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent(
+                "wordhand-layout-\(UUID().uuidString).aiff"
+            )
+        defer { try? FileManager.default.removeItem(at: audioURL) }
+        let source =
+            "First thought. Command new line. Second thought. "
+            + "Command new paragraph. Final thought."
+        let say = Process()
+        say.executableURL = URL(fileURLWithPath: "/usr/bin/say")
+        say.arguments = [
+            "-v", "Samantha", "-r", "185", "-o", audioURL.path, source,
+        ]
+        try say.run()
+        say.waitUntilExit()
+        #expect(say.terminationStatus == 0)
+
+        let executable = root.appendingPathComponent(".build/debug/wordhand")
+        let benchmark = try Self.runProcess(
+            executable: executable,
+            arguments: [
+                "models", "benchmark", audioURL.path,
+                "--model", "whisper-large-v3",
+            ]
+        )
+        #expect(benchmark.status == 0)
+        let decoded = try #require(
+            benchmark.output
+                .split(separator: "\n")
+                .map(String.init)
+                .first(where: { $0.hasPrefix("transcript: ") })?
+                .dropFirst("transcript: ".count)
+        )
+        #expect(
+            decoded
+                == "First thought, command new line, second thought, "
+                    + "command new paragraph, final thought."
+        )
+
+        let formatted = try Self.runProcess(
+            executable: executable,
+            arguments: [
+                "format", String(decoded), "--style", "formatted",
+                "--application", "TextEdit",
+            ]
+        )
+        #expect(formatted.status == 0)
+        #expect(
+            formatted.output
+                == "First thought\nSecond thought\n\nFinal thought.\n"
+        )
+    }
+
+    @Test
     func aiCommunicationPreservesProseWhenTheSourceIsNotAList() async {
         let prose = """
         The application is working well. I think accuracy should remain the priority. \
@@ -691,6 +809,28 @@ struct GlobalInputAdapterTests {
         )
 
         #expect(output == "Do not remove API v2 or the 30-day rollback.")
+    }
+
+    private static func runProcess(
+        executable: URL,
+        arguments: [String]
+    ) throws -> (status: Int32, output: String) {
+        let process = Process()
+        process.executableURL = executable
+        process.arguments = arguments
+        var environment = ProcessInfo.processInfo.environment
+        environment["WORDHAND_SAFE"] = "1"
+        process.environment = environment
+        let output = Pipe()
+        process.standardOutput = output
+        process.standardError = FileHandle.standardError
+        try process.run()
+        let data = output.fileHandleForReading.readDataToEndOfFile()
+        process.waitUntilExit()
+        return (
+            process.terminationStatus,
+            String(decoding: data, as: UTF8.self)
+        )
     }
 }
 
