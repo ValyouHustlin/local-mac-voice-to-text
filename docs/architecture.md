@@ -434,18 +434,19 @@ rejected comparison exits nonzero. The command is offline: it does not download
 a model, record, play audio, install an event tap, inspect the clipboard, inject
 text, or enable a runtime path.
 
-The public synthetic corpus has a 12.57-second lexical fixture and a
-49.26-second boundary fixture that crosses both the 20- and 40-second rolling
-windows. `scripts/test-transcription-authority-corpus.sh` runs each identity-
-bound fixture through the same command and emits one aggregate JSON decision,
-including per-case transcripts, protected results, and latency. It proves that
-the gate catches boundary, duplicate, and protected-content loss and that the
-current rolling-final control remains equivalent because it still finishes with
-a complete-buffer decode. The report explicitly identifies that control
-implementation; its PASS cannot authorize an actual incremental candidate.
-It does not prove a useful latency improvement or natural-voice completeness.
-Runtime promotion additionally requires more voice/acoustic diversity and
-attended short/long natural dictation.
+The public synthetic corpus has a 12.57-second lexical fixture, a 49.26-second
+boundary fixture that crosses both the 20- and 40-second rolling windows, and a
+53.71-second ambiguity fixture with the same six-word overlap anchor protected
+exactly twice. `scripts/test-transcription-authority-corpus.sh` runs each
+identity-bound fixture through the same command and emits one aggregate JSON
+decision, including per-case transcripts, protected results, and latency. It
+proves that the gate catches boundary, duplicate, protected-content, and
+overlap-anchor loss and that the current rolling-final control remains
+equivalent because it still finishes with a complete-buffer decode. The report
+explicitly identifies that control implementation; its PASS cannot authorize
+an actual incremental candidate. It does not prove a useful latency improvement
+or natural-voice completeness. Runtime promotion additionally requires more
+voice/acoustic diversity and attended short/long natural dictation.
 
 The comparison report records authority provenance, not only text and wall
 time: completed pre-release decode count/time, cancellation-drain wall time,
@@ -456,18 +457,29 @@ of inference but reused no work. Cancellation drained in about 10 ms. After
 release it spent about 2.42 seconds on the primary full decode, 1.21 seconds on
 the independent tail audit, and 2.65 seconds on the prompt-free full retry.
 
-The first genuine implementation experiment will replace advancing
-window-local composition with cumulative snapshots decoded from sample zero.
-Only segments stable across successive snapshots are eligible. Release decodes
-a suffix beginning eight seconds before the stable prefix end and joins only on
-one unique normalized overlap of at least six words. The final audio must begin
-with the exact samples used by the snapshot. The composed text still passes
-through the existing integrity finalizer and mandatory final-20-second audit.
-Any ambiguity, mismatch, cancellation race, stale session, or failure uses the
-complete-buffer path. A corpus PASS is meaningful only when at least one long
-case reports `reusedSampleCount > 0`; fallback-only equivalence is not a
-successful candidate.
-See `docs/verification/2026-07-30-completeness-latency-oracle.md`.
+The pure promotion gate for that experiment now exists without being connected
+to daily runtime. `StreamingAuthorityComposer` accepts a release identity, a
+stable prefix, and a suffix result. It first requires one session identity, an
+exact hash match between the snapshot audio and the same prefix of final audio,
+and continuous sample coverage through the final sample. Text can be composed
+only when the longest eligible suffix of the stable prefix has one match in the
+overlapping suffix decode and contains at least six normalized words. The
+caller must then approve the composed text through the integrity finalizer.
+Every other outcome names the reason for a complete-buffer fallback: stale
+session, prefix mismatch, invalid coverage, suffix failure, insufficient or
+ambiguous overlap, or integrity divergence. Timestamps establish audio coverage
+only; they never authorize word removal.
+
+The first genuine runtime experiment will replace advancing window-local
+composition with cumulative snapshots decoded from sample zero. Only segments
+stable across successive snapshots are eligible. Release will decode a suffix
+beginning eight seconds before the stable prefix end and present it to the pure
+gate above. The composed text must still pass the mandatory final-20-second
+audit. A corpus PASS is meaningful only when at least one long case reports
+`reusedSampleCount > 0`; fallback-only equivalence is not a successful
+candidate. See
+`docs/verification/2026-07-30-completeness-latency-oracle.md` and
+`docs/verification/2026-07-30-overlap-composition-oracle.md`.
 
 The authoritative decode has layered local integrity checks. First, the coordinator
 compares the monotonic recording-session duration with the number of captured

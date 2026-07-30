@@ -236,6 +236,43 @@ struct TranscriptionCompletenessOracleTests {
     }
 
     @Test
+    func losingOneRepeatedOverlapAnchorRejectsCandidate() throws {
+        let fixtureURL = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .appendingPathComponent(
+                "Fixtures/english-ambiguous-overlap-v1.json"
+            )
+        let retainedFixture = try JSONDecoder().decode(
+            TranscriptionCompletenessFixture.self,
+            from: Data(contentsOf: fixtureURL)
+        )
+        var candidate = retainedFixture.reference
+        let anchor = "the complete audio buffer remains authoritative"
+        let firstAnchor = try #require(
+            candidate.range(of: anchor, options: [.caseInsensitive])
+        )
+        candidate.replaceSubrange(
+            firstAnchor,
+            with: "the partial result is not authoritative"
+        )
+        let comparison = try #require(
+            TranscriptionCompletenessOracle.compare(
+                fixture: retainedFixture,
+                baseline: retainedFixture.reference,
+                candidate: candidate
+            )
+        )
+
+        #expect(!comparison.candidatePassesCompletenessGate)
+        #expect(
+            comparison.rejectionReasons.contains(
+                "protected_ambiguous-overlap_occurrence_mismatch"
+            )
+        )
+    }
+
+    @Test
     func retainedManifestsAreBoundToCheckedInAudio() throws {
         let fixtureDirectory = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()
@@ -244,6 +281,7 @@ struct TranscriptionCompletenessOracleTests {
         let fixtures = [
             ("english-completeness-v1", 201_154),
             ("english-boundary-long-v1", 788_154),
+            ("english-ambiguous-overlap-v1", 859_431),
         ]
         for (name, sampleCount) in fixtures {
             let fixtureData = try Data(

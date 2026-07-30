@@ -1,0 +1,70 @@
+{
+  "id": "english-ambiguous-overlap-v1",
+  "reference": "Boundary silver opens this ambiguity test. This public English recording deliberately tests a repeated phrase near the release join while the full capture stays authoritative. The measured threshold is fourteen point five. Do not disable the recovery check on Friday. WhisperKit and GitHub support Aaron Browne-Moore during this local evaluation. The planning section uses ordinary language about a careful software release and preserves each instruction in its original order. Every earlier word remains important because a partial result must never replace a more complete final decode. At the first rolling boundary, the complete audio buffer remains authoritative. The next section continues calmly across the working window and keeps the repeated wording intentionally unchanged. Before the final release join, the complete audio buffer remains authoritative. After the repeat, retain the second instruction and reject any splice that drops or duplicates the intervening section. Boundary violet closes this ambiguity test.",
+  "audioSHA256": "c5449c6693ba960c3e5526f7e654baabc2d362dcfaa23fbc859ba44e2ec08a01",
+  "sampleCount": 859431,
+  "sampleRate": 16000,
+  "vocabularyTerms": [
+    "WhisperKit",
+    "GitHub",
+    "Aaron Browne-Moore"
+  ],
+  "protectedSpans": [
+    {
+      "id": "opening",
+      "category": "beginning",
+      "acceptedForms": ["Boundary silver opens this ambiguity test"],
+      "placement": "prefix",
+      "expectedOccurrences": 1
+    },
+    {
+      "id": "closing",
+      "category": "ending",
+      "acceptedForms": ["Boundary violet closes this ambiguity test"],
+      "placement": "suffix",
+      "expectedOccurrences": 1
+    },
+    {
+      "id": "decimal",
+      "category": "number",
+      "acceptedForms": ["fourteen point five", "14.5"],
+      "placement": "anywhere",
+      "expectedOccurrences": 1
+    },
+    {
+      "id": "negation",
+      "category": "negation",
+      "acceptedForms": ["do not disable the recovery check on Friday"],
+      "placement": "anywhere",
+      "expectedOccurrences": 1
+    },
+    {
+      "id": "whisperkit",
+      "category": "technicalTerm",
+      "acceptedForms": ["WhisperKit"],
+      "placement": "anywhere",
+      "expectedOccurrences": 1
+    },
+    {
+      "id": "github",
+      "category": "technicalTerm",
+      "acceptedForms": ["GitHub"],
+      "placement": "anywhere",
+      "expectedOccurrences": 1
+    },
+    {
+      "id": "ambiguous-overlap",
+      "category": "overlapAnchor",
+      "acceptedForms": ["the complete audio buffer remains authoritative"],
+      "placement": "anywhere",
+      "expectedOccurrences": 2
+    },
+    {
+      "id": "name",
+      "category": "dictionarySpelling",
+      "acceptedForms": ["Aaron Browne-Moore"],
+      "placement": "anywhere",
+      "expectedOccurrences": 1
+    }
+  ]
+}

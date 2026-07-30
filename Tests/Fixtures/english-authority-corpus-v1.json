@@ -12,6 +12,10 @@
     {
       "audio": "english-boundary-long-v1.aiff",
       "definition": "english-boundary-long-v1.json"
+    },
+    {
+      "audio": "english-ambiguous-overlap-v1.aiff",
+      "definition": "english-ambiguous-overlap-v1.json"
     }
   ]
 }

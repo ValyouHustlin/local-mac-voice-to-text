@@ -73,16 +73,24 @@ decodes, reused zero samples, waited about 10 ms for cancellation, then spent
 about 2.42 seconds on the primary, 1.21 on the independent tail audit, and 2.65
 on the prompt-free full retry.
 
+The ambiguity gate is now implemented before the candidate. A 53.71-second
+public retained fixture protects the same six-word anchor exactly twice, and
+Large v3 preserved both occurrences plus every existing boundary and semantic
+check in paired full-buffer/control runs. The pure composer requires matching
+session and audio-prefix identities, valid overlapping sample coverage, one
+unique normalized overlap of at least six words, and an explicit integrity
+approval. Every mismatch returns a named full-buffer fallback reason. It is not
+wired into live capture.
+
 The next candidate is not a VAD-chunk splice. It will decode cumulative
 snapshots from sample zero, retain only segments agreed across successive
-snapshots, and at release decode an eight-second-overlapping suffix. A unique
-six-word textual overlap—not window-local timestamps—must authorize the join.
-Any sample-prefix mismatch, ambiguous overlap, integrity divergence, stale
-task, or decode failure falls back to the current full-buffer path. Before that
-experiment, add an ambiguity fixture and require at least one long run to report
-nonzero reused samples; fallback-only equality cannot pass as a latency win.
+snapshots, and at release decode an eight-second-overlapping suffix through the
+pure gate. It must retain the final-20-second audit and require at least one
+long run to report nonzero reused samples; fallback-only equality cannot pass as
+a latency win.
 
-Receipt: `docs/verification/2026-07-30-completeness-latency-oracle.md`.
+Receipts: `docs/verification/2026-07-30-completeness-latency-oracle.md` and
+`docs/verification/2026-07-30-overlap-composition-oracle.md`.
 
 ## Public checkpoint cadence
 

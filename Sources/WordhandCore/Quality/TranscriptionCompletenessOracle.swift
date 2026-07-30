@@ -7,6 +7,7 @@ public enum ProtectedTranscriptCategory: String, Codable, CaseIterable, Sendable
     case negation
     case technicalTerm
     case dictionarySpelling
+    case overlapAnchor
 }
 
 public enum ProtectedTranscriptPlacement: String, Codable, Sendable {
@@ -35,7 +36,8 @@ public struct ProtectedTranscriptSpan: Codable, Equatable, Sendable {
         let defaultPlacement: ProtectedTranscriptPlacement = switch category {
         case .beginning: .prefix
         case .ending: .suffix
-        case .number, .negation, .technicalTerm, .dictionarySpelling: .anywhere
+        case .number, .negation, .technicalTerm, .dictionarySpelling,
+             .overlapAnchor: .anywhere
         }
         self.placement = placement ?? defaultPlacement
         self.expectedOccurrences = expectedOccurrences
@@ -80,7 +82,15 @@ public struct TranscriptionCompletenessFixture: Codable, Equatable, Sendable {
             issues.append("fixture reference is empty")
         }
         let presentCategories = Set(protectedSpans.map(\.category))
-        for category in ProtectedTranscriptCategory.allCases
+        let requiredCategories: [ProtectedTranscriptCategory] = [
+            .beginning,
+            .ending,
+            .number,
+            .negation,
+            .technicalTerm,
+            .dictionarySpelling,
+        ]
+        for category in requiredCategories
         where !presentCategories.contains(category) {
             issues.append("missing protected category: \(category.rawValue)")
         }
@@ -92,7 +102,8 @@ public struct TranscriptionCompletenessFixture: Codable, Equatable, Sendable {
             let requiredPlacement: ProtectedTranscriptPlacement = switch span.category {
             case .beginning: .prefix
             case .ending: .suffix
-            case .number, .negation, .technicalTerm, .dictionarySpelling: .anywhere
+            case .number, .negation, .technicalTerm, .dictionarySpelling,
+                 .overlapAnchor: .anywhere
             }
             if span.placement != requiredPlacement {
                 issues.append(
