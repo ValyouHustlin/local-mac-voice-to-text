@@ -191,6 +191,32 @@ struct GlobalInputAdapterTests {
     }
 
     @Test
+    @MainActor
+    func modelChangeExposesInlineRelaunchUntilTheActiveModelIsRestored() throws {
+        let fixture = try TemporarySettingsFixture()
+        defer { fixture.remove() }
+        let activeModelID = "whisper-large-v3"
+        let controller = SettingsController(
+            store: fixture.store,
+            settings: AppSettings(modelID: activeModelID),
+            launchAtLoginManager: FakeLaunchAtLoginManager(state: .disabled),
+            permissionManager: FakePermissionManager(),
+            activeModelID: activeModelID
+        )
+        var relaunchCount = 0
+        controller.onRelaunchRequested = { relaunchCount += 1 }
+
+        #expect(!controller.requiresRelaunch)
+        controller.setModelID("whisper-large-v3-turbo")
+        #expect(controller.requiresRelaunch)
+        controller.relaunch()
+        #expect(relaunchCount == 1)
+
+        controller.setModelID(activeModelID)
+        #expect(!controller.requiresRelaunch)
+    }
+
+    @Test
     func localWhisperModelRequiresEveryCompiledComponent() throws {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("wordhand-model-tests-\(UUID().uuidString)")
@@ -279,6 +305,28 @@ struct GlobalInputAdapterTests {
         #expect(calls.allSatisfy { $0.instructions.contains("who must act") })
         #expect(calls.allSatisfy { $0.instructions.contains("modality") })
         #expect(calls.allSatisfy { $0.timeoutSeconds == 8 })
+    }
+
+    @Test
+    func aiCommunicationPreservesProseWhenTheSourceIsNotAList() async {
+        let prose = """
+        The application is working well. I think accuracy should remain the priority. \
+        The only open question is whether latency can improve.
+        """
+        let rewriter = RecordingLocalTranscriptRewriter(responses: [prose])
+        let processor = AppAwareTranscriptProcessor(
+            dictionaryProcessor: MutableTranscriptProcessor(),
+            profile: .aiCommunication,
+            rewriter: rewriter
+        )
+
+        let output = await processor.process(prose, target: .unknown)
+        let calls = await rewriter.recordedCalls()
+
+        #expect(output == prose)
+        #expect(!output.contains("- The"))
+        #expect(calls[0].instructions.contains("paragraphs for connected reasoning"))
+        #expect(calls[0].instructions.contains("numbered steps only for a true sequence"))
     }
 
     @Test

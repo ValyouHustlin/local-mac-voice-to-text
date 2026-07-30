@@ -152,7 +152,7 @@ receipts may promote latency or compatibility claims.
 
 P0 ground truth and P1 foundation are complete as of 2026-07-28. The package
 now has `WordhandCore`, protocol-backed coordinator seams, versioned settings,
-111 deterministic tests across core and macOS adapter targets, and macOS CI.
+113 deterministic tests across core and macOS adapter targets, and macOS CI.
 
 The daily-driver bundle is built by `scripts/build-app.sh` and installed by
 `scripts/install-app.sh`. The installer prefers `/Applications`, falls back to
@@ -284,10 +284,13 @@ Writing style is an explicit user choice rather than inferred from the active
 application. Casual performs fast deterministic cleanup. Formatted preserves
 natural tone while fixing structure. Professional improves organization and
 wording conservatively. AI Communication makes goals and multiple requirements
-scannable, including deterministic bullet structure for three or more distinct
-sentences. The latter three send only the current local transcript to Apple's
-on-device Foundation Models framework. They do not read surrounding document
-content.
+scannable while selecting structure from meaning rather than sentence count:
+connected reasoning and ordinary requests remain prose, parallel requirements
+may become bullets, true sequences may become numbered steps, and lightweight
+sections are reserved for complex execution briefs. A deterministic
+sentence-count fallback must not override that semantic choice. The latter three
+send only the current local transcript to Apple's on-device Foundation Models
+framework. They do not read surrounding document content.
 
 Generation has a proportional response budget and an eight-second deadline.
 An invalid first rewrite receives one stricter conservative retry; runtime
@@ -296,7 +299,16 @@ Validation preserves digit-bearing values, technical tokens, acronyms,
 negations, speaker perspective, modality, uncertainty, and requested-action
 markers in addition to bounding rewrite length. Legacy Automatic, Polished,
 AI-prompt, and Verbatim settings migrate to the closest new style. See
-`docs/verification/2026-07-29-writing-modes.md`.
+`docs/verification/2026-07-29-writing-modes.md` and
+`docs/verification/2026-07-29-adaptive-ai-relaunch.md`.
+
+Settings tracks the model loaded by the running process separately from the
+persisted model choice. Changing the model reveals an inline Relaunch Wordhand
+button in that card; changing back to the active model removes it. Live-updating
+settings do not show restart UI. Relaunch uses a short detached local helper so
+the old process can release its single-instance lock before LaunchServices opens
+the same signed bundle. This preserves the stable application path and signing
+identity used by macOS privacy permissions.
 
 Explicit self-corrections are resolved deterministically before the selected
 writing style runs. Maximum processing mode prewarms the matching local

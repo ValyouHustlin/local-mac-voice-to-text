@@ -137,19 +137,18 @@ struct TranscriptProcessorTests {
     }
 
     @Test
-    func agentStructureTurnsThreeOrMoreSentencesIntoBullets() {
+    func agentStructureDoesNotForceOrdinaryProseIntoBullets() {
         #expect(
             TranscriptProcessor.structureForAI(
-                "Ship the app. Keep the rollback. Report the result."
-            ) == """
-            - Ship the app.
-            - Keep the rollback.
-            - Report the result.
-            """
+                "The current app works well. I think the model is accurate. "
+                    + "The remaining concern is latency."
+            ) == "The current app works well. I think the model is accurate. "
+                + "The remaining concern is latency."
         )
         #expect(
-            TranscriptProcessor.structureForAI("Ship the app. Report the result.")
-                == "Ship the app. Report the result."
+            TranscriptProcessor.structureForAI(
+                "Goal:\nImprove dictation.\n\nConstraints:\n- Keep everything local."
+            ) == "Goal:\nImprove dictation.\n\nConstraints:\n- Keep everything local."
         )
     }
 

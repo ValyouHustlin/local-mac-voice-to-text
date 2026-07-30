@@ -260,8 +260,9 @@ Status: complete for the second vertical slice.
   deterministic local fallback.
 - [x] Reject rewrites that change speaker perspective, actor/recipient roles,
   modality, uncertainty, technical tokens, numbers, or negated constraints.
-- [x] Give multi-requirement AI Communication output deterministic bullet
-  structure when the local model returns a flat paragraph.
+- [x] Make AI Communication choose structure proportionally: preserve connected
+  reasoning as prose, reserve bullets for parallel items, numbered steps for
+  ordered sequences, and headings for genuinely complex execution requests.
 - [x] Keep surrounding application text out of the formatter.
 - [x] Keep formatting instructions, user vocabulary, audio, and transcript
   content on-device with no cloud fallback.
@@ -273,7 +274,8 @@ Status: complete for the second vertical slice.
   input.
 
 Receipts: `docs/verification/2026-07-28-flow-formatting.md` and
-`docs/verification/2026-07-29-writing-modes.md`.
+`docs/verification/2026-07-29-writing-modes.md` and
+`docs/verification/2026-07-29-adaptive-ai-relaunch.md`.
 
 ### Decode-time vocabulary checkpoint
 
@@ -412,6 +414,8 @@ Goal: install and update like a normal trusted Mac app.
 
 - [x] Produce a stable `.app` bundle and bundle identifier.
 - [x] Add a rollback-preserving local installer and native launch at login.
+- [x] Show an inline one-click relaunch action only after a setting that needs
+  restart changes; model selection is the current restart-required setting.
 - [x] Prefer the standard `/Applications` location, register/import the active
   bundle for Spotlight, and keep rollback apps outside searchable application
   folders so LaunchServices sees one active Wordhand.

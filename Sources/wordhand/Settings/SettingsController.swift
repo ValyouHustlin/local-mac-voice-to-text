@@ -10,15 +10,19 @@ final class SettingsController: NSObject, ObservableObject, NSWindowDelegate {
     @Published private(set) var launchAtLoginState: LaunchAtLoginState
     @Published private(set) var launchAtLoginError: String?
     @Published private(set) var permissionStatus: WordhandPermissionStatus
+    @Published private(set) var requiresRelaunch: Bool
+    @Published private(set) var relaunchError: String?
 
     var onSettingsChange: ((AppSettings) -> Void)?
     var onShortcutCaptureChange: ((Bool) -> Void)?
     var onPermissionsRefresh: ((WordhandPermissionStatus) -> Void)?
+    var onRelaunchRequested: (() throws -> Void)?
 
     private let store: SettingsStore
     private let launchAtLoginManager: any LaunchAtLoginManaging
     private let permissionManager: any PermissionManaging
     private let frameAutosaveName: String
+    private let activeModelID: String
     private var windowController: NSWindowController?
     private var localKeyMonitor: Any?
     private static let defaultWindowContentSize = NSSize(width: 760, height: 620)
@@ -28,7 +32,8 @@ final class SettingsController: NSObject, ObservableObject, NSWindowDelegate {
         settings: AppSettings,
         launchAtLoginManager: any LaunchAtLoginManaging = SystemLaunchAtLoginManager(),
         permissionManager: any PermissionManaging = SystemPermissionManager(),
-        frameAutosaveName: String = "Wordhand.Settings"
+        frameAutosaveName: String = "Wordhand.Settings",
+        activeModelID: String? = nil
     ) {
         self.store = store
         self.settings = settings
@@ -37,6 +42,8 @@ final class SettingsController: NSObject, ObservableObject, NSWindowDelegate {
         self.permissionManager = permissionManager
         self.permissionStatus = permissionManager.status()
         self.frameAutosaveName = frameAutosaveName
+        self.activeModelID = activeModelID ?? settings.modelID
+        self.requiresRelaunch = settings.modelID != (activeModelID ?? settings.modelID)
         super.init()
     }
 
@@ -118,6 +125,17 @@ final class SettingsController: NSObject, ObservableObject, NSWindowDelegate {
 
     func setModelID(_ modelID: String) {
         update { $0.modelID = modelID }
+    }
+
+    func relaunch() {
+        guard requiresRelaunch, let onRelaunchRequested else { return }
+        do {
+            try onRelaunchRequested()
+            relaunchError = nil
+        } catch {
+            relaunchError = "Couldn’t relaunch Wordhand: \(error.localizedDescription)"
+            NSSound.beep()
+        }
     }
 
     func setInsertionMode(_ insertionMode: InsertionMode) {
@@ -249,6 +267,10 @@ final class SettingsController: NSObject, ObservableObject, NSWindowDelegate {
         do {
             try store.save(candidate)
             settings = candidate
+            requiresRelaunch = candidate.modelID != activeModelID
+            if !requiresRelaunch {
+                relaunchError = nil
+            }
             saveError = nil
             onSettingsChange?(candidate)
         } catch SettingsError.duplicateHotkey {
@@ -567,12 +589,28 @@ private struct SettingsView: View {
                     .frame(width: 285)
                 }
 
-                Label(
-                    "Model changes take effect the next time Wordhand launches.",
-                    systemImage: "arrow.clockwise"
-                )
-                .font(.caption)
-                .foregroundStyle(.secondary)
+                if controller.requiresRelaunch {
+                    HStack(spacing: 12) {
+                        Label(
+                            "Model saved. Relaunch to load it.",
+                            systemImage: "arrow.clockwise"
+                        )
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        Spacer()
+                        Button("Relaunch Wordhand") {
+                            controller.relaunch()
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .controlSize(.small)
+                    }
+                }
+
+                if let error = controller.relaunchError {
+                    Label(error, systemImage: "exclamationmark.triangle.fill")
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                }
             }
         }
     }

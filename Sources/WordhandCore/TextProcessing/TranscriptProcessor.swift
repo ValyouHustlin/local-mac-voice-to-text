@@ -115,18 +115,10 @@ public struct TranscriptProcessor: TranscriptProcessing, Sendable {
     }
 
     public static func structureForAI(_ text: String) -> String {
-        guard !text.contains("\n") else { return text }
-        let separated = text.replacingOccurrences(
-            of: #"(?<=[.!?])\s+"#,
-            with: "\n",
-            options: .regularExpression
-        )
-        let sentences = separated
-            .split(separator: "\n")
-            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-            .filter { !$0.isEmpty }
-        guard sentences.count >= 3 else { return text }
-        return sentences.map { "- \($0)" }.joined(separator: "\n")
+        // The on-device rewriter has the semantic context needed to choose
+        // paragraphs, bullets, numbered steps, or lightweight sections.
+        // A sentence-count heuristic cannot make that decision safely.
+        text
     }
 
     public static func professionalize(_ text: String) -> String {

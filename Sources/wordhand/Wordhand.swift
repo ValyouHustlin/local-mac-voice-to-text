@@ -197,7 +197,11 @@ struct Run: ParsableCommand {
             capture.onLevel = { level in overlay.pushLevel(level) }
         }
         let settingsController = MainActor.assumeIsolated {
-            SettingsController(store: settingsStore, settings: settings)
+            SettingsController(
+                store: settingsStore,
+                settings: settings,
+                activeModelID: chosenModel.id
+            )
         }
         let menuBar = MainActor.assumeIsolated {
             MenuBarController(
@@ -274,6 +278,9 @@ struct Run: ParsableCommand {
             }
             settingsController.onShortcutCaptureChange = { capturing in
                 monitor.setSuspended(capturing)
+            }
+            settingsController.onRelaunchRequested = {
+                try ApplicationRelauncher.relaunchCurrentApplication()
             }
             settingsController.onPermissionsRefresh = { permissions in
                 guard permissions.globalInputReady else {

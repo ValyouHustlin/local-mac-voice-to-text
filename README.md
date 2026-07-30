@@ -36,7 +36,8 @@ and inserts the result into ordinary Mac apps.
 | **Maximum Performance preview** | On high-end Apple silicon, opt into formatter prewarming and rolling local transcription while you speak. Adaptive remains the efficient default; attended latency verification is still open. |
 | **Reliable insertion** | Paste-first insertion works across native, browser, and Electron targets while restoring the previous rich clipboard. Direct typing and copy-only modes are available. |
 | **Flow-focused feedback** | Quiet start/stop tones, an expressive live waveform, a display-following recording control, and one-click cancellation keep dictation legible without demanding attention. |
-| **Four writing styles** | Choose Casual, Formatted, Professional, or AI Communication. The three richer modes use Apple’s on-device model with meaning-preservation checks and safe local fallback. |
+| **Four writing styles** | Choose Casual, Formatted, Professional, or AI Communication. AI mode keeps connected reasoning as prose and uses lists, steps, or lightweight sections only when the content calls for them. The three richer modes use Apple’s on-device model with meaning-preservation checks and safe local fallback. |
+| **Restart without hunting** | Settings that require a restart expose an inline Relaunch button only after their value changes. Current live-updating settings stay out of the way. |
 
 <p align="center">
   <img src="docs/assets/wordhand-history.png" width="920" alt="Wordhand transcript history window">

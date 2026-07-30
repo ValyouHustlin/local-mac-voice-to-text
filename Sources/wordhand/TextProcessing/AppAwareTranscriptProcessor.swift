@@ -210,12 +210,15 @@ private enum TranscriptRewriteIntent: Equatable {
             return """
             \(shared)
             Structure the message as excellent input for an AI agent.
-            Make the goal, context, requirements, constraints, examples, and requested output easy to identify.
-            Use short sections or bullets when they help the agent execute correctly.
-            When the source contains three or more separate actions or requirements, use a concise lead sentence followed by bullets instead of one flat paragraph.
+            Preserve the speaker's actual request shape; do not turn every thought into a task brief.
+            Use paragraphs for connected reasoning, explanation, questions, and ordinary prose.
+            Use bullets only for genuinely parallel items such as requirements, constraints, examples, or options.
+            Use numbered steps only for a true sequence where order matters.
+            For a complex execution request, make the objective, relevant context, requirements, constraints, and requested result easy to find, using lightweight headings only when they materially improve scanability.
+            Keep a short or simple request as a short or simple request.
             Keep prohibitions and non-negotiable constraints visibly distinct from optional ideas.
             Preserve open questions and ambiguity instead of deciding them for the speaker.
-            Do not add headings mechanically when a short message is already clear.
+            Never invent a missing requirement, priority, deadline, deliverable, or decision.
             """
         }
     }
