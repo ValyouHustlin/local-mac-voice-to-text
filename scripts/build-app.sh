@@ -24,6 +24,14 @@ case "${APP_PATH}" in
         ;;
 esac
 
+# Repository build artifacts must never compete with the installed app in
+# Spotlight. Do not place this marker beside a caller-supplied output path.
+case "${APP_PATH}" in
+    "${REPO_DIR}/dist/"*)
+        /usr/bin/touch "$(/usr/bin/dirname "${APP_PATH}")/.metadata_never_index"
+        ;;
+esac
+
 cd "${REPO_DIR}"
 /usr/bin/swift build -c release -Xswiftc -warnings-as-errors
 BIN_DIR="$(/usr/bin/swift build -c release --show-bin-path)"

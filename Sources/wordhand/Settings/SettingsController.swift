@@ -152,6 +152,10 @@ final class SettingsController: NSObject, ObservableObject, NSWindowDelegate {
         update { $0.qualityAudioRetentionDays = days }
     }
 
+    func setQualityAudioMaximumBytes(_ bytes: Int64) {
+        update { $0.qualityAudioMaximumBytes = bytes }
+    }
+
     func revealQualityAudio() {
         onRevealQualityAudio?()
     }
@@ -969,6 +973,34 @@ private struct SettingsView: View {
                         }
                         .labelsHidden()
                         .frame(width: 110)
+                    }
+
+                    Divider()
+                    HStack {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Maximum storage")
+                                .font(.subheadline.weight(.semibold))
+                            Text("Oldest recordings are removed after capture to stay under this limit.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        Picker(
+                            "Maximum storage",
+                            selection: Binding(
+                                get: { controller.settings.qualityAudioMaximumBytes },
+                                set: { controller.setQualityAudioMaximumBytes($0) }
+                            )
+                        ) {
+                            Text("250 MB").tag(Int64(250_000_000))
+                            Text("500 MB").tag(Int64(500_000_000))
+                            Text("1 GB").tag(Int64(1_000_000_000))
+                            Text("2 GB · Recommended").tag(Int64(2_000_000_000))
+                            Text("5 GB").tag(Int64(5_000_000_000))
+                            Text("10 GB").tag(Int64(10_000_000_000))
+                        }
+                        .labelsHidden()
+                        .frame(width: 190)
                     }
                 }
 

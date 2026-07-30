@@ -9,6 +9,7 @@ final class MenuBarController {
     private let modelLabel: NSMenuItem
     private let stateLabel: NSMenuItem
     private let correctLastItem: NSMenuItem
+    private let improveLastItem: NSMenuItem
     private let undoLastItem: NSMenuItem
     private let modelID: String
     private var settings: AppSettings
@@ -16,6 +17,7 @@ final class MenuBarController {
     private let onOpenHistory: () -> Void
     private let onOpenDictionary: () -> Void
     private let onCorrectLast: () -> Void
+    private let onImproveLast: () -> Void
     private let onUndoLast: () -> Void
 
     init(
@@ -25,6 +27,7 @@ final class MenuBarController {
         onOpenHistory: @escaping () -> Void,
         onOpenDictionary: @escaping () -> Void,
         onCorrectLast: @escaping () -> Void,
+        onImproveLast: @escaping () -> Void,
         onUndoLast: @escaping () -> Void
     ) {
         self.modelID = modelID
@@ -33,11 +36,17 @@ final class MenuBarController {
         self.onOpenHistory = onOpenHistory
         self.onOpenDictionary = onOpenDictionary
         self.onCorrectLast = onCorrectLast
+        self.onImproveLast = onImproveLast
         self.onUndoLast = onUndoLast
         self.statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         self.correctLastItem = NSMenuItem(
             title: "Correct Last Transcript…",
             action: #selector(correctLastClicked),
+            keyEquivalent: ""
+        )
+        self.improveLastItem = NSMenuItem(
+            title: "Improve Last Transcript Accuracy…",
+            action: #selector(improveLastClicked),
             keyEquivalent: ""
         )
         self.undoLastItem = NSMenuItem(
@@ -94,6 +103,9 @@ final class MenuBarController {
         correctLastItem.target = self
         correctLastItem.isEnabled = false
         menu.addItem(correctLastItem)
+        improveLastItem.target = self
+        improveLastItem.isEnabled = false
+        menu.addItem(improveLastItem)
         undoLastItem.target = self
         undoLastItem.isEnabled = false
         menu.addItem(undoLastItem)
@@ -130,6 +142,7 @@ final class MenuBarController {
 
     func setHasLatestTranscript(_ available: Bool) {
         correctLastItem.isEnabled = available
+        improveLastItem.isEnabled = available
     }
 
     func setCanUndoLastInsertion(_ available: Bool) {
@@ -195,6 +208,10 @@ final class MenuBarController {
 
     @objc private func correctLastClicked() {
         onCorrectLast()
+    }
+
+    @objc private func improveLastClicked() {
+        onImproveLast()
     }
 
     @objc private func undoLastClicked() {

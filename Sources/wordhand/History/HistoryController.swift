@@ -78,6 +78,69 @@ final class HistoryController {
         dictionary.showEditor(prefill: record.text)
     }
 
+    func improveLatestTranscript() {
+        do {
+            guard let latest = try store.records(limit: 1).first else {
+                NSSound.beep()
+                return
+            }
+            improveAccuracy(of: latest)
+        } catch {
+            presentError(
+                title: "Couldn’t load the last transcript",
+                message: String(describing: error)
+            )
+        }
+    }
+
+    func improveAccuracy(of record: TranscriptRecord) {
+        let editor = NSTextView(frame: NSRect(x: 0, y: 0, width: 480, height: 180))
+        editor.isRichText = false
+        editor.font = .systemFont(ofSize: 14)
+        editor.string = record.referenceText ?? record.text
+        editor.textContainerInset = NSSize(width: 8, height: 8)
+        editor.isAutomaticQuoteSubstitutionEnabled = false
+        editor.isAutomaticDashSubstitutionEnabled = false
+        editor.setAccessibilityLabel("Correct transcript")
+
+        let scroll = NSScrollView(frame: NSRect(x: 0, y: 0, width: 480, height: 180))
+        scroll.documentView = editor
+        scroll.hasVerticalScroller = true
+        scroll.borderType = .bezelBorder
+
+        let alert = NSAlert()
+        alert.messageText = "What should Wordhand have heard?"
+        alert.informativeText = """
+        Fix the text below. Wordhand keeps the correction on this Mac and, when \
+        Quality Lab retained the recording, pairs them for future accuracy evaluation.
+        """
+        alert.accessoryView = scroll
+        alert.addButton(withTitle: "Save Correct Text")
+        alert.addButton(withTitle: "Cancel")
+        alert.window.initialFirstResponder = editor
+
+        while alert.runModal() == .alertFirstButtonReturn {
+            let corrected = editor.string.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !corrected.isEmpty else {
+                presentError(
+                    title: "Correct text is empty",
+                    message: "Enter what Wordhand should have transcribed."
+                )
+                continue
+            }
+            do {
+                try store.updateReferenceText(id: record.id, referenceText: corrected)
+                windowController?.reload()
+                return
+            } catch {
+                presentError(
+                    title: "Couldn’t save the correction",
+                    message: String(describing: error)
+                )
+            }
+        }
+    }
+
     func delete(_ record: TranscriptRecord) {
         let alert = NSAlert()
         alert.messageText = "Delete this transcript?"
@@ -182,6 +245,7 @@ private final class HistoryWindowController: NSWindowController, NSTableViewData
     private let transcriptTextView = NSTextView()
     private let metadataLabel = NSTextField(wrappingLabelWithString: "")
     private let failureLabel = NSTextField(wrappingLabelWithString: "")
+    private let qualityLabel = NSTextField(wrappingLabelWithString: "")
     private let copyButton = NSButton()
     private let reinsertButton = NSButton()
     private let correctionButton = NSButton()
@@ -443,6 +507,9 @@ private final class HistoryWindowController: NSWindowController, NSTableViewData
         failureLabel.font = .systemFont(ofSize: 12, weight: .medium)
         failureLabel.textColor = .systemOrange
         failureLabel.maximumNumberOfLines = 2
+        qualityLabel.font = .systemFont(ofSize: 12, weight: .medium)
+        qualityLabel.textColor = .systemGreen
+        qualityLabel.maximumNumberOfLines = 2
 
         configureActionButton(
             reinsertButton,
@@ -460,8 +527,8 @@ private final class HistoryWindowController: NSWindowController, NSTableViewData
         )
         configureActionButton(
             correctionButton,
-            title: "Correct…",
-            symbol: "text.badge.plus",
+            title: "Improve Accuracy…",
+            symbol: "checkmark.bubble",
             action: #selector(correctionClicked)
         )
         configureActionButton(
@@ -481,7 +548,7 @@ private final class HistoryWindowController: NSWindowController, NSTableViewData
         actions.spacing = 8
 
         let stack = NSStackView(
-            views: [header, textScroll, metadataLabel, failureLabel, actions]
+            views: [header, textScroll, metadataLabel, failureLabel, qualityLabel, actions]
         )
         stack.orientation = .vertical
         stack.alignment = .leading
@@ -503,6 +570,7 @@ private final class HistoryWindowController: NSWindowController, NSTableViewData
             textScroll.heightAnchor.constraint(greaterThanOrEqualToConstant: 250),
             metadataLabel.widthAnchor.constraint(equalTo: stack.widthAnchor),
             failureLabel.widthAnchor.constraint(equalTo: stack.widthAnchor),
+            qualityLabel.widthAnchor.constraint(equalTo: stack.widthAnchor),
             actions.widthAnchor.constraint(equalTo: stack.widthAnchor),
         ])
     }
@@ -584,6 +652,16 @@ private final class HistoryWindowController: NSWindowController, NSTableViewData
             failureLabel.stringValue = ""
             failureLabel.isHidden = true
         }
+
+        if record.referenceText != nil {
+            qualityLabel.stringValue = "Correct reference saved locally for Quality Lab."
+            qualityLabel.isHidden = false
+            correctionButton.title = "Edit Reference…"
+        } else {
+            qualityLabel.stringValue = ""
+            qualityLabel.isHidden = true
+            correctionButton.title = "Improve Accuracy…"
+        }
     }
 
     private func showEmptyState(symbol: String, title: String, message: String) {
@@ -650,7 +728,7 @@ private final class HistoryWindowController: NSWindowController, NSTableViewData
             NSSound.beep()
             return
         }
-        history.createCorrection(from: selectedRecord)
+        history.improveAccuracy(of: selectedRecord)
     }
 
     @objc private func deleteClicked() {

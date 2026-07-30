@@ -8,6 +8,7 @@ actor WhisperKitTranscriber: Transcribing, StreamingTranscribing {
     private let vocabulary: DictionaryVocabularySource
     private var pipeline: WhisperKit?
     private var warmupTask: Task<Void, Error>?
+    private var cachedPromptTokenization: (prompt: String?, tokens: [Int]?)?
     private var cancellationToken: TranscriptionCancellationToken?
     private var streamingSessionID: UUID?
     private var streamingConfiguration = StreamingTranscriptionConfiguration()
@@ -135,6 +136,10 @@ actor WhisperKitTranscriber: Transcribing, StreamingTranscribing {
         streamingIsFinishing = true
         defer { clearStreamingState() }
         if let task = streamingDecodeTask {
+            // A rolling decode only improves perceived progress while speech is
+            // continuing. Once the user stops, it is stale work: cancel it so
+            // the authoritative full-buffer decode can begin immediately.
+            task.cancel()
             await task.value
         }
         streamingDecodeTask = nil
@@ -280,21 +285,38 @@ actor WhisperKitTranscriber: Transcribing, StreamingTranscribing {
     }
 
     private func decodingOptions(for pipeline: WhisperKit) -> DecodingOptions {
-        var promptTokens: [Int]?
-        if
-            let prompt = vocabulary.prompt(),
-            let tokenizer = pipeline.tokenizer
+        let prompt = vocabulary.prompt()?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        if let cachedPromptTokenization,
+           cachedPromptTokenization.prompt == prompt
         {
-            // Whisper tokenizers add special tokens by default. Prompt
-            // conditioning accepts only ordinary text tokens and, like
-            // WhisperKit's own CLI, needs a leading space for word boundaries.
-            let encoded = tokenizer
-                .encode(text: " " + prompt.trimmingCharacters(in: .whitespaces))
-                .filter { $0 < tokenizer.specialTokens.specialTokenBegin }
-            if !encoded.isEmpty {
-                promptTokens = encoded
-            }
+            return Self.makeDecodingOptions(
+                promptTokens: cachedPromptTokenization.tokens
+            )
         }
+
+        guard let prompt else {
+            cachedPromptTokenization = (nil, nil)
+            return Self.makeDecodingOptions(promptTokens: nil)
+        }
+        guard let tokenizer = pipeline.tokenizer else {
+            // A pipeline can briefly exist before its tokenizer is published.
+            // Do not cache this miss or vocabulary conditioning would remain
+            // disabled for the rest of the process.
+            return Self.makeDecodingOptions(promptTokens: nil)
+        }
+
+        var promptTokens: [Int]?
+        // Whisper tokenizers add special tokens by default. Prompt
+        // conditioning accepts only ordinary text tokens and, like
+        // WhisperKit's own CLI, needs a leading space for word boundaries.
+        let encoded = tokenizer
+            .encode(text: " " + prompt)
+            .filter { $0 < tokenizer.specialTokens.specialTokenBegin }
+        if !encoded.isEmpty {
+            promptTokens = encoded
+        }
+        cachedPromptTokenization = (prompt, promptTokens)
         return Self.makeDecodingOptions(promptTokens: promptTokens)
     }
 

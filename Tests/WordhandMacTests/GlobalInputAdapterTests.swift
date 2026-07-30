@@ -209,6 +209,24 @@ struct GlobalInputAdapterTests {
 
     @Test
     @MainActor
+    func qualityLabStorageLimitSavesImmediately() throws {
+        let fixture = try TemporarySettingsFixture()
+        defer { fixture.remove() }
+        let controller = SettingsController(
+            store: fixture.store,
+            settings: AppSettings(),
+            launchAtLoginManager: FakeLaunchAtLoginManager(state: .disabled),
+            permissionManager: FakePermissionManager()
+        )
+
+        controller.setQualityAudioMaximumBytes(5_000_000_000)
+
+        #expect(controller.settings.qualityAudioMaximumBytes == 5_000_000_000)
+        #expect(try fixture.store.load().qualityAudioMaximumBytes == 5_000_000_000)
+    }
+
+    @Test
+    @MainActor
     func settingsPermissionRefreshPublishesRecoveryState() throws {
         let permissions = FakePermissionManager()
         permissions.currentStatus = WordhandPermissionStatus(

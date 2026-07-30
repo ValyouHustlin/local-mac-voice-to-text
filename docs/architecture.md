@@ -133,10 +133,11 @@ Verified by source inspection and dated receipts through 2026-07-29:
   technical tokens, or negated constraints;
 - persistent custom dictionary with versioned, non-destructive editable
   defaults and immediate correction flow;
-- searchable SQLite transcript history with copy, reinsert, correction, and
-  deletion actions;
-- opt-in local Quality Lab audio retention with automatic expiry and owner-only
-  storage; public installs keep it disabled by default;
+- searchable SQLite transcript history with copy, reinsert, dictionary
+  correction, corrected-reference labeling, and deletion actions;
+- opt-in local Quality Lab audio retention with automatic expiry, a selectable
+  aggregate storage ceiling, and owner-only storage; public installs keep it
+  disabled by default;
 - versioned settings and automatic migration from the legacy product name;
 - permission doctor and visible in-app recovery that independently checks
   Microphone, Input Monitoring, and Accessibility instead of reporting a
@@ -157,13 +158,18 @@ receipts may promote latency or compatibility claims.
 
 P0 ground truth and P1 foundation are complete as of 2026-07-28. The package
 now has `WordhandCore`, protocol-backed coordinator seams, versioned settings,
-121 deterministic tests across core and macOS adapter targets, and macOS CI.
+deterministic tests across core and macOS adapter targets, and macOS CI. The
+current exact count belongs in the latest verification receipt rather than this
+long-lived architecture document.
 
 The daily-driver bundle is built by `scripts/build-app.sh` and installed by
 `scripts/install-app.sh`. The installer prefers `/Applications`, falls back to
 `~/Applications` when needed, explicitly registers/imports the bundle, and keeps
-rollback bundles under Application Support so Spotlight and LaunchServices see
-one active Wordhand. Installed builds use `SMAppService.mainApp` for native
+rollback bundles under Application Support with a non-launchable
+`.app-backup` suffix so Spotlight and LaunchServices see one active Wordhand.
+The build-output directory carries a `.metadata_never_index` marker and is
+explicitly unregistered after installation. Installed builds use
+`SMAppService.mainApp` for native
 launch at login. Ad-hoc signing is the public source-build fallback, but it
 changes the app's code identity on each rebuild and can invalidate macOS privacy
 grants. A local identity selected once through
@@ -360,6 +366,16 @@ priority over the unsafe merge, and speed comes from avoiding redundant work.
 Adaptive remains the public default and retains the lower-work single batch
 path. See `docs/verification/2026-07-29-streaming-tail-overlay.md`.
 
+The Whisper vocabulary prompt is tokenized once and reused until an editable
+dictionary change produces a different prompt. The offline rolling experiment
+also cancels an in-flight partial decode when finalization begins, because a
+partial result has no value after the user has stopped and the complete buffer
+is authoritative. On the same local 11.00-second fixture and Large v3 Turbo
+model, one measured before/after run preserved identical text while
+stop-to-final time moved from 2.167 seconds to 1.556 seconds. This measurement
+describes the isolated rolling benchmark; daily runtime remains on the
+authoritative full-buffer path.
+
 The runtime now holds a per-data-directory process lock so a duplicate launch
 cannot create two competing microphone, hotkey, or insertion owners. Toggle
 recordings automatically stop and process at ten minutes instead of growing an
@@ -532,7 +548,8 @@ The history window supports:
 - text search;
 - copy;
 - re-insert into the current target;
-- create dictionary correction;
+- create a dictionary correction;
+- edit and save what Wordhand should have heard as a corrected local reference;
 - delete one record and clear all with confirmation;
 - configurable retention.
 
@@ -542,7 +559,8 @@ failure never loses the words.
 ## Private Quality Lab
 
 Audio retention is useful as an evaluation corpus, not as automatic training.
-Wordhand therefore exposes an explicit Quality Lab toggle and retention window:
+Wordhand therefore exposes an explicit Quality Lab toggle, retention window,
+and aggregate recording-storage ceiling:
 
 - public and fresh installs default to disabled;
 - an existing user may opt in locally without changing the repository default;
@@ -550,14 +568,21 @@ Wordhand therefore exposes an explicit Quality Lab toggle and retention window:
 - no transcript text is duplicated into an audio manifest;
 - the directory is owner-only `0700` and each WAV is owner-only `0600`;
 - recordings expire after 1–90 days, with 7 days as the recommended default;
+- the selectable storage ceiling defaults to 2 GB and removes the oldest WAVs
+  first after startup, a limit change, or a retained capture;
 - deleting one history record deletes its paired audio, and clearing history or
   using Delete All removes retained recordings;
+- the menu-bar `Improve Last Transcript Accuracy…` action and History detail
+  action save corrected reference text in the matching local history row;
 - no upload, sync, analytics, or background training path exists.
 
 The files inherit the Mac's volume-at-rest protection when FileVault is enabled;
-Wordhand does not claim independent application-level encryption. A later
-fine-tuning or regression workflow must use explicit corrected reference text,
-keep all processing local, and receive a separate design and verification pass.
+Wordhand does not claim independent application-level encryption. Corrected
+reference text now makes retained audio useful for controlled local evaluation.
+A later fine-tuning workflow must keep all processing local and receive a
+separate design and verification pass; Wordhand does not automatically train on
+the corpus. See
+`docs/verification/2026-07-29-quality-corrections-storage.md`.
 
 ## Insertion and clipboard behavior
 

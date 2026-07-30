@@ -262,9 +262,9 @@ checks and the real affected flow.
 ### Private Quality Lab checkpoint
 
 Status: implementation and isolated storage verification complete. Natural
-dictation capture is intentionally deferred while Aaron is working. Signed
-build 11 is installed with Aaron's local profile opted into seven-day retention;
-the public default remains off.
+dictation capture is intentionally deferred while Aaron is working. Aaron's
+local profile remains opted into seven-day retention; the public default
+remains off.
 
 - [x] Keep public/fresh-install audio retention off by default.
 - [x] Add a visible Settings toggle with 1, 3, 7, 14, and 30-day expiry choices.
@@ -272,16 +272,24 @@ the public default remains off.
   transcript text into a second manifest.
 - [x] Restrict the directory to `0700` and WAV files to `0600`.
 - [x] Prune expired recordings at startup and after each retained capture.
+- [x] Add a 250 MB–10 GB aggregate recording-storage setting, default it to
+  2 GB, and prune the oldest WAVs immediately after startup, a limit change, or
+  a retained capture.
 - [x] Delete paired audio with one history record and delete all retained audio
   when history is cleared or the Settings action is confirmed.
 - [x] Add local CLI status, enable, disable, and confirmed clear actions.
 - [x] Keep all audio local; add no cloud, sync, analytics, or training job.
-- [ ] Add explicit corrected reference transcripts before using the corpus for
-  actual evaluation or fine-tuning.
+- [x] Add `Improve Last Transcript Accuracy…` in the menu bar and an editable
+  corrected-reference action in History, persisted in the matching history row.
+- [x] Migrate existing version-one history databases in place without losing
+  records.
+- [ ] Build a local-only export/evaluation harness before using the labeled
+  corpus for model comparison or fine-tuning.
 - [ ] Observe one opted-in natural dictation produce a paired WAV after Aaron is
   available for attended audio verification.
 
-Receipt: `docs/verification/2026-07-29-quality-lab-insertion.md`.
+Receipts: `docs/verification/2026-07-29-quality-lab-insertion.md` and
+`docs/verification/2026-07-29-quality-corrections-storage.md`.
 
 ### Flow feedback and app-aware formatting checkpoint
 
@@ -420,6 +428,12 @@ speech. Its attended microphone latency receipt remains open.
   mode release; never insert the rolling window composite.
 - [x] Add a no-microphone `models benchmark --streaming` replay path that
   exercises rolling decode plus release finalization against a local file.
+- [x] Cancel stale in-flight partial work at release before the authoritative
+  full-buffer decode and cache dictionary prompt tokenization until vocabulary
+  changes.
+- [x] Preserve identical text on the 11.00-second fixture while one measured
+  Large v3 Turbo rolling run moves from 2.167 seconds to 1.556 seconds
+  stop-to-final. This is an isolated benchmark, not a natural-voice claim.
 - [x] Disable rolling previews in the daily runtime after measuring that
   discarding them for an authoritative full decode only increased release
   latency.
@@ -479,6 +493,9 @@ Goal: install and update like a normal trusted Mac app.
 - [x] Prefer the standard `/Applications` location, register/import the active
   bundle for Spotlight, and keep rollback apps outside searchable application
   folders so LaunchServices sees one active Wordhand.
+- [x] Preserve rollback bundles with a non-launchable `.app-backup` suffix,
+  exclude build output from Spotlight, and unregister it so only the installed
+  app owns the Wordhand identity.
 - [x] Keep UI and shortcuts immediately available during background model
   warmup, and bypass network validation for a complete local model cache.
 - [x] Add visible permission status and in-app recovery controls that

@@ -99,6 +99,7 @@ struct SettingsTests {
         expected.insertionMode = .unicode
         expected.qualityAudioRetentionEnabled = true
         expected.qualityAudioRetentionDays = 14
+        expected.qualityAudioMaximumBytes = 5_000_000_000
 
         try store.save(expected)
 
@@ -151,6 +152,7 @@ struct SettingsTests {
         #expect(settings.performanceMode == .adaptive)
         #expect(!settings.qualityAudioRetentionEnabled)
         #expect(settings.qualityAudioRetentionDays == 7)
+        #expect(settings.qualityAudioMaximumBytes == 2_000_000_000)
     }
 
     @Test

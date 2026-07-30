@@ -94,6 +94,45 @@ struct LocalQualityAudioArchiveTests {
         #expect(try fixture.archive.recordingCount() == 0)
     }
 
+    @Test
+    func storageLimitRemovesOldestRecordingsFirst() throws {
+        let fixture = TemporaryQualityArchive()
+        defer { fixture.remove() }
+        let oldestID = UUID()
+        let middleID = UUID()
+        let newestID = UUID()
+        for (id, timestamp) in [
+            (oldestID, 100.0),
+            (middleID, 200.0),
+            (newestID, 300.0),
+        ] {
+            _ = try fixture.archive.store(QualityAudioSample(
+                transcriptID: id,
+                createdAt: Date(timeIntervalSince1970: timestamp),
+                samples: [0],
+                sampleRate: 16_000
+            ))
+        }
+
+        let report = try fixture.archive.enforceMaximumBytes(92)
+
+        #expect(report.recordingCount == 2)
+        #expect(report.totalBytes == 92)
+        #expect(report.removedCount == 1)
+        let stored = try fixture.archive.storageReport()
+        #expect(stored.recordingCount == report.recordingCount)
+        #expect(stored.totalBytes == report.totalBytes)
+        #expect(!FileManager.default.fileExists(
+            atPath: fixture.archive.fileURL(for: oldestID).path
+        ))
+        #expect(FileManager.default.fileExists(
+            atPath: fixture.archive.fileURL(for: middleID).path
+        ))
+        #expect(FileManager.default.fileExists(
+            atPath: fixture.archive.fileURL(for: newestID).path
+        ))
+    }
+
     private func posixPermissions(at url: URL) throws -> Int {
         let attributes = try FileManager.default.attributesOfItem(atPath: url.path)
         return (attributes[.posixPermissions] as? NSNumber)?.intValue ?? -1

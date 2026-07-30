@@ -28,14 +28,14 @@ and inserts the result into ordinary Mac apps.
 | **Private by architecture** | Audio and transcript processing stay on the Mac. There is no account, remote transcription API, analytics, or transcript sync. |
 | **Push to talk** | Hold `Control-Space`, speak, and release. A compact overlay shows recording and transcription state. |
 | **Decode-aware dictionary** | Teach Wordhand names, acronyms, product terms, and exact replacements. Canonical spellings condition Whisper before decoding; post-processing remains as a fallback. Changes apply without restarting. |
-| **Recoverable history** | Search recent transcripts, inspect insertion status, copy, reinsert, correct, or delete them from a native window. |
+| **Recoverable history** | Search recent transcripts, inspect insertion status, copy, reinsert, or delete them. When Wordhand misses, save the corrected text against that exact local transcript and, when Quality Lab is enabled, its retained recording. |
 | **A real Mac app** | Wordhand lives in both the menu bar and Dock. Clicking its Dock icon opens Settings; history and dictionary are one click away. |
 | **Ready after login** | The installed app can register as a native macOS login item. Its interface and shortcut become available immediately while the selected speech model warms in the background. |
 | **Accuracy-first local model** | Optimized Whisper Large v3 is the default on capable Macs. Balanced and smaller Whisper models remain selectable. |
 | **Natural self-corrections** | Say “wait, no,” “I meant,” “make that,” or “scratch that.” Wordhand removes the abandoned wording locally before formatting. |
 | **Maximum Performance preview** | On high-end Apple silicon, opt into formatter prewarming while you speak. Final transcription uses the complete audio buffer in every mode so speed never comes from risking dropped words. |
 | **Reliable insertion** | Paste-first insertion works across native, browser, and Electron targets while restoring the previous rich clipboard. Direct typing and copy-only modes are available. |
-| **Private Quality Lab** | Optionally retain short-lived local WAVs paired to transcript history for accuracy evaluation. It is off by default, owner-only, automatically expires, and never uploads. |
+| **Private Quality Lab** | Optionally retain local WAVs paired to corrected transcript references for accuracy evaluation. It is off by default, owner-only, automatically expires, stays under a selectable storage ceiling, and never uploads. |
 | **Safe retry and undo** | When a text field exposes its cursor, Wordhand acknowledges delivery, retries one proven no-op, and can remove only its own last verified insertion. |
 | **Flow-focused feedback** | Quiet start/stop tones, an expressive live waveform, a display-following recording control, and one-click cancellation keep dictation legible without demanding attention. |
 | **Four writing styles** | Choose Casual, Formatted, Professional, or AI Communication. AI mode keeps connected reasoning as prose and uses lists, steps, or lightweight sections only when the content calls for them. The three richer modes use Apple’s on-device model with meaning-preservation checks and safe local fallback. |
@@ -63,10 +63,11 @@ cd wordhand
 
 This installs `Wordhand.app` in `/Applications` when that directory is writable
 (otherwise `~/Applications`), moves rollback copies outside the searchable
-Applications folders, registers and imports the app for Spotlight, enables
-launch at login, and opens it. Local source builds are ad-hoc signed; they are
-not a substitute for the planned notarized public release, and macOS may require
-permissions again after replacing an ad-hoc-signed build.
+Applications folders with a non-launchable backup suffix, keeps build output
+out of Spotlight, registers the installed app, enables launch at login, and
+opens it. Local source builds are ad-hoc signed; they are not a substitute for
+the planned notarized public release, and macOS may require permissions again
+after replacing an ad-hoc-signed build.
 
 For repeated local development installs, use one persistent Keychain
 code-signing identity so macOS sees each rebuild as the same app:
@@ -122,9 +123,12 @@ Quality Lab audio retention is disabled by default. When explicitly enabled,
 16 kHz mono WAV files are kept under
 `~/Library/Application Support/Wordhand/Quality Recordings`, named by their
 matching transcript-history IDs, restricted to the current user, and deleted
-automatically after the selected retention window. The files make controlled
-evaluation and future local fine-tuning possible; Wordhand does not train on
-them automatically and does not upload them.
+automatically after the selected retention window. A selectable 250 MB–10 GB
+aggregate ceiling removes the oldest recordings first. From the menu bar or
+History, **Improve Last Transcript Accuracy…** saves what Wordhand should have
+heard in the matching local history row. These pairs make controlled evaluation
+and future local fine-tuning possible; Wordhand does not train on them
+automatically and does not upload them.
 
 If macOS uses `Control-Space` to switch input sources, disable **Select the
 previous input source** under **System Settings > Keyboard > Keyboard
@@ -190,9 +194,9 @@ dedicated to the test. The immediate kill command is
 
 ## Roadmap
 
-The next daily-use slices are corrected Quality Lab reference transcripts,
-fresh-account onboarding, an attended Maximum Performance latency pass, and a
-signed release path. See
+The next daily-use slices are a local corpus-evaluation harness, fresh-account
+onboarding, an attended natural-voice latency pass, and a signed release path.
+See
 [the product roadmap](.plan/plan.md) and
 [architecture](docs/architecture.md).
 

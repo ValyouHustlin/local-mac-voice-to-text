@@ -66,6 +66,85 @@ struct TranscriptHistoryStoreTests {
     }
 
     @Test
+    func storesCorrectedReferenceTextForQualityEvaluation() throws {
+        let fixture = try HistoryFixture()
+        let record = fixture.record(text: "Value ships whisper kid.")
+        try fixture.store.save(record)
+
+        try fixture.store.updateReferenceText(
+            id: record.id,
+            referenceText: "Valyou ships WhisperKit."
+        )
+
+        let loaded = try #require(try fixture.store.records().first)
+        #expect(loaded.referenceText == "Valyou ships WhisperKit.")
+        #expect(
+            try fixture.store.records(matching: "WhisperKit").map(\.id)
+                == [record.id]
+        )
+        #expect(try fixture.store.labeledRecordCount() == 1)
+    }
+
+    @Test
+    func migratesVersionOneHistoryWithoutLosingRecords() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(
+                "wordhand-history-v1-\(UUID().uuidString)",
+                isDirectory: true
+            )
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try FileManager.default.createDirectory(
+            at: directory,
+            withIntermediateDirectories: true
+        )
+        let databaseURL = directory.appendingPathComponent("history.sqlite")
+        var database: OpaquePointer?
+        #expect(sqlite3_open(databaseURL.path, &database) == SQLITE_OK)
+        let recordID = UUID()
+        let createVersionOne = """
+        CREATE TABLE transcripts (
+            id TEXT PRIMARY KEY NOT NULL,
+            created_at REAL NOT NULL,
+            raw_text TEXT NOT NULL,
+            processed_text TEXT NOT NULL,
+            model_id TEXT NOT NULL,
+            language TEXT,
+            audio_duration REAL NOT NULL,
+            transcription_duration REAL NOT NULL,
+            insertion_mode TEXT NOT NULL,
+            target_bundle_id TEXT,
+            target_app_name TEXT,
+            insertion_status TEXT NOT NULL,
+            failure_reason TEXT
+        );
+        INSERT INTO transcripts VALUES (
+            '\(recordID.uuidString)', 100, 'raw', 'Existing transcript',
+            'whisper-base.en', 'en', 1, 0.2, 'paste',
+            'com.apple.TextEdit', 'TextEdit', 'inserted', NULL
+        );
+        PRAGMA user_version = 1;
+        """
+        #expect(
+            sqlite3_exec(database, createVersionOne, nil, nil, nil) == SQLITE_OK
+        )
+        sqlite3_close(database)
+
+        let migrated = try TranscriptHistoryStore(fileURL: databaseURL)
+        let record = try #require(try migrated.records().first)
+
+        #expect(record.id == recordID)
+        #expect(record.text == "Existing transcript")
+        #expect(record.referenceText == nil)
+        try migrated.updateReferenceText(
+            id: recordID,
+            referenceText: "Corrected transcript"
+        )
+        #expect(
+            try migrated.records().first?.referenceText == "Corrected transcript"
+        )
+    }
+
+    @Test
     func deletesPrunesAndClearsRecords() throws {
         let fixture = try HistoryFixture()
         let old = fixture.record(
@@ -105,6 +184,12 @@ struct TranscriptHistoryStoreTests {
         let missing = UUID(uuidString: "00000000-0000-0000-0000-000000000099")!
         #expect(throws: TranscriptHistoryError.missingRecord(missing)) {
             try fixture.store.updateStatus(id: missing, status: .inserted)
+        }
+        #expect(throws: TranscriptHistoryError.missingRecord(missing)) {
+            try fixture.store.updateReferenceText(
+                id: missing,
+                referenceText: "Missing"
+            )
         }
     }
 

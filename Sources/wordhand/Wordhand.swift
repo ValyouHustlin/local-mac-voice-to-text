@@ -199,6 +199,9 @@ struct Run: ParsableCommand {
            )
         {
             try qualityAudioArchive.prune(olderThan: qualityCutoff)
+            _ = try qualityAudioArchive.enforceMaximumBytes(
+                settings.qualityAudioMaximumBytes
+            )
         }
         let history = MainActor.assumeIsolated {
             HistoryController(
@@ -232,6 +235,7 @@ struct Run: ParsableCommand {
                 onOpenHistory: { history.showHistory() },
                 onOpenDictionary: { dictionary.showDictionary() },
                 onCorrectLast: { dictionary.correctLatestTranscript() },
+                onImproveLast: { history.improveLatestTranscript() },
                 onUndoLast: {
                     do {
                         try inserter.undoLastInsertion()
@@ -241,6 +245,10 @@ struct Run: ParsableCommand {
                     }
                 }
             )
+            if let latest = try? history.records(matching: "").first {
+                dictionary.rememberLatestTranscript(latest.text)
+                controller.setHasLatestTranscript(true)
+            }
             return controller!
         }
         let readiness = MainActor.assumeIsolated {
@@ -306,6 +314,20 @@ struct Run: ParsableCommand {
                 menuBar.updateSettings(updated)
                 if !updated.showOverlay {
                     overlay?.hide()
+                }
+                if updated.qualityAudioRetentionEnabled {
+                    let maximumBytes = updated.qualityAudioMaximumBytes
+                    Task.detached {
+                        do {
+                            _ = try qualityAudioArchive.enforceMaximumBytes(
+                                maximumBytes
+                            )
+                        } catch {
+                            FileHandle.standardError.write(Data(
+                                "quality storage cleanup failed: \(error)\n".utf8
+                            ))
+                        }
+                    }
                 }
             }
             inserter.onUndoAvailabilityChange = { available in
@@ -429,6 +451,7 @@ struct Run: ParsableCommand {
                     return
                 }
                 let retentionDays = settingsController.settings.qualityAudioRetentionDays
+                let maximumBytes = settingsController.settings.qualityAudioMaximumBytes
                 Task.detached {
                     do {
                         _ = try qualityAudioArchive.store(sample)
@@ -439,6 +462,9 @@ struct Run: ParsableCommand {
                         ) {
                             try qualityAudioArchive.prune(olderThan: cutoff)
                         }
+                        _ = try qualityAudioArchive.enforceMaximumBytes(
+                            maximumBytes
+                        )
                     } catch {
                         FileHandle.standardError.write(Data(
                             "quality audio archive failed: \(error)\n".utf8
@@ -574,13 +600,25 @@ struct Quality: ParsableCommand {
                 fileURL: SettingsStore.defaultFileURL()
             ).load()
             let archive = LocalQualityAudioArchive()
+            let report = try archive.storageReport()
             print(
                 settings.qualityAudioRetentionEnabled
                     ? "enabled · \(settings.qualityAudioRetentionDays)-day retention"
                     : "disabled"
             )
-            print("recordings: \(try archive.recordingCount())")
+            print("recordings: \(report.recordingCount)")
+            print(
+                "storage: \(Self.bytes(report.totalBytes)) / "
+                    + "\(Self.bytes(settings.qualityAudioMaximumBytes))"
+            )
             print("location: \(archive.directoryURL.path)")
+        }
+
+        private static func bytes(_ count: Int64) -> String {
+            ByteCountFormatter.string(
+                fromByteCount: count,
+                countStyle: .file
+            )
         }
     }
 

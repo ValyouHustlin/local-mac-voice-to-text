@@ -21,7 +21,20 @@ public struct QualityAudioSample: Equatable, Sendable {
 
 public enum QualityAudioArchiveError: Error, Equatable {
     case invalidSampleRate(Int)
+    case invalidMaximumBytes(Int64)
     case recordingTooLarge
+}
+
+public struct QualityAudioStorageReport: Equatable, Sendable {
+    public let recordingCount: Int
+    public let totalBytes: Int64
+    public let removedCount: Int
+
+    public init(recordingCount: Int, totalBytes: Int64, removedCount: Int = 0) {
+        self.recordingCount = recordingCount
+        self.totalBytes = totalBytes
+        self.removedCount = removedCount
+    }
 }
 
 /// A private, local corpus for evaluating transcription mistakes. Files are
@@ -131,6 +144,56 @@ public final class LocalQualityAudioArchive: @unchecked Sendable {
         }
     }
 
+    public func storageReport() throws -> QualityAudioStorageReport {
+        try lock.withLock {
+            guard fileManager.fileExists(atPath: directoryURL.path) else {
+                return QualityAudioStorageReport(recordingCount: 0, totalBytes: 0)
+            }
+            let recordings = try recordingFiles()
+            return QualityAudioStorageReport(
+                recordingCount: recordings.count,
+                totalBytes: recordings.reduce(Int64(0)) { $0 + $1.bytes }
+            )
+        }
+    }
+
+    @discardableResult
+    public func enforceMaximumBytes(_ maximumBytes: Int64) throws
+        -> QualityAudioStorageReport
+    {
+        try lock.withLock {
+            guard maximumBytes >= 0 else {
+                throw QualityAudioArchiveError.invalidMaximumBytes(maximumBytes)
+            }
+            guard fileManager.fileExists(atPath: directoryURL.path) else {
+                return QualityAudioStorageReport(
+                    recordingCount: 0,
+                    totalBytes: 0
+                )
+            }
+            var recordings = try recordingFiles()
+            var totalBytes = recordings.reduce(Int64(0)) { $0 + $1.bytes }
+            var removedCount = 0
+
+            for recording in recordings where totalBytes > maximumBytes {
+                try fileManager.removeItem(at: recording.url)
+                if let id = UUID(
+                    uuidString: recording.url.deletingPathExtension().lastPathComponent
+                ) {
+                    deletedTranscriptIDs.insert(id)
+                }
+                totalBytes -= recording.bytes
+                removedCount += 1
+            }
+            recordings.removeFirst(min(removedCount, recordings.count))
+            return QualityAudioStorageReport(
+                recordingCount: recordings.count,
+                totalBytes: totalBytes,
+                removedCount: removedCount
+            )
+        }
+    }
+
     public func fileURL(for transcriptID: UUID) -> URL {
         directoryURL.appendingPathComponent(
             transcriptID.uuidString.lowercased() + ".wav"
@@ -154,6 +217,27 @@ public final class LocalQualityAudioArchive: @unchecked Sendable {
             includingPropertiesForKeys: [.contentModificationDateKey],
             options: [.skipsHiddenFiles]
         ).filter { $0.pathExtension.lowercased() == "wav" }
+    }
+
+    private func recordingFiles() throws
+        -> [(url: URL, modifiedAt: Date, bytes: Int64)]
+    {
+        try recordingURLs().map { url in
+            let values = try url.resourceValues(forKeys: [
+                .contentModificationDateKey,
+                .fileSizeKey,
+            ])
+            return (
+                url: url,
+                modifiedAt: values.contentModificationDate ?? .distantPast,
+                bytes: Int64(values.fileSize ?? 0)
+            )
+        }.sorted {
+            if $0.modifiedAt == $1.modifiedAt {
+                return $0.url.lastPathComponent < $1.url.lastPathComponent
+            }
+            return $0.modifiedAt < $1.modifiedAt
+        }
     }
 
     private static func wavData(samples: [Float], sampleRate: Int) -> Data {

@@ -127,6 +127,7 @@ public struct AppSettings: Codable, Equatable, Sendable {
     public var historyRetentionDays: Int
     public var qualityAudioRetentionEnabled: Bool
     public var qualityAudioRetentionDays: Int
+    public var qualityAudioMaximumBytes: Int64
     public var hotkeys: [HotkeyBinding]
 
     public init(
@@ -140,6 +141,7 @@ public struct AppSettings: Codable, Equatable, Sendable {
         historyRetentionDays: Int = 30,
         qualityAudioRetentionEnabled: Bool = false,
         qualityAudioRetentionDays: Int = 7,
+        qualityAudioMaximumBytes: Int64 = 2_000_000_000,
         hotkeys: [HotkeyBinding] = [
             HotkeyBinding(key: "space", modifiers: ["control"], action: .pushToTalk),
         ]
@@ -154,6 +156,7 @@ public struct AppSettings: Codable, Equatable, Sendable {
         self.historyRetentionDays = historyRetentionDays
         self.qualityAudioRetentionEnabled = qualityAudioRetentionEnabled
         self.qualityAudioRetentionDays = qualityAudioRetentionDays
+        self.qualityAudioMaximumBytes = qualityAudioMaximumBytes
         self.hotkeys = hotkeys
     }
 
@@ -168,6 +171,7 @@ public struct AppSettings: Codable, Equatable, Sendable {
         case historyRetentionDays
         case qualityAudioRetentionEnabled
         case qualityAudioRetentionDays
+        case qualityAudioMaximumBytes
         case hotkeys
     }
 
@@ -198,6 +202,10 @@ public struct AppSettings: Codable, Equatable, Sendable {
             Int.self,
             forKey: .qualityAudioRetentionDays
         ) ?? 7
+        qualityAudioMaximumBytes = try container.decodeIfPresent(
+            Int64.self,
+            forKey: .qualityAudioMaximumBytes
+        ) ?? 2_000_000_000
         hotkeys = try container.decode([HotkeyBinding].self, forKey: .hotkeys)
     }
 
@@ -214,6 +222,12 @@ public struct AppSettings: Codable, Equatable, Sendable {
         guard (1...90).contains(qualityAudioRetentionDays) else {
             throw SettingsError.invalidQualityAudioRetentionDays(
                 qualityAudioRetentionDays
+            )
+        }
+        guard (100_000_000...100_000_000_000).contains(qualityAudioMaximumBytes)
+        else {
+            throw SettingsError.invalidQualityAudioMaximumBytes(
+                qualityAudioMaximumBytes
             )
         }
         guard !hotkeys.isEmpty, hotkeys.allSatisfy({ !$0.key.isEmpty }) else {
@@ -245,6 +259,7 @@ public enum SettingsError: Error, Equatable {
     case unknownModel(String)
     case invalidRetentionDays(Int)
     case invalidQualityAudioRetentionDays(Int)
+    case invalidQualityAudioMaximumBytes(Int64)
     case invalidHotkeys
     case invalidHotkey
     case duplicateHotkey

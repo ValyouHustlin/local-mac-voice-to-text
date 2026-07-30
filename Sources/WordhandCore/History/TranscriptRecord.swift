@@ -30,6 +30,7 @@ public struct TranscriptRecord: Equatable, Identifiable, Sendable {
     public let insertionMode: InsertionMode
     public let target: TranscriptTarget
     public let status: TranscriptInsertionStatus
+    public let referenceText: String?
 
     public init(
         id: UUID = UUID(),
@@ -42,7 +43,8 @@ public struct TranscriptRecord: Equatable, Identifiable, Sendable {
         transcriptionDuration: TimeInterval,
         insertionMode: InsertionMode,
         target: TranscriptTarget = .unknown,
-        status: TranscriptInsertionStatus = .pendingInsertion
+        status: TranscriptInsertionStatus = .pendingInsertion,
+        referenceText: String? = nil
     ) {
         self.id = id
         self.createdAt = createdAt
@@ -55,6 +57,7 @@ public struct TranscriptRecord: Equatable, Identifiable, Sendable {
         self.insertionMode = insertionMode
         self.target = target
         self.status = status
+        self.referenceText = referenceText
     }
 }
 

@@ -9,7 +9,7 @@ public enum TranscriptHistoryError: Error, Equatable {
 }
 
 public final class TranscriptHistoryStore: TranscriptRecording, @unchecked Sendable {
-    public static let currentSchemaVersion = 1
+    public static let currentSchemaVersion = 2
 
     public let fileURL: URL
 
@@ -71,8 +71,9 @@ public final class TranscriptHistoryStore: TranscriptRecording, @unchecked Senda
                 INSERT INTO transcripts (
                     id, created_at, raw_text, processed_text, model_id, language,
                     audio_duration, transcription_duration, insertion_mode,
-                    target_bundle_id, target_app_name, insertion_status, failure_reason
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    target_bundle_id, target_app_name, insertion_status,
+                    failure_reason, reference_text
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """
             )
             defer { sqlite3_finalize(statement) }
@@ -91,6 +92,7 @@ public final class TranscriptHistoryStore: TranscriptRecording, @unchecked Senda
             let encodedStatus = Self.encode(record.status)
             bind(encodedStatus.value, to: 12, in: statement)
             bind(encodedStatus.reason, to: 13, in: statement)
+            bind(record.referenceText, to: 14, in: statement)
 
             let result = sqlite3_step(statement)
             if result == SQLITE_CONSTRAINT {
@@ -123,6 +125,39 @@ public final class TranscriptHistoryStore: TranscriptRecording, @unchecked Senda
         }
     }
 
+    public func updateReferenceText(id: UUID, referenceText: String?) throws {
+        try locked {
+            let statement = try prepare(
+                "UPDATE transcripts SET reference_text = ? WHERE id = ?"
+            )
+            defer { sqlite3_finalize(statement) }
+            let normalized = referenceText?
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            bind(normalized?.isEmpty == false ? normalized : nil, to: 1, in: statement)
+            bind(id.uuidString, to: 2, in: statement)
+            try stepToCompletion(statement)
+            guard sqlite3_changes(database) == 1 else {
+                throw TranscriptHistoryError.missingRecord(id)
+            }
+        }
+    }
+
+    public func labeledRecordCount() throws -> Int {
+        try locked {
+            let statement = try prepare(
+                """
+                SELECT COUNT(*) FROM transcripts
+                WHERE reference_text IS NOT NULL AND trim(reference_text) <> ''
+                """
+            )
+            defer { sqlite3_finalize(statement) }
+            guard sqlite3_step(statement) == SQLITE_ROW else {
+                throw databaseError(sqlite3_errcode(database))
+            }
+            return Int(sqlite3_column_int64(statement, 0))
+        }
+    }
+
     public func records(matching query: String = "", limit: Int = 500) throws
         -> [TranscriptRecord]
     {
@@ -132,7 +167,8 @@ public final class TranscriptHistoryStore: TranscriptRecording, @unchecked Senda
                 SELECT
                     id, created_at, raw_text, processed_text, model_id, language,
                     audio_duration, transcription_duration, insertion_mode,
-                    target_bundle_id, target_app_name, insertion_status, failure_reason
+                    target_bundle_id, target_app_name, insertion_status,
+                    failure_reason, reference_text
                 FROM transcripts
                 ORDER BY created_at DESC, rowid DESC
                 LIMIT ?
@@ -211,37 +247,54 @@ public final class TranscriptHistoryStore: TranscriptRecording, @unchecked Senda
             guard version <= Self.currentSchemaVersion else {
                 throw TranscriptHistoryError.unsupportedSchema(version)
             }
-            guard version == 0 else { return }
-
-            try execute("BEGIN IMMEDIATE")
-            do {
-                try execute(
-                    """
-                    CREATE TABLE transcripts (
-                        id TEXT PRIMARY KEY NOT NULL,
-                        created_at REAL NOT NULL,
-                        raw_text TEXT NOT NULL,
-                        processed_text TEXT NOT NULL,
-                        model_id TEXT NOT NULL,
-                        language TEXT,
-                        audio_duration REAL NOT NULL,
-                        transcription_duration REAL NOT NULL,
-                        insertion_mode TEXT NOT NULL,
-                        target_bundle_id TEXT,
-                        target_app_name TEXT,
-                        insertion_status TEXT NOT NULL,
-                        failure_reason TEXT
+            if version == 0 {
+                try execute("BEGIN IMMEDIATE")
+                do {
+                    try execute(
+                        """
+                        CREATE TABLE transcripts (
+                            id TEXT PRIMARY KEY NOT NULL,
+                            created_at REAL NOT NULL,
+                            raw_text TEXT NOT NULL,
+                            processed_text TEXT NOT NULL,
+                            model_id TEXT NOT NULL,
+                            language TEXT,
+                            audio_duration REAL NOT NULL,
+                            transcription_duration REAL NOT NULL,
+                            insertion_mode TEXT NOT NULL,
+                            target_bundle_id TEXT,
+                            target_app_name TEXT,
+                            insertion_status TEXT NOT NULL,
+                            failure_reason TEXT,
+                            reference_text TEXT
+                        )
+                        """
                     )
-                    """
-                )
-                try execute(
-                    "CREATE INDEX transcripts_created_at ON transcripts(created_at DESC)"
-                )
-                try execute("PRAGMA user_version = \(Self.currentSchemaVersion)")
-                try execute("COMMIT")
-            } catch {
-                try? execute("ROLLBACK")
-                throw error
+                    try execute(
+                        "CREATE INDEX transcripts_created_at "
+                            + "ON transcripts(created_at DESC)"
+                    )
+                    try execute("PRAGMA user_version = \(Self.currentSchemaVersion)")
+                    try execute("COMMIT")
+                } catch {
+                    try? execute("ROLLBACK")
+                    throw error
+                }
+                return
+            }
+
+            if version == 1 {
+                try execute("BEGIN IMMEDIATE")
+                do {
+                    try execute(
+                        "ALTER TABLE transcripts ADD COLUMN reference_text TEXT"
+                    )
+                    try execute("PRAGMA user_version = 2")
+                    try execute("COMMIT")
+                } catch {
+                    try? execute("ROLLBACK")
+                    throw error
+                }
             }
         }
     }
@@ -289,7 +342,8 @@ public final class TranscriptHistoryStore: TranscriptRecording, @unchecked Senda
                 bundleIdentifier: string(at: 9, in: statement),
                 applicationName: string(at: 10, in: statement)
             ),
-            status: status
+            status: status,
+            referenceText: string(at: 13, in: statement)
         )
     }
 
@@ -326,6 +380,7 @@ public final class TranscriptHistoryStore: TranscriptRecording, @unchecked Senda
         let candidates = [
             record.text,
             record.rawText,
+            record.referenceText ?? "",
             record.target.applicationName ?? "",
         ]
         return candidates.contains {
