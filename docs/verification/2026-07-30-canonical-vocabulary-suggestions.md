@@ -75,7 +75,10 @@ the generated PNG. The selected newest support showed:
 
 No Wordhand runtime, microphone, event tap, clipboard, or insertion path was
 started. This is a native isolated-render receipt, not an installed-app or
-natural-dictation claim.
+natural-dictation claim. The render test executes only when
+`WORDHAND_UI_RECEIPT` is set because AppKit bitmap rendering requires the
+logged-in WindowServer; ordinary headless CI continues to run the deterministic
+History, oracle, persistence, and acceptance tests.
 
 A read-only count against the current Wordhand data directory found zero
 corrected references and 37 retained WAVs. The installed app therefore has no
@@ -109,3 +112,11 @@ unsigned-release packaging guards passed; the diff check passed. A neutral
 review initially found exact-punctuation and stale dictionary-state defects.
 After their regressions and fixes, its final verdict was `SHIP` with no
 remaining finding at or above 80% confidence.
+
+The first pushed CI run remained inside `swift test` for 15 minutes without a
+terminal result, versus the prior roughly five-minute workflow. The native
+bitmap receipt was the only new WindowServer-dependent test, so it was isolated
+behind the explicit receipt variable and the full 242-test suite was re-run
+locally both without that variable and with the dedicated render invocation.
+The superseding headless-safe commit requires a fresh green GitHub run before
+this checkpoint closes.
