@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import Testing
 import WordhandCore
@@ -83,6 +84,30 @@ struct GlobalInputAdapterTests {
 
         #expect(controller.launchAtLoginState == .requiresApproval)
         #expect(manager.openSettingsCount == 1)
+    }
+
+    @Test
+    @MainActor
+    func settingsWindowIsResizableAndCanShowMoreContent() throws {
+        _ = NSApplication.shared
+        let fixture = try TemporarySettingsFixture()
+        defer { fixture.remove() }
+        let controller = SettingsController(
+            store: fixture.store,
+            settings: AppSettings(),
+            launchAtLoginManager: FakeLaunchAtLoginManager(state: .disabled),
+            permissionManager: FakePermissionManager()
+        )
+
+        let window = try #require(controller.ensureWindowController().window)
+        defer { window.close() }
+
+        #expect(window.title == "Settings")
+        #expect(window.styleMask.contains(.resizable))
+        #expect(window.minSize == NSSize(width: 620, height: 440))
+
+        window.setContentSize(NSSize(width: 900, height: 700))
+        #expect(window.contentView?.frame.size == NSSize(width: 900, height: 700))
     }
 
     @Test

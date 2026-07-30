@@ -259,19 +259,21 @@ final class SettingsController: NSObject, ObservableObject, NSWindowDelegate {
         }
     }
 
-    private func ensureWindowController() -> NSWindowController {
+    func ensureWindowController() -> NSWindowController {
         if let windowController { return windowController }
 
         let view = SettingsView(controller: self)
         let hostingController = NSHostingController(rootView: view)
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 680, height: 440),
-            styleMask: [.titled, .closable, .miniaturizable],
+            contentRect: NSRect(x: 0, y: 0, width: 760, height: 620),
+            styleMask: [.titled, .closable, .miniaturizable, .resizable],
             backing: .buffered,
             defer: false
         )
         window.title = "Settings"
         window.subtitle = "Wordhand"
+        window.minSize = NSSize(width: 620, height: 440)
+        window.setFrameAutosaveName("Wordhand.Settings")
         window.contentViewController = hostingController
         window.isReleasedWhenClosed = false
         window.delegate = self
@@ -338,10 +340,11 @@ private struct SettingsView: View {
                     recordingCard
                     privacyNote
                 }
+                .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(32)
             }
         }
-        .frame(width: 680, height: 440)
+        .frame(minWidth: 620, minHeight: 440)
     }
 
     private var startupCard: some View {

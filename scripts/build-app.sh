@@ -8,7 +8,13 @@ REPO_DIR="$(cd "${SCRIPT_DIR}/.." && /bin/pwd)"
 APP_PATH="${WORDHAND_APP_OUTPUT:-${REPO_DIR}/dist/Wordhand.app}"
 APP_VERSION="${WORDHAND_VERSION:-0.1.0}"
 APP_BUILD="${WORDHAND_BUILD_NUMBER:-1}"
-SIGNING_IDENTITY="${WORDHAND_CODESIGN_IDENTITY:--}"
+SIGNING_CONFIG="${WORDHAND_SIGNING_CONFIG:-${HOME}/Library/Application Support/Wordhand/signing-identity}"
+SIGNING_IDENTITY="${WORDHAND_CODESIGN_IDENTITY:-}"
+
+if [ -z "${SIGNING_IDENTITY}" ] && [ -f "${SIGNING_CONFIG}" ]; then
+    IFS= read -r SIGNING_IDENTITY < "${SIGNING_CONFIG}" || true
+fi
+SIGNING_IDENTITY="${SIGNING_IDENTITY:--}"
 
 case "${APP_PATH}" in
     */Wordhand.app) ;;
@@ -76,6 +82,8 @@ SIZES
 /bin/echo "Version ${APP_VERSION} (${APP_BUILD})"
 if [ "${SIGNING_IDENTITY}" = "-" ]; then
     /bin/echo "Signature: local ad hoc"
+    /bin/echo "Warning: macOS permissions may reset when this build replaces a previous ad-hoc build." >&2
+    /bin/echo "Configure one stable Keychain identity with scripts/configure-local-signing.sh." >&2
 else
     /bin/echo "Signature: ${SIGNING_IDENTITY}"
 fi

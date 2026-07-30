@@ -65,6 +65,19 @@ launch at login, and opens it. Local source builds are ad-hoc signed; they are
 not a substitute for the planned notarized public release, and macOS may require
 permissions again after replacing an ad-hoc-signed build.
 
+For repeated local development installs, use one persistent Keychain
+code-signing identity so macOS sees each rebuild as the same app:
+
+```sh
+./scripts/configure-local-signing.sh "Your Code Signing Identity"
+./scripts/install-app.sh --launch-at-login
+```
+
+The configuration stores only the identity's display name at
+`~/Library/Application Support/Wordhand/signing-identity`; the private key
+remains in Keychain. The public release path still requires Developer ID
+signing and notarization.
+
 On first launch, macOS asks for Microphone, Input Monitoring, and Accessibility
 access. Wordhand keeps Settings open with a separate, truthful status and repair
 action for each grant. Input Monitoring detects the global shortcut,

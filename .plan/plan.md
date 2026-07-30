@@ -407,7 +407,13 @@ Goal: install and update like a normal trusted Mac app.
   warmup, and bypass network validation for a complete local model cache.
 - [x] Add visible permission status and in-app recovery controls that
   independently verify Microphone, Input Monitoring, and Accessibility.
+- [x] Make Settings resizable, remember its frame, and open at a size that
+  exposes substantially more controls.
+- [x] Support a persistent local Keychain signing identity and warn explicitly
+  when an ad-hoc rebuild can invalidate macOS privacy grants.
 - [x] Restrict local settings, vocabulary, and history data to the owner.
+- Select Aaron's local signing identity and verify privacy grants survive an
+  installed rebuild.
 - Sign with hardened runtime.
 - Notarize and staple.
 - Package without stripping quarantine.

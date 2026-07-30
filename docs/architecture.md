@@ -136,10 +136,10 @@ Verified by source inspection and dated receipts on 2026-07-28:
 - permission doctor and visible in-app recovery that independently checks
   Microphone, Input Monitoring, and Accessibility instead of reporting a
   false-ready state;
-- a stable native application bundle with local code signing, native login-item
-  registration, standard Applications-folder and Spotlight registration,
-  rollback copies stored outside searchable application folders, and a legacy
-  LaunchAgent fallback for command-line-only builds;
+- a stable native application bundle with configurable persistent local code
+  signing, native login-item registration, standard Applications-folder and
+  Spotlight registration, rollback copies stored outside searchable application
+  folders, and a legacy LaunchAgent fallback for command-line-only builds;
 - immediate menu, Dock, and shortcut readiness while the selected model warms
   asynchronously from a complete local cache without network validation;
 - macOS continuous integration for tests and release builds.
@@ -159,7 +159,12 @@ The daily-driver bundle is built by `scripts/build-app.sh` and installed by
 `~/Applications` when needed, explicitly registers/imports the bundle, and keeps
 rollback bundles under Application Support so Spotlight and LaunchServices see
 one active Wordhand. Installed builds use `SMAppService.mainApp` for native
-launch at login. The UI starts before model warmup; a complete local WhisperKit
+launch at login. Ad-hoc signing is the public source-build fallback, but it
+changes the app's code identity on each rebuild and can invalidate macOS privacy
+grants. A local identity selected once through
+`scripts/configure-local-signing.sh` is reused automatically by future builds;
+the file stores only its display name while the private key stays in Keychain.
+The UI starts before model warmup; a complete local WhisperKit
 cache is opened with downloading disabled, while a missing cache falls back to
 the explicit download path. Settings, dictionary, history, and the data
 directory are hardened to owner-only permissions.
