@@ -163,7 +163,7 @@ extension Models {
                 modelID: selectedModel.id,
                 baselineImplementationID: "full-buffer-authoritative-v1",
                 candidateImplementationID:
-                    "rolling-precompute-full-buffer-final-control-v1",
+                    "cumulative-prefix-overlap-final-v1",
                 decoderConfigurationID: "wordhand-english-default-v1",
                 audioSHA256: audioSHA256,
                 fixtureSHA256: Self.sha256(fixtureData),
@@ -276,7 +276,12 @@ extension Models {
             audio: [Float]
         ) async throws -> AuthorityTranscriptRun {
             await transcriber.beginStreaming(
-                configuration: StreamingTranscriptionConfiguration()
+                configuration: StreamingTranscriptionConfiguration(
+                    decodeIntervalSeconds: 8,
+                    correctionHorizonSegments: 8,
+                    finalizationStrategy:
+                        .cumulativePrefixAuthorityExperiment
+                )
             )
             let chunkSize = Int(AudioCapture.targetSampleRate / 2)
             var start = 0
@@ -285,7 +290,7 @@ extension Models {
                 await transcriber.appendStreamingAudio(Array(audio[start..<end]))
                 start = end
                 if start < audio.count {
-                    try await Task.sleep(nanoseconds: 125_000_000)
+                    try await Task.sleep(nanoseconds: 250_000_000)
                 }
             }
             let started = ProcessInfo.processInfo.systemUptime
@@ -295,17 +300,17 @@ extension Models {
                 transcript: result.text.trimmingCharacters(in: .whitespacesAndNewlines),
                 stopToFinalSeconds: ProcessInfo.processInfo.systemUptime - started,
                 provenance: AuthorityRunProvenance(
-                    authorityPath: "full_buffer_control",
-                    fallbackReason: "incremental_authority_not_implemented",
+                    authorityPath: result.authorityPath,
+                    fallbackReason: result.fallbackReason,
                     preReleaseDecodeCount: result.preReleaseDecodeCount,
                     preReleaseInferenceSeconds:
                         result.preReleaseInferenceDuration,
                     cancellationDrainSeconds:
                         result.cancellationDrainDuration,
-                    reusedSampleCount: 0,
-                    suffixStartSample: nil,
-                    suffixSampleCount: nil,
-                    overlapWordCount: 0,
+                    reusedSampleCount: result.reusedSampleCount,
+                    suffixStartSample: result.suffixStartSample,
+                    suffixSampleCount: result.suffixSampleCount,
+                    overlapWordCount: result.overlapWordCount,
                     diagnostics: diagnostics
                 )
             )

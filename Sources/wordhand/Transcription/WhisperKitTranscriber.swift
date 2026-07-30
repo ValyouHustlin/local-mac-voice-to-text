@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 import WordhandCore
 import WhisperKit
@@ -23,6 +24,10 @@ actor WhisperKitTranscriber:
     private var streamingInferenceDuration: TimeInterval = 0
     private var streamingDecodeCount = 0
     private var streamingStabilizer = StreamingTranscriptStabilizer()
+    private var streamingSnapshotTracker: CumulativeTranscriptSnapshotTracker?
+    private var streamingSnapshotGeneration = 0
+    private var streamingDecodeProvenance: StreamingDecodeProvenance?
+    private var streamingDecodeOptions: DecodingOptions?
     private var streamingDecodeTask: Task<Void, Never>?
     private var streamingFailure: Error?
     private var streamingIsFinishing = false
@@ -132,6 +137,24 @@ actor WhisperKitTranscriber:
         )
         let primaryDecodeSeconds =
             ProcessInfo.processInfo.systemUptime - primaryDecodeStarted
+        return try await finalize(
+            primary: primary,
+            audio: audio,
+            pipeline: pipeline,
+            token: token,
+            primaryOptions: primaryOptions,
+            primaryDecodeSeconds: primaryDecodeSeconds
+        )
+    }
+
+    private func finalize(
+        primary: DecodedTranscript,
+        audio: [Float],
+        pipeline: WhisperKit,
+        token: TranscriptionCancellationToken,
+        primaryOptions: DecodingOptions,
+        primaryDecodeSeconds: TimeInterval
+    ) async throws -> String {
         let isVocabularyConditioned =
             primaryOptions.promptTokens?.isEmpty == false
         let conditionedTerms = isVocabularyConditioned
@@ -342,6 +365,25 @@ actor WhisperKitTranscriber:
         streamingStabilizer = StreamingTranscriptStabilizer(
             correctionHorizonSegments: configuration.correctionHorizonSegments
         )
+        guard configuration.finalizationStrategy
+            == .cumulativePrefixAuthorityExperiment,
+              let sessionID = streamingSessionID
+        else {
+            return
+        }
+        guard let pipeline else { return }
+        let decodeOptions = decodingOptions(for: pipeline)
+        let provenance = makeStreamingDecodeProvenance(
+            options: decodeOptions
+        )
+        streamingDecodeOptions = decodeOptions
+        streamingDecodeProvenance = provenance
+        streamingSnapshotTracker = CumulativeTranscriptSnapshotTracker(
+            sessionID: sessionID.uuidString,
+            provenance: provenance,
+            sampleRate: Int(WhisperKit.sampleRate),
+            correctionHorizonSegments: configuration.correctionHorizonSegments
+        )
     }
 
     func appendStreamingAudio(_ samples: [Float]) async {
@@ -356,6 +398,8 @@ actor WhisperKitTranscriber:
         let finalizationStarted = ProcessInfo.processInfo.systemUptime
         streamingIsFinishing = true
         defer { clearStreamingState() }
+        let frozenPrefix = streamingSnapshotTracker?.frozenStablePrefix
+        let frozenFailure = streamingFailure
         let preReleaseInferenceDuration = streamingInferenceDuration
         let preReleaseDecodeCount = streamingDecodeCount
         let cancellationDrainStarted = ProcessInfo.processInfo.systemUptime
@@ -371,11 +415,200 @@ actor WhisperKitTranscriber:
         streamingDecodeTask = nil
         streamingAudio = finalAudio
 
-        // Rolling windows reduce perceived latency while the user speaks, but
-        // their segment timestamps are local to each window. Joining committed
-        // windows to a decoded remainder can therefore skip speech at a
-        // boundary or leak decoder control tokens. Treat the complete captured
-        // buffer as the only authoritative final transcript.
+        guard streamingConfiguration.finalizationStrategy
+            == .cumulativePrefixAuthorityExperiment
+        else {
+            return try await fullBufferStreamingResult(
+                finalAudio: finalAudio,
+                finalizationStarted: finalizationStarted,
+                preReleaseInferenceDuration: preReleaseInferenceDuration,
+                preReleaseDecodeCount: preReleaseDecodeCount,
+                cancellationDrainDuration: cancellationDrainDuration,
+                fallbackReason: nil
+            )
+        }
+        guard frozenFailure == nil,
+              let frozenPrefix,
+              let provenance = streamingDecodeProvenance
+        else {
+            return try await fullBufferStreamingResult(
+                finalAudio: finalAudio,
+                finalizationStarted: finalizationStarted,
+                preReleaseInferenceDuration: preReleaseInferenceDuration,
+                preReleaseDecodeCount: preReleaseDecodeCount,
+                cancellationDrainDuration: cancellationDrainDuration,
+                fallbackReason: frozenFailure == nil
+                    ? "no_stable_cumulative_prefix"
+                    : "pre_release_decode_failed"
+            )
+        }
+        guard frozenPrefix.snapshotSampleCount <= finalAudio.count,
+              Self.sha256Audio(
+                Array(finalAudio.prefix(frozenPrefix.snapshotSampleCount))
+              ) == frozenPrefix.audioSHA256
+        else {
+            return try await fullBufferStreamingResult(
+                finalAudio: finalAudio,
+                finalizationStarted: finalizationStarted,
+                preReleaseInferenceDuration: preReleaseInferenceDuration,
+                preReleaseDecodeCount: preReleaseDecodeCount,
+                cancellationDrainDuration: cancellationDrainDuration,
+                fallbackReason:
+                    StreamingCompositionFallbackReason.prefixAudioMismatch.rawValue
+            )
+        }
+
+        if pipeline == nil { try await warmUp() }
+        guard let pipeline else { throw TranscriberError.notLoaded }
+        let suffixOverlapSamples = Int(12 * WhisperKit.sampleRate)
+        let suffixStartSample = max(
+            0,
+            frozenPrefix.coveredThroughSample - suffixOverlapSamples
+        )
+        guard suffixStartSample < finalAudio.count else {
+            return try await fullBufferStreamingResult(
+                finalAudio: finalAudio,
+                finalizationStarted: finalizationStarted,
+                preReleaseInferenceDuration: preReleaseInferenceDuration,
+                preReleaseDecodeCount: preReleaseDecodeCount,
+                cancellationDrainDuration: cancellationDrainDuration,
+                fallbackReason:
+                    StreamingCompositionFallbackReason.invalidAudioCoverage.rawValue
+            )
+        }
+        let token = TranscriptionCancellationToken()
+        cancellationToken = token
+        defer {
+            if cancellationToken === token {
+                cancellationToken = nil
+            }
+        }
+        guard let primaryOptions = streamingDecodeOptions else {
+            return try await fullBufferStreamingResult(
+                finalAudio: finalAudio,
+                finalizationStarted: finalizationStarted,
+                preReleaseInferenceDuration: preReleaseInferenceDuration,
+                preReleaseDecodeCount: preReleaseDecodeCount,
+                cancellationDrainDuration: cancellationDrainDuration,
+                fallbackReason: "decode_provenance_unavailable"
+            )
+        }
+        let suffixDecodeStarted = ProcessInfo.processInfo.systemUptime
+        let suffix: DecodedTranscript
+        do {
+            suffix = try await decode(
+                Array(finalAudio[suffixStartSample...]),
+                pipeline: pipeline,
+                options: primaryOptions,
+                token: token
+            )
+        } catch {
+            if token.isCancelled {
+                throw error
+            }
+            return try await fullBufferStreamingResult(
+                finalAudio: finalAudio,
+                finalizationStarted: finalizationStarted,
+                preReleaseInferenceDuration: preReleaseInferenceDuration,
+                preReleaseDecodeCount: preReleaseDecodeCount,
+                cancellationDrainDuration: cancellationDrainDuration,
+                fallbackReason:
+                    StreamingCompositionFallbackReason.suffixDecodeFailed.rawValue
+            )
+        }
+        let suffixDecodeSeconds =
+            ProcessInfo.processInfo.systemUptime - suffixDecodeStarted
+        streamingInferenceDuration += suffixDecodeSeconds
+        let composition = StreamingAuthorityComposer.compose(
+            StreamingAuthorityCompositionRequest(
+                release: StreamingAuthorityRelease(
+                    sessionID: frozenPrefix.sessionID,
+                    snapshotGeneration: frozenPrefix.snapshotGeneration,
+                    finalSampleCount: finalAudio.count,
+                    stablePrefixAudioSHA256: frozenPrefix.audioSHA256,
+                    provenance: provenance
+                ),
+                stablePrefix: frozenPrefix,
+                suffix: .decoded(StreamingSuffixDecode(
+                    sessionID: frozenPrefix.sessionID,
+                    snapshotGeneration: frozenPrefix.snapshotGeneration,
+                    text: suffix.text,
+                    startSample: suffixStartSample,
+                    endSample: finalAudio.count,
+                    provenance: provenance
+                ))
+            ),
+            integrity: { text in
+                text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                    ? .diverged
+                    : .verified
+            }
+        )
+        guard case .verified(let verified) = composition else {
+            let reason: String
+            if case .requiresFullBuffer(let fallback) = composition {
+                reason = fallback.rawValue
+            } else {
+                reason = "composition_rejected"
+            }
+            return try await fullBufferStreamingResult(
+                finalAudio: finalAudio,
+                finalizationStarted: finalizationStarted,
+                preReleaseInferenceDuration: preReleaseInferenceDuration,
+                preReleaseDecodeCount: preReleaseDecodeCount,
+                cancellationDrainDuration: cancellationDrainDuration,
+                fallbackReason: reason
+            )
+        }
+        latestRunDiagnostics = .none
+        let globalLastSegmentEnd = suffix.lastSegmentEnd.map {
+            Double(suffixStartSample) / Double(WhisperKit.sampleRate) + $0
+        }
+        let text = try await finalize(
+            primary: DecodedTranscript(
+                text: verified.text,
+                lastSegmentEnd: globalLastSegmentEnd
+            ),
+            audio: finalAudio,
+            pipeline: pipeline,
+            token: token,
+            primaryOptions: primaryOptions,
+            primaryDecodeSeconds: suffixDecodeSeconds
+        ).trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !latestRunDiagnostics.fullRetryPerformed else {
+            return try await fullBufferStreamingResult(
+                finalAudio: finalAudio,
+                finalizationStarted: finalizationStarted,
+                preReleaseInferenceDuration: preReleaseInferenceDuration,
+                preReleaseDecodeCount: preReleaseDecodeCount,
+                cancellationDrainDuration: cancellationDrainDuration,
+                fallbackReason: "integrity_full_retry"
+            )
+        }
+        return StreamingTranscriptionResult(
+            text: text,
+            totalInferenceDuration: streamingInferenceDuration,
+            finalizationDuration:
+                ProcessInfo.processInfo.systemUptime - finalizationStarted,
+            preReleaseInferenceDuration: preReleaseInferenceDuration,
+            preReleaseDecodeCount: preReleaseDecodeCount,
+            cancellationDrainDuration: cancellationDrainDuration,
+            authorityPath: "composed",
+            reusedSampleCount: verified.reusedSampleCount,
+            suffixStartSample: verified.suffixStartSample,
+            suffixSampleCount: verified.suffixSampleCount,
+            overlapWordCount: verified.overlapWordCount
+        )
+    }
+
+    private func fullBufferStreamingResult(
+        finalAudio: [Float],
+        finalizationStarted: TimeInterval,
+        preReleaseInferenceDuration: TimeInterval,
+        preReleaseDecodeCount: Int,
+        cancellationDrainDuration: TimeInterval,
+        fallbackReason: String?
+    ) async throws -> StreamingTranscriptionResult {
         let decodeStarted = ProcessInfo.processInfo.systemUptime
         let text = try await transcribe(finalAudio)
             .trimmingCharacters(in: .whitespacesAndNewlines)
@@ -388,7 +621,9 @@ actor WhisperKitTranscriber:
                 ProcessInfo.processInfo.systemUptime - finalizationStarted,
             preReleaseInferenceDuration: preReleaseInferenceDuration,
             preReleaseDecodeCount: preReleaseDecodeCount,
-            cancellationDrainDuration: cancellationDrainDuration
+            cancellationDrainDuration: cancellationDrainDuration,
+            authorityPath: "full_buffer_control",
+            fallbackReason: fallbackReason
         )
         return result
     }
@@ -429,23 +664,33 @@ actor WhisperKitTranscriber:
             streamingDecodeTask = nil
             return
         }
+        let cumulativeExperiment = streamingConfiguration.finalizationStrategy
+            == .cumulativePrefixAuthorityExperiment
         let maximumWindowSamples = Int(
             streamingConfiguration.maximumWindowSeconds * Double(WhisperKit.sampleRate)
         )
-        let windowEnd = min(
-            streamingAudio.count,
-            streamingStartSample + maximumWindowSamples
-        )
-        guard windowEnd > streamingStartSample else {
+        let windowStart = cumulativeExperiment ? 0 : streamingStartSample
+        let windowEnd = cumulativeExperiment
+            ? streamingAudio.count
+            : min(streamingAudio.count, streamingStartSample + maximumWindowSamples)
+        guard windowEnd > windowStart else {
             streamingDecodeTask = nil
             return
         }
         streamingLastDecodeSample = windowEnd
-        let window = Array(streamingAudio[streamingStartSample..<windowEnd])
+        let window = Array(streamingAudio[windowStart..<windowEnd])
+        if cumulativeExperiment {
+            streamingSnapshotGeneration += 1
+        }
+        let snapshotGeneration = streamingSnapshotGeneration
+        let audioSHA256 = Self.sha256Audio(window)
         let decodeStarted = ProcessInfo.processInfo.systemUptime
 
         do {
-            let transcription = try await transcribeWindow(window)
+            let transcription = try await transcribeWindow(
+                window,
+                wordLevelSegments: cumulativeExperiment
+            )
             streamingInferenceDuration +=
                 ProcessInfo.processInfo.systemUptime - decodeStarted
             streamingDecodeCount += 1
@@ -453,12 +698,45 @@ actor WhisperKitTranscriber:
                 streamingDecodeTask = nil
                 return
             }
-            let segments = transcription.segments.map {
-                StreamingTranscriptSegment(
-                    text: $0.text,
-                    startSeconds: Double($0.start),
-                    endSeconds: Double($0.end)
+            let segments = transcription.segments
+            if cumulativeExperiment,
+               let provenance = streamingDecodeProvenance
+            {
+                let observation = streamingSnapshotTracker?.observe(
+                    sessionID: sessionID.uuidString,
+                    snapshotGeneration: snapshotGeneration,
+                    snapshotSampleCount: windowEnd,
+                    audioSHA256: audioSHA256,
+                    provenance: provenance,
+                    segments: segments
                 )
+                switch observation {
+                case .accepted(let stablePrefix):
+                    let covered = stablePrefix?.coveredThroughSample ?? 0
+                    FileHandle.standardError.write(Data(
+                        "cumulative snapshot \(snapshotGeneration): "
+                            .appending("\(segments.count) segments, ")
+                            .appending("stable through sample \(covered)\n")
+                            .utf8
+                    ))
+                case .rejected(let reason):
+                    let minimumStart = segments.map(\.startSeconds).min() ?? 0
+                    let maximumEnd = segments.map(\.endSeconds).max() ?? 0
+                    FileHandle.standardError.write(Data(
+                        "cumulative snapshot \(snapshotGeneration) rejected: "
+                            .appending("\(reason), range ")
+                            .appending("\(minimumStart)...\(maximumEnd), ")
+                            .appending("duration ")
+                            .appending(
+                                "\(Double(windowEnd) / Double(WhisperKit.sampleRate))\n"
+                            ).utf8
+                    ))
+                case nil:
+                    break
+                }
+                streamingDecodeTask = nil
+                scheduleStreamingDecodeIfNeeded()
+                return
             }
             let update = streamingStabilizer.observe(segments)
             let reachedWindowLimit = window.count >= maximumWindowSamples
@@ -495,22 +773,48 @@ actor WhisperKitTranscriber:
 
     private struct WindowTranscription {
         var text: String
-        var segments: [TranscriptionSegment]
+        var segments: [StreamingTranscriptSegment]
     }
 
     private func transcribeWindow(
-        _ audio: [Float]
+        _ audio: [Float],
+        wordLevelSegments: Bool = false
     ) async throws -> WindowTranscription {
         if pipeline == nil { try await warmUp() }
         guard let pipeline else { throw TranscriberError.notLoaded }
+        var options = wordLevelSegments
+            ? (streamingDecodeOptions ?? decodingOptions(for: pipeline))
+            : decodingOptions(for: pipeline)
+        options.wordTimestamps = wordLevelSegments
         let results = try await pipeline.transcribe(
             audioArray: audio,
-            decodeOptions: decodingOptions(for: pipeline),
+            decodeOptions: options,
             callback: { _ in Task.isCancelled ? false : nil }
         )
+        let decodedSegments = results.flatMap(\.segments)
+        let segments: [StreamingTranscriptSegment]
+        if wordLevelSegments {
+            segments = decodedSegments.flatMap { segment in
+                (segment.words ?? []).map {
+                    StreamingTranscriptSegment(
+                        text: $0.word,
+                        startSeconds: Double($0.start),
+                        endSeconds: Double($0.end)
+                    )
+                }
+            }
+        } else {
+            segments = decodedSegments.map {
+                StreamingTranscriptSegment(
+                    text: $0.text,
+                    startSeconds: Double($0.start),
+                    endSeconds: Double($0.end)
+                )
+            }
+        }
         return WindowTranscription(
             text: results.map(\.text).joined(separator: " "),
-            segments: results.flatMap(\.segments)
+            segments: segments
         )
     }
 
@@ -559,6 +863,28 @@ actor WhisperKitTranscriber:
 
     private static func wordCount(_ text: String) -> Int {
         text.split(whereSeparator: \.isWhitespace).count
+    }
+
+    private func makeStreamingDecodeProvenance(
+        options: DecodingOptions
+    ) -> StreamingDecodeProvenance {
+        let promptTokenBytes = (options.promptTokens ?? []).withUnsafeBytes {
+            Data($0)
+        }
+        return StreamingDecodeProvenance(
+            modelID: modelID,
+            vocabularySHA256: Self.sha256(promptTokenBytes),
+            decoderConfigurationID: "wordhand-english-default-v1",
+            language: "en"
+        )
+    }
+
+    private static func sha256Audio(_ audio: [Float]) -> String {
+        audio.withUnsafeBytes { sha256(Data($0)) }
+    }
+
+    private static func sha256(_ data: Data) -> String {
+        SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
     }
 
     private static let tailRecoverySampleCount = Int(
@@ -618,6 +944,10 @@ actor WhisperKitTranscriber:
         streamingFailure = nil
         streamingIsFinishing = false
         streamingStabilizer.reset()
+        streamingSnapshotTracker = nil
+        streamingSnapshotGeneration = 0
+        streamingDecodeProvenance = nil
+        streamingDecodeOptions = nil
     }
 }
 

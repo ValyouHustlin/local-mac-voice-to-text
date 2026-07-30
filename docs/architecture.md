@@ -457,29 +457,36 @@ of inference but reused no work. Cancellation drained in about 10 ms. After
 release it spent about 2.42 seconds on the primary full decode, 1.21 seconds on
 the independent tail audit, and 2.65 seconds on the prompt-free full retry.
 
-The pure promotion gate for that experiment now exists without being connected
-to daily runtime. `StreamingAuthorityComposer` accepts a release identity, a
-stable prefix, and a suffix result. It first requires one session identity, an
-exact hash match between the snapshot audio and the same prefix of final audio,
-and continuous sample coverage through the final sample. Text can be composed
-only when the longest eligible suffix of the stable prefix has one match in the
-overlapping suffix decode and contains at least six normalized words. The
-caller must then approve the composed text through the integrity finalizer.
-Every other outcome names the reason for a complete-buffer fallback: stale
-session, prefix mismatch, invalid coverage, suffix failure, insufficient or
-ambiguous overlap, or integrity divergence. Timestamps establish audio coverage
-only; they never authorize word removal.
+The pure promotion gate exists without being connected to daily runtime.
+`StreamingAuthorityComposer` accepts a release identity, a stable prefix, and a
+suffix result. It requires one session and monotonically released snapshot
+generation; identical model, vocabulary SHA-256, decoder configuration, and
+English-language provenance; an exact hash match between snapshot audio and the
+same prefix of final audio; and continuous sample coverage through the final
+sample. Text can be composed only when the longest eligible suffix of the
+stable prefix matches from the first word of the overlapping suffix decode,
+occurs exactly once in both inputs, and contains at least six normalized words.
+Unmatched leading suffix text is never discarded. The caller must then approve
+the composed text through the integrity finalizer. Every other outcome names a
+complete-buffer fallback. Timestamps establish audio coverage only; they never
+authorize word removal.
 
-The first genuine runtime experiment will replace advancing window-local
-composition with cumulative snapshots decoded from sample zero. Only segments
-stable across successive snapshots are eligible. Release will decode a suffix
-beginning eight seconds before the stable prefix end and present it to the pure
-gate above. The composed text must still pass the mandatory final-20-second
-audit. A corpus PASS is meaningful only when at least one long case reports
-`reusedSampleCount > 0`; fallback-only equivalence is not a successful
-candidate. See
+The first executable cumulative-prefix candidate remains authority-harness-only
+and is rejected for runtime promotion. It decodes sample-zero snapshots every
+eight audio seconds during a 2x-real-time replay, freezes the last completed
+successive-agreement prefix before cancellation, decodes a 12-second-overlapping
+suffix after release, and falls back to the complete buffer on every failed
+identity, coverage, overlap, suffix, or integrity check. Word-level timestamps
+were required because Large v3 exposed only one or two coarse segments across a
+49.26-second fixture, but retained replay then exposed timestamp ranges outside
+the supplied snapshot and no exact six-word suffix overlap. All candidate runs
+therefore stayed `full_buffer_control`, reused zero samples, and were slower
+than baseline. The corpus gate now requires at least one composed long run with
+nonzero reuse plus a lower long median, so fallback-only completeness exits
+nonzero. Daily runtime remains unchanged. See
 `docs/verification/2026-07-30-completeness-latency-oracle.md` and
-`docs/verification/2026-07-30-overlap-composition-oracle.md`.
+`docs/verification/2026-07-30-overlap-composition-oracle.md` and
+`docs/verification/2026-07-30-cumulative-prefix-candidate.md`.
 
 The authoritative decode has layered local integrity checks. First, the coordinator
 compares the monotonic recording-session duration with the number of captured

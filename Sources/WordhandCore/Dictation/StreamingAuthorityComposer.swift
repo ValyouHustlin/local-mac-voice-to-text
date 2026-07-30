@@ -1,70 +1,141 @@
 import Foundation
 
+public enum StreamingAudioIdentity {
+    public static func isCanonicalSHA256(_ value: String) -> Bool {
+        value.count == 64 && value.unicodeScalars.allSatisfy {
+            ("0"..."9").contains(Character($0))
+                || ("a"..."f").contains(Character($0))
+        }
+    }
+}
+
+public struct StreamingDecodeProvenance: Equatable, Sendable {
+    public let modelID: String
+    public let vocabularySHA256: String
+    public let decoderConfigurationID: String
+    public let language: String
+
+    public init(
+        modelID: String,
+        vocabularySHA256: String,
+        decoderConfigurationID: String,
+        language: String
+    ) {
+        self.modelID = modelID
+        self.vocabularySHA256 = vocabularySHA256
+        self.decoderConfigurationID = decoderConfigurationID
+        self.language = language
+    }
+
+    public var isValid: Bool {
+        !modelID.isEmpty
+            && StreamingAudioIdentity.isCanonicalSHA256(vocabularySHA256)
+            && !decoderConfigurationID.isEmpty
+            && language == "en"
+    }
+}
+
 public struct StreamingAuthorityRelease: Equatable, Sendable {
     public var sessionID: String
+    public var snapshotGeneration: Int
     public var finalSampleCount: Int
     public var stablePrefixAudioSHA256: String
+    public var provenance: StreamingDecodeProvenance
 
     public init(
         sessionID: String,
+        snapshotGeneration: Int,
         finalSampleCount: Int,
-        stablePrefixAudioSHA256: String
+        stablePrefixAudioSHA256: String,
+        provenance: StreamingDecodeProvenance
     ) {
         self.sessionID = sessionID
+        self.snapshotGeneration = snapshotGeneration
         self.finalSampleCount = finalSampleCount
         self.stablePrefixAudioSHA256 = stablePrefixAudioSHA256
+        self.provenance = provenance
     }
 }
 
 public struct StableStreamingPrefix: Equatable, Sendable {
     public var sessionID: String
+    public var snapshotGeneration: Int
     public var text: String
     public var coveredThroughSample: Int
     public var snapshotSampleCount: Int
     public var audioSHA256: String
+    public var provenance: StreamingDecodeProvenance
 
     public init(
         sessionID: String,
+        snapshotGeneration: Int,
         text: String,
         coveredThroughSample: Int,
         snapshotSampleCount: Int,
-        audioSHA256: String
+        audioSHA256: String,
+        provenance: StreamingDecodeProvenance
     ) {
         self.sessionID = sessionID
+        self.snapshotGeneration = snapshotGeneration
         self.text = text
         self.coveredThroughSample = coveredThroughSample
         self.snapshotSampleCount = snapshotSampleCount
         self.audioSHA256 = audioSHA256
+        self.provenance = provenance
     }
 }
 
 public struct StreamingSuffixDecode: Equatable, Sendable {
     public var sessionID: String
+    public var snapshotGeneration: Int
     public var text: String
     public var startSample: Int
     public var endSample: Int
+    public var provenance: StreamingDecodeProvenance
 
     public init(
         sessionID: String,
+        snapshotGeneration: Int,
         text: String,
         startSample: Int,
-        endSample: Int
+        endSample: Int,
+        provenance: StreamingDecodeProvenance
     ) {
         self.sessionID = sessionID
+        self.snapshotGeneration = snapshotGeneration
         self.text = text
         self.startSample = startSample
         self.endSample = endSample
+        self.provenance = provenance
     }
 }
 
 public enum StreamingSuffixOutcome: Equatable, Sendable {
     case decoded(StreamingSuffixDecode)
-    case failed(sessionID: String)
+    case failed(
+        sessionID: String,
+        snapshotGeneration: Int,
+        provenance: StreamingDecodeProvenance
+    )
 
     fileprivate var sessionID: String {
         switch self {
         case .decoded(let decode): decode.sessionID
-        case .failed(let sessionID): sessionID
+        case .failed(let sessionID, _, _): sessionID
+        }
+    }
+
+    fileprivate var snapshotGeneration: Int {
+        switch self {
+        case .decoded(let decode): decode.snapshotGeneration
+        case .failed(_, let snapshotGeneration, _): snapshotGeneration
+        }
+    }
+
+    fileprivate var provenance: StreamingDecodeProvenance {
+        switch self {
+        case .decoded(let decode): decode.provenance
+        case .failed(_, _, let provenance): provenance
         }
     }
 }
@@ -95,11 +166,14 @@ public enum StreamingCompositionIntegrityVerdict: Equatable, Sendable {
 
 public enum StreamingCompositionFallbackReason: String, Equatable, Sendable {
     case staleSession
+    case staleSnapshotGeneration
+    case decodeProvenanceMismatch
     case prefixAudioMismatch
     case invalidAudioCoverage
     case suffixDecodeFailed
     case insufficientOverlap
     case ambiguousOverlap
+    case unrepresentedSuffixPrefix
     case integrityDiverged
 }
 
@@ -144,8 +218,23 @@ public enum StreamingAuthorityComposer {
         else {
             return .requiresFullBuffer(.staleSession)
         }
-        guard isCanonicalSHA256(release.stablePrefixAudioSHA256),
-              isCanonicalSHA256(prefix.audioSHA256),
+        guard release.snapshotGeneration > 0,
+              release.snapshotGeneration == prefix.snapshotGeneration,
+              release.snapshotGeneration
+                == request.suffix.snapshotGeneration
+        else {
+            return .requiresFullBuffer(.staleSnapshotGeneration)
+        }
+        guard release.provenance.isValid,
+              release.provenance == prefix.provenance,
+              release.provenance == request.suffix.provenance
+        else {
+            return .requiresFullBuffer(.decodeProvenanceMismatch)
+        }
+        guard StreamingAudioIdentity.isCanonicalSHA256(
+                release.stablePrefixAudioSHA256
+              ),
+              StreamingAudioIdentity.isCanonicalSHA256(prefix.audioSHA256),
               release.stablePrefixAudioSHA256 == prefix.audioSHA256
         else {
             return .requiresFullBuffer(.prefixAudioMismatch)
@@ -178,6 +267,8 @@ public enum StreamingAuthorityComposer {
             return .requiresFullBuffer(.insufficientOverlap)
         case .ambiguous:
             return .requiresFullBuffer(.ambiguousOverlap)
+        case .unrepresentedSuffixPrefix:
+            return .requiresFullBuffer(.unrepresentedSuffixPrefix)
         case .unique(let composition, let wordCount):
             guard integrity(composition) == .verified else {
                 return .requiresFullBuffer(.integrityDiverged)
@@ -226,6 +317,9 @@ public enum StreamingAuthorityComposer {
                   let suffixStart = suffixMatches.first
             else {
                 return .ambiguous
+            }
+            guard suffixStart == 0 else {
+                return .unrepresentedSuffixPrefix
             }
 
             let suffixEnd = suffixStart + overlapCount
@@ -294,13 +388,6 @@ public enum StreamingAuthorityComposer {
         return words
     }
 
-    private static func isCanonicalSHA256(_ value: String) -> Bool {
-        value.count == 64 && value.unicodeScalars.allSatisfy {
-            ("0"..."9").contains(Character($0))
-                || ("a"..."f").contains(Character($0))
-        }
-    }
-
     private static func normalizedIdentifier(_ value: String) -> String {
         value
             .folding(
@@ -327,6 +414,7 @@ public enum StreamingAuthorityComposer {
     private enum OverlapDecision {
         case insufficient
         case ambiguous
+        case unrepresentedSuffixPrefix
         case unique(String, Int)
     }
 }

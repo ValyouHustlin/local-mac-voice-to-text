@@ -82,15 +82,25 @@ unique normalized overlap of at least six words, and an explicit integrity
 approval. Every mismatch returns a named full-buffer fallback reason. It is not
 wired into live capture.
 
-The next candidate is not a VAD-chunk splice. It will decode cumulative
-snapshots from sample zero, retain only segments agreed across successive
-snapshots, and at release decode an eight-second-overlapping suffix through the
-pure gate. It must retain the final-20-second audit and require at least one
-long run to report nonzero reused samples; fallback-only equality cannot pass as
-a latency win.
+The first cumulative-prefix candidate is implemented only in the offline
+authority harness and rejected for daily runtime. Large v3 produced too few
+coarse segments to certify a prefix, and its word timestamps sometimes exceeded
+the supplied snapshot duration. Text-only successive agreement did certify a
+prefix, but a 12-second-overlapping suffix did not reproduce one exact unique
+six-word boundary. Every retained run therefore failed closed to the complete
+buffer with zero reused samples. Completeness passed, but long medians regressed
+from 6.291 to 8.732 seconds and from 4.710 to 7.322 seconds. The corpus now exits
+nonzero unless a long run actually composes with nonzero reuse and improves
+median latency.
+
+Do not iterate this boundary again in the same lead context. The next safe
+work-during-speech attempt needs a fresh architecture decision about a
+decoder-native cache/state API or a deterministic audio-boundary alignment
+oracle; textual splice heuristics remain rejected. Daily runtime is unchanged.
 
 Receipts: `docs/verification/2026-07-30-completeness-latency-oracle.md` and
-`docs/verification/2026-07-30-overlap-composition-oracle.md`.
+`docs/verification/2026-07-30-overlap-composition-oracle.md` and
+`docs/verification/2026-07-30-cumulative-prefix-candidate.md`.
 
 ## Public checkpoint cadence
 

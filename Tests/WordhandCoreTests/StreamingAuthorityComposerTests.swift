@@ -12,7 +12,7 @@ struct StreamingAuthorityComposerTests {
                 Boundary alpha opens. The complete audio buffer remains authoritative.
                 """,
                 suffix: """
-                Earlier context. The complete audio buffer remains authoritative. \
+                The complete audio buffer remains authoritative. \
                 Keep every final word.
                 """
             ),
@@ -29,6 +29,26 @@ struct StreamingAuthorityComposerTests {
             suffixStartSample: 400,
             suffixSampleCount: 1_200
         )))
+    }
+
+    @Test
+    func unmatchedLeadingSuffixTextCannotBeDropped() {
+        let decision = StreamingAuthorityComposer.compose(
+            request(
+                prefix: """
+                Boundary alpha opens. The complete audio buffer remains authoritative.
+                """,
+                suffix: """
+                Unrepresented words. The complete audio buffer remains authoritative. \
+                Keep every final word.
+                """
+            ),
+            integrity: { _ in .verified }
+        )
+
+        #expect(
+            decision == .requiresFullBuffer(.unrepresentedSuffixPrefix)
+        )
     }
 
     @Test
@@ -101,7 +121,7 @@ struct StreamingAuthorityComposerTests {
             request(
                 prefix: "Keep Every Spoken Word Safely Intact!",
                 suffix: """
-                Earlier context; keep every spoken word safely intact. \
+                Keep every spoken word safely intact. \
                 Then preserve the ending.
                 """
             ),
@@ -153,8 +173,10 @@ struct StreamingAuthorityComposerTests {
         var value = request()
         value.release = StreamingAuthorityRelease(
             sessionID: value.release.sessionID,
+            snapshotGeneration: value.release.snapshotGeneration,
             finalSampleCount: value.release.finalSampleCount,
-            stablePrefixAudioSHA256: String(repeating: "b", count: 64)
+            stablePrefixAudioSHA256: String(repeating: "b", count: 64),
+            provenance: value.release.provenance
         )
 
         #expect(
@@ -162,6 +184,51 @@ struct StreamingAuthorityComposerTests {
                 value,
                 integrity: { _ in .verified }
             ) == .requiresFullBuffer(.prefixAudioMismatch)
+        )
+    }
+
+    @Test
+    func lateSuffixGenerationFromSameSessionIsRejected() {
+        var value = request()
+        value.suffix = .decoded(StreamingSuffixDecode(
+            sessionID: sessionID,
+            snapshotGeneration: 1,
+            text: suffixText,
+            startSample: 400,
+            endSample: 1_600,
+            provenance: provenance
+        ))
+
+        #expect(
+            StreamingAuthorityComposer.compose(
+                value,
+                integrity: { _ in .verified }
+            ) == .requiresFullBuffer(.staleSnapshotGeneration)
+        )
+    }
+
+    @Test
+    func decodeProvenanceMismatchIsRejected() {
+        var value = request()
+        value.suffix = .decoded(StreamingSuffixDecode(
+            sessionID: sessionID,
+            snapshotGeneration: 2,
+            text: suffixText,
+            startSample: 400,
+            endSample: 1_600,
+            provenance: StreamingDecodeProvenance(
+                modelID: "different-model",
+                vocabularySHA256: vocabularySHA256,
+                decoderConfigurationID: "english-default-v1",
+                language: "en"
+            )
+        ))
+
+        #expect(
+            StreamingAuthorityComposer.compose(
+                value,
+                integrity: { _ in .verified }
+            ) == .requiresFullBuffer(.decodeProvenanceMismatch)
         )
     }
 
@@ -184,9 +251,11 @@ struct StreamingAuthorityComposerTests {
         var value = request()
         value.suffix = .decoded(StreamingSuffixDecode(
             sessionID: "older-session",
+            snapshotGeneration: 2,
             text: suffixText,
             startSample: 400,
-            endSample: 1_600
+            endSample: 1_600,
+            provenance: provenance
         ))
 
         #expect(
@@ -202,9 +271,11 @@ struct StreamingAuthorityComposerTests {
         var value = request()
         value.suffix = .decoded(StreamingSuffixDecode(
             sessionID: sessionID,
+            snapshotGeneration: 2,
             text: suffixText,
             startSample: 1_100,
-            endSample: 1_500
+            endSample: 1_500,
+            provenance: provenance
         ))
 
         #expect(
@@ -218,7 +289,11 @@ struct StreamingAuthorityComposerTests {
     @Test
     func suffixDecodeFailureIsExplicit() {
         var value = request()
-        value.suffix = .failed(sessionID: sessionID)
+        value.suffix = .failed(
+            sessionID: sessionID,
+            snapshotGeneration: 2,
+            provenance: provenance
+        )
 
         #expect(
             StreamingAuthorityComposer.compose(
@@ -273,10 +348,19 @@ struct StreamingAuthorityComposerTests {
     private let prefixText =
         "Boundary alpha opens. The complete audio buffer remains authoritative."
     private let suffixText = """
-        Earlier context. The complete audio buffer remains authoritative. \
+        The complete audio buffer remains authoritative. \
         Boundary quartz closes.
         """
     private let prefixSHA256 = String(repeating: "a", count: 64)
+    private let vocabularySHA256 = String(repeating: "d", count: 64)
+    private var provenance: StreamingDecodeProvenance {
+        StreamingDecodeProvenance(
+            modelID: "whisper-large-v3",
+            vocabularySHA256: vocabularySHA256,
+            decoderConfigurationID: "english-default-v1",
+            language: "en"
+        )
+    }
 
     private func request(
         prefix: String? = nil,
@@ -285,21 +369,27 @@ struct StreamingAuthorityComposerTests {
         StreamingAuthorityCompositionRequest(
             release: StreamingAuthorityRelease(
                 sessionID: sessionID,
+                snapshotGeneration: 2,
                 finalSampleCount: 1_600,
-                stablePrefixAudioSHA256: prefixSHA256
+                stablePrefixAudioSHA256: prefixSHA256,
+                provenance: provenance
             ),
             stablePrefix: StableStreamingPrefix(
                 sessionID: sessionID,
+                snapshotGeneration: 2,
                 text: prefix ?? prefixText,
                 coveredThroughSample: 1_000,
                 snapshotSampleCount: 1_200,
-                audioSHA256: prefixSHA256
+                audioSHA256: prefixSHA256,
+                provenance: provenance
             ),
             suffix: .decoded(StreamingSuffixDecode(
                 sessionID: sessionID,
+                snapshotGeneration: 2,
                 text: suffix ?? suffixText,
                 startSample: 400,
-                endSample: 1_600
+                endSample: 1_600,
+                provenance: provenance
             ))
         )
     }

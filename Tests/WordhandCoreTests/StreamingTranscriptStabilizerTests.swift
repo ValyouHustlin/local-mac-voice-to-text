@@ -14,6 +14,7 @@ struct StreamingTranscriptStabilizerTests {
         #expect(configuration.decodeIntervalSeconds == 0.5)
         #expect(configuration.maximumWindowSeconds == 1)
         #expect(configuration.correctionHorizonSegments == 0)
+        #expect(configuration.finalizationStrategy == .fullBufferControl)
     }
 
     @Test

@@ -2,8 +2,10 @@
   "id": "english-authority-corpus-v1",
   "modelID": "whisper-large-v3",
   "baselineImplementationID": "full-buffer-authoritative-v1",
-  "candidateImplementationID": "rolling-precompute-full-buffer-final-control-v1",
+  "candidateImplementationID": "cumulative-prefix-overlap-final-v1",
   "requireLongPreReleaseDecodes": true,
+  "requireComposedLongCandidate": true,
+  "requireLongMedianLatencyImprovement": true,
   "fixtures": [
     {
       "audio": "english-completeness-v1.aiff",

@@ -103,6 +103,8 @@ actual_fixture_ids=$(jq -r '.fixtures[].fixtureID' "$aggregate_report" | sort)
 baseline_implementation=$(jq -r '.baselineImplementationID' "$corpus_manifest")
 candidate_implementation=$(jq -r '.candidateImplementationID' "$corpus_manifest")
 require_long_pre_release=$(jq -r '.requireLongPreReleaseDecodes' "$corpus_manifest")
+require_composed_long=$(jq -r '.requireComposedLongCandidate' "$corpus_manifest")
+require_long_latency=$(jq -r '.requireLongMedianLatencyImprovement' "$corpus_manifest")
 
 if ! jq -e \
     --argjson expected_count "$expected_fixture_count" \
@@ -110,6 +112,8 @@ if ! jq -e \
     --arg candidate "$candidate_implementation" \
     --arg model "$corpus_model" \
     --argjson require_long_pre_release "$require_long_pre_release" \
+    --argjson require_composed_long "$require_composed_long" \
+    --argjson require_long_latency "$require_long_latency" \
     '
         .fixtureCount == $expected_count
         and .everyComparisonPassed
@@ -123,6 +127,29 @@ if ! jq -e \
                 or all(.provenance[];
                     .candidate.preReleaseDecodeCount > 0
                 )
+            )
+        )
+        and (
+            ($require_composed_long | not)
+            or any(.fixtures[];
+                .audioDurationSeconds >= 30
+                and all(.provenance[];
+                    .candidate.authorityPath == "composed"
+                    and .candidate.reusedSampleCount > 0
+                )
+                and (
+                    ($require_long_latency | not)
+                    or .candidateMedianStopToFinalSeconds
+                        < .baselineMedianStopToFinalSeconds
+                )
+            )
+        )
+        and (
+            ($require_long_latency | not)
+            or any(.fixtures[];
+                .audioDurationSeconds >= 30
+                and .candidateMedianStopToFinalSeconds
+                    < .baselineMedianStopToFinalSeconds
             )
         )
     ' "$aggregate_report" >/dev/null
