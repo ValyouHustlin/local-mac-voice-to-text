@@ -139,8 +139,8 @@ Verified by source inspection and dated receipts through 2026-07-29:
   transcription;
 - duplicate-process prevention, a 10-minute recording safety stop, active
   Whisper cancellation, capture-duration integrity checking, selective
-  prompt-free recovery decoding, and rewrite validation that rejects dropped
-  numbers, technical tokens, or negated constraints;
+  prompt-free tail recovery with a full-buffer fallback, and rewrite validation
+  that rejects dropped numbers, technical tokens, or negated constraints;
 - persistent custom dictionary with versioned, non-destructive editable
   defaults and immediate correction flow;
 - searchable SQLite transcript history with copy, reinsert, dictionary
@@ -410,17 +410,27 @@ The authoritative decode has two local integrity checks. First, the coordinator
 compares the monotonic recording-session duration with the number of captured
 16 kHz samples. If the audio buffer is more than 750 ms shorter than the
 recording session, Wordhand refuses to transcribe or insert a partial buffer and
-shows a recoverable capture failure. Second, a vocabulary-conditioned result is
-flagged when it begins with a truncated prompt term followed by a transcript
-delimiter, or when it ends without punctuation while the final two seconds of
-audio remain active. Only flagged results receive one prompt-free full-buffer
-decode. Wordhand selects that retry only when it removes the leading artifact
-without materially losing words or recovers an equal-or-longer complete ending.
-If the retry fails or is not demonstrably better, the primary decode survives.
-This avoids deleting legitimate names post hoc and keeps ordinary dictation on
-the single-decode path. Both passes use the same local WhisperKit model; no
-audio, vocabulary, or transcript content leaves the Mac. See
-`docs/verification/2026-07-29-transcription-integrity-regressions.md`.
+shows a recoverable capture failure. Second, a result is flagged when it begins
+with a truncated vocabulary prompt term followed by a transcript delimiter,
+ends without punctuation while the final two seconds of audio remain active,
+or reports a decoded segment ending before sustained later speech.
+
+A leading prompt artifact still receives one prompt-free full-buffer decode.
+A tail-only issue first decodes only the final 15 seconds without the vocabulary
+prompt. Wordhand keeps the primary text and appends recovered text only after a
+unique exact normalized overlap of at least four words; an absent or ambiguous
+overlap falls back to the full-buffer recovery. Segment timing adds detection
+for plausible punctuation followed by missed speech, but never suppresses the
+unpunctuated-tail safeguard because a real replay proved Whisper can report an
+end-aligned segment while still omitting words. Any failed or non-improving
+recovery preserves the primary decode.
+
+This avoids deleting legitimate names post hoc, keeps ordinary dictation on the
+single-decode path, and reduces recovery work without trusting a partial merge.
+Both passes use the same local WhisperKit model; no audio, vocabulary, or
+transcript content leaves the Mac. See
+`docs/verification/2026-07-29-transcription-integrity-regressions.md` and
+`docs/verification/2026-07-29-tail-recovery-speed.md`.
 
 The runtime now holds a per-data-directory process lock so a duplicate launch
 cannot create two competing microphone, hotkey, or insertion owners. Toggle

@@ -111,25 +111,72 @@ actor WhisperKitTranscriber: Transcribing, StreamingTranscribing {
             options: primaryOptions,
             token: token
         )
-        guard primaryOptions.promptTokens?.isEmpty == false else {
-            return primary
-        }
-
-        let conditionedTerms = vocabulary.terms()
+        let isVocabularyConditioned =
+            primaryOptions.promptTokens?.isEmpty == false
+        let conditionedTerms = isVocabularyConditioned
+            ? vocabulary.terms()
+            : []
         let integrityIssues = TranscriptionIntegrityGuard.issues(
-            in: primary,
+            in: primary.text,
             conditionedTerms: conditionedTerms,
             audio: audio,
-            sampleRate: Int(WhisperKit.sampleRate)
+            sampleRate: Int(WhisperKit.sampleRate),
+            lastDecodedSecond: primary.lastSegmentEnd
         )
         guard !integrityIssues.isEmpty else {
-            return primary
+            return primary.text
+        }
+
+        if integrityIssues == [.activeAudioAfterDecodedEnding],
+           audio.count > Self.tailRecoverySampleCount
+        {
+            FileHandle.standardError.write(Data(
+                "transcript integrity tail retry: decoding final 15 seconds "
+                    .appending("without vocabulary prompt\n").utf8
+            ))
+            do {
+                let tailRetry = try await decode(
+                    Array(audio.suffix(Self.tailRecoverySampleCount)),
+                    pipeline: pipeline,
+                    options: Self.makeDecodingOptions(promptTokens: nil),
+                    token: token
+                )
+                if let merged = TranscriptionIntegrityGuard.mergeTail(
+                    primary: primary.text,
+                    recovery: tailRetry.text
+                ) {
+                    let selected = TranscriptionIntegrityGuard.select(
+                        primary: primary.text,
+                        retry: merged,
+                        issues: integrityIssues,
+                        conditionedTerms: conditionedTerms
+                    )
+                    if selected != primary.text {
+                        return selected
+                    }
+                }
+                FileHandle.standardError.write(Data(
+                    "tail retry could not prove a safe overlap; "
+                        .appending("falling back to full recovery\n").utf8
+                ))
+            } catch {
+                if token.isCancelled {
+                    throw error
+                }
+                FileHandle.standardError.write(Data(
+                    "tail retry failed; falling back to full recovery\n".utf8
+                ))
+            }
+        }
+
+        guard isVocabularyConditioned else {
+            return primary.text
         }
 
         FileHandle.standardError.write(Data(
             "transcript integrity retry: decoding without vocabulary prompt\n".utf8
         ))
-        let retry: String
+        let retry: DecodedTranscript
         do {
             retry = try await decode(
                 audio,
@@ -144,11 +191,11 @@ actor WhisperKitTranscriber: Transcribing, StreamingTranscribing {
             FileHandle.standardError.write(Data(
                 "transcript integrity retry failed; preserving primary decode\n".utf8
             ))
-            return primary
+            return primary.text
         }
         return TranscriptionIntegrityGuard.select(
-            primary: primary,
-            retry: retry,
+            primary: primary.text,
+            retry: retry.text,
             issues: integrityIssues,
             conditionedTerms: conditionedTerms
         )
@@ -369,21 +416,38 @@ actor WhisperKitTranscriber: Transcribing, StreamingTranscribing {
         )
     }
 
+    private static let tailRecoverySampleCount = Int(
+        15 * WhisperKit.sampleRate
+    )
+
+    private struct DecodedTranscript {
+        let text: String
+        let lastSegmentEnd: TimeInterval?
+    }
+
     private func decode(
         _ audio: [Float],
         pipeline: WhisperKit,
         options: DecodingOptions,
         token: TranscriptionCancellationToken
-    ) async throws -> String {
+    ) async throws -> DecodedTranscript {
         let results = try await pipeline.transcribe(
             audioArray: audio,
             decodeOptions: options,
             callback: { _ in token.isCancelled ? false : nil }
         )
-        return results
+        let text = results
             .map(\.text)
             .joined(separator: " ")
             .trimmingCharacters(in: .whitespacesAndNewlines)
+        let lastSegmentEnd = results
+            .flatMap(\.segments)
+            .map { TimeInterval($0.end) }
+            .max()
+        return DecodedTranscript(
+            text: text,
+            lastSegmentEnd: lastSegmentEnd
+        )
     }
 
     private func resetStreamingState(cancelTask: Bool) async {

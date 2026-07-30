@@ -45,10 +45,69 @@ struct TranscriptionIntegrityGuardTests {
             in: "Once it is fit and finished, we'll go into doing",
             conditionedTerms: ["Wordhand"],
             audio: energeticAudio(seconds: 4),
-            sampleRate: 16_000
+            sampleRate: 16_000,
+            lastDecodedSecond: nil
         )
 
-        #expect(issues.contains(.activeAudioAfterUnpunctuatedEnding))
+        #expect(issues.contains(.activeAudioAfterDecodedEnding))
+    }
+
+    @Test
+    func decoderCoverageCannotSuppressSuspiciousUnpunctuatedSpeech() {
+        let issues = TranscriptionIntegrityGuard.issues(
+            in: "This is a deliberate sentence fragment",
+            conditionedTerms: ["Wordhand"],
+            audio: energeticAudio(seconds: 4),
+            sampleRate: 16_000,
+            lastDecodedSecond: 3.9
+        )
+
+        #expect(issues.contains(.activeAudioAfterDecodedEnding))
+    }
+
+    @Test
+    func activeSpeechAfterDecodedSegmentTriggersRetryEvenWithPunctuation() {
+        let issues = TranscriptionIntegrityGuard.issues(
+            in: "The decoder stopped here.",
+            conditionedTerms: ["Wordhand"],
+            audio: energeticAudio(seconds: 4),
+            sampleRate: 16_000,
+            lastDecodedSecond: 2
+        )
+
+        #expect(issues.contains(.activeAudioAfterDecodedEnding))
+    }
+
+    @Test
+    func silenceAfterDecodedSegmentDoesNotTriggerRetry() {
+        let speech = energeticAudio(seconds: 2)
+        let silence = Array(repeating: Float.zero, count: 32_000)
+        let issues = TranscriptionIntegrityGuard.issues(
+            in: "The decoder covered all spoken audio.",
+            conditionedTerms: ["Wordhand"],
+            audio: speech + silence,
+            sampleRate: 16_000,
+            lastDecodedSecond: 2
+        )
+
+        #expect(!issues.contains(.activeAudioAfterDecodedEnding))
+    }
+
+    @Test
+    func briefPostSegmentNoiseDoesNotTriggerRetry() {
+        var audio = Array(repeating: Float.zero, count: 64_000)
+        for index in 40_000..<40_160 {
+            audio[index] = index.isMultiple(of: 2) ? 0.03 : -0.03
+        }
+        let issues = TranscriptionIntegrityGuard.issues(
+            in: "The decoder covered the actual speech.",
+            conditionedTerms: ["Wordhand"],
+            audio: audio,
+            sampleRate: 16_000,
+            lastDecodedSecond: 2
+        )
+
+        #expect(!issues.contains(.activeAudioAfterDecodedEnding))
     }
 
     @Test
@@ -62,7 +121,7 @@ struct TranscriptionIntegrityGuardTests {
             sampleRate: 16_000
         )
 
-        #expect(!issues.contains(.activeAudioAfterUnpunctuatedEnding))
+        #expect(!issues.contains(.activeAudioAfterDecodedEnding))
     }
 
     @Test
@@ -103,7 +162,7 @@ struct TranscriptionIntegrityGuardTests {
         let selected = TranscriptionIntegrityGuard.select(
             primary: primary,
             retry: retry,
-            issues: [.activeAudioAfterUnpunctuatedEnding],
+            issues: [.activeAudioAfterDecodedEnding],
             conditionedTerms: ["Wordhand"]
         )
 
@@ -118,11 +177,67 @@ struct TranscriptionIntegrityGuardTests {
         let selected = TranscriptionIntegrityGuard.select(
             primary: primary,
             retry: retry,
-            issues: [.activeAudioAfterUnpunctuatedEnding],
+            issues: [.activeAudioAfterDecodedEnding],
             conditionedTerms: ["Wordhand"]
         )
 
         #expect(selected == primary)
+    }
+
+    @Test
+    func mergesAnOverlappingTailRecoveryWithoutRewritingEarlierSpeech() {
+        let primary = """
+        I do not think we need that. Once it is fit and finished, we'll go into doing
+        """
+        let recovery = """
+        I think we need that. Once it is finished, we'll go into doing the launch post. \
+        Just use what we have.
+        """
+
+        let merged = TranscriptionIntegrityGuard.mergeTail(
+            primary: primary,
+            recovery: recovery
+        )
+
+        #expect(
+            merged
+                == "I do not think we need that. Once it is fit and finished, "
+                    + "we'll go into doing the launch post. Just use what we have."
+        )
+    }
+
+    @Test
+    func tailRecoveryPreservesRecoveredSentenceBoundary() {
+        let merged = TranscriptionIntegrityGuard.mergeTail(
+            primary: "Please send this when we finish",
+            recovery: "send this when we finish. Then archive the receipt."
+        )
+
+        #expect(
+            merged == "Please send this when we finish. Then archive the receipt."
+        )
+    }
+
+    @Test
+    func tailRecoveryRequiresAStableFourWordOverlap() {
+        let merged = TranscriptionIntegrityGuard.mergeTail(
+            primary: "The primary decode stopped here",
+            recovery: "stopped here and invented unrelated material"
+        )
+
+        #expect(merged == nil)
+    }
+
+    @Test
+    func tailRecoveryRejectsAnAmbiguousRepeatedOverlap() {
+        let merged = TranscriptionIntegrityGuard.mergeTail(
+            primary: "Please remember we need to do that",
+            recovery: """
+            We need to do that, and later we need to do that before launch.
+            """
+        )
+
+        #expect(merged == nil)
     }
 
     private func energeticAudio(seconds: Int) -> [Float] {

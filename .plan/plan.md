@@ -382,8 +382,16 @@ installed; broader target-specific compatibility gates remain in their phases.
   conditioned transcript without globally stripping legitimate names.
 - [x] Detect an unpunctuated ending while the final two seconds of captured
   audio remain active.
-- [x] Retry only suspicious conditioned results once without the vocabulary
-  prompt, keeping all decoding local.
+- [x] Use decoded segment timing as an additional signal for punctuation that
+  appears complete before sustained later speech, without letting timing
+  suppress the proven unpunctuated-tail safeguard.
+- [x] For a tail-only issue longer than 15 seconds, decode only the final
+  15 seconds first and append recovered text only after one unique normalized
+  overlap of at least four words.
+- [x] Fall back to the prompt-free full-buffer recovery when the short tail
+  decode fails, has no safe overlap, or has an ambiguous repeated overlap.
+- [x] Keep tail recovery available when no vocabulary prompt was applied; a
+  full prompt-free retry remains limited to suspicious conditioned results.
 - [x] Select the clean retry only when it removes the prompt artifact without
   materially losing words or restores an equal-or-longer complete ending.
 - [x] Preserve the primary result when the recovery decode fails or is not
@@ -402,9 +410,12 @@ installed; broader target-specific compatibility gates remain in their phases.
   slashes, then install build 15 with permissions intact.
 - [x] Remove the retired plain build from Applications and preserve it as a
   non-launchable rollback backup.
+- [x] Replay the exact retained 28.79-second cutoff recording five times through
+  both build 15 and the new path. All ten runs retained the known final sentence;
+  median transcription time improved from 5.681 to 4.542 seconds.
 
-Receipt:
-`docs/verification/2026-07-29-transcription-integrity-regressions.md`.
+Receipts: `docs/verification/2026-07-29-transcription-integrity-regressions.md`
+and `docs/verification/2026-07-29-tail-recovery-speed.md`.
 
 ### Application hardening checkpoint
 
