@@ -104,12 +104,54 @@ actor WhisperKitTranscriber: Transcribing, StreamingTranscribing {
                 cancellationToken = nil
             }
         }
-        let results = try await pipeline.transcribe(
-            audioArray: audio,
-            decodeOptions: decodingOptions(for: pipeline),
-            callback: { _ in token.isCancelled ? false : nil }
+        let primaryOptions = decodingOptions(for: pipeline)
+        let primary = try await decode(
+            audio,
+            pipeline: pipeline,
+            options: primaryOptions,
+            token: token
         )
-        return results.map(\.text).joined(separator: " ")
+        guard primaryOptions.promptTokens?.isEmpty == false else {
+            return primary
+        }
+
+        let conditionedTerms = vocabulary.terms()
+        let integrityIssues = TranscriptionIntegrityGuard.issues(
+            in: primary,
+            conditionedTerms: conditionedTerms,
+            audio: audio,
+            sampleRate: Int(WhisperKit.sampleRate)
+        )
+        guard !integrityIssues.isEmpty else {
+            return primary
+        }
+
+        FileHandle.standardError.write(Data(
+            "transcript integrity retry: decoding without vocabulary prompt\n".utf8
+        ))
+        let retry: String
+        do {
+            retry = try await decode(
+                audio,
+                pipeline: pipeline,
+                options: Self.makeDecodingOptions(promptTokens: nil),
+                token: token
+            )
+        } catch {
+            if token.isCancelled {
+                throw error
+            }
+            FileHandle.standardError.write(Data(
+                "transcript integrity retry failed; preserving primary decode\n".utf8
+            ))
+            return primary
+        }
+        return TranscriptionIntegrityGuard.select(
+            primary: primary,
+            retry: retry,
+            issues: integrityIssues,
+            conditionedTerms: conditionedTerms
+        )
     }
 
     func beginStreaming(
@@ -325,6 +367,23 @@ actor WhisperKitTranscriber: Transcribing, StreamingTranscribing {
             promptTokens: promptTokens,
             chunkingStrategy: .vad
         )
+    }
+
+    private func decode(
+        _ audio: [Float],
+        pipeline: WhisperKit,
+        options: DecodingOptions,
+        token: TranscriptionCancellationToken
+    ) async throws -> String {
+        let results = try await pipeline.transcribe(
+            audioArray: audio,
+            decodeOptions: options,
+            callback: { _ in token.isCancelled ? false : nil }
+        )
+        return results
+            .map(\.text)
+            .joined(separator: " ")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     private func resetStreamingState(cancelTask: Bool) async {

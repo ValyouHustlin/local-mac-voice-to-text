@@ -373,6 +373,35 @@ gesture remains.
 Receipts: `docs/verification/2026-07-28-decode-vocabulary.md` and
 `docs/verification/2026-07-29-pronunciation-aliases.md`.
 
+### Transcript integrity regression checkpoint
+
+Status: implementation, deterministic verification, and development build 14
+installation complete. Natural-voice verification remains open.
+
+- [x] Detect a truncated vocabulary term leaking at the beginning of a
+  conditioned transcript without globally stripping legitimate names.
+- [x] Detect an unpunctuated ending while the final two seconds of captured
+  audio remain active.
+- [x] Retry only suspicious conditioned results once without the vocabulary
+  prompt, keeping all decoding local.
+- [x] Select the clean retry only when it removes the prompt artifact without
+  materially losing words or restores an equal-or-longer complete ending.
+- [x] Preserve the primary result when the recovery decode fails or is not
+  demonstrably better.
+- [x] Compare recording wall time with captured sample duration and refuse to
+  insert when the captured buffer is more than 750 ms short.
+- [x] Cover the observed `Aaron Browne-` prefix shape, active-audio cutoff,
+  legitimate-name subject, silent tail, retry selection, and capture-gap
+  refusal with deterministic tests.
+- [x] Install the corrected development build without registering a login item
+  and confirm Microphone, Input Monitoring, Accessibility, and Control-Space
+  readiness.
+- [ ] Observe short and 60-second natural dictations preserve both their first
+  and final clauses without a name prefix.
+
+Receipt:
+`docs/verification/2026-07-29-transcription-integrity-regressions.md`.
+
 ### Application hardening checkpoint
 
 Status: implementation and available live gates complete.

@@ -118,6 +118,33 @@ struct DictationCoordinatorTests {
     }
 
     @Test
+    func captureGapRefusesToInsertAQuietlyTruncatedRecording() async {
+        let capture = FakeCapture(samples: Array(repeating: 0.1, count: 16_000))
+        let transcriber = FakeTranscriber(result: "partial transcript")
+        let inserter = FakeInserter()
+        var timestamps: [TimeInterval] = [100, 105]
+        let coordinator = DictationCoordinator(
+            capture: capture,
+            transcriber: transcriber,
+            processor: TranscriptProcessor(),
+            inserter: inserter,
+            now: { timestamps.removeFirst() }
+        )
+
+        await coordinator.handle(.pressed)
+        await coordinator.handle(.released)
+
+        #expect(inserter.insertions.isEmpty)
+        #expect(transcriber.callCount == 0)
+        #expect(
+            coordinator.state
+                == .failed(.capture(
+                    "Audio input stopped before recording ended. Wordhand did not insert a partial transcript."
+                ))
+        )
+    }
+
+    @Test
     func streamingFailureFallsBackToTheCompleteCapturedBuffer() async {
         let capture = FakeStreamingCapture(samples: [0.1, 0.2], chunks: [[0.1]])
         let transcriber = FakeStreamingTranscriber(
@@ -367,7 +394,7 @@ struct DictationCoordinatorTests {
                 )
             },
             date: { createdAt },
-            now: makeClock([10, 10.75])
+            now: makeClock([10, 10.75, 20, 20.75, 30, 30])
         )
         var qualitySample: QualityAudioSample?
         coordinator.onQualityAudio = { qualitySample = $0 }

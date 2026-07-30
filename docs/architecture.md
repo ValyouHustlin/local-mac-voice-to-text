@@ -138,8 +138,9 @@ Verified by source inspection and dated receipts through 2026-07-29:
   prepared while both daily-runtime modes use authoritative full-buffer
   transcription;
 - duplicate-process prevention, a 10-minute recording safety stop, active
-  Whisper cancellation, and rewrite validation that rejects dropped numbers,
-  technical tokens, or negated constraints;
+  Whisper cancellation, capture-duration integrity checking, selective
+  prompt-free recovery decoding, and rewrite validation that rejects dropped
+  numbers, technical tokens, or negated constraints;
 - persistent custom dictionary with versioned, non-destructive editable
   defaults and immediate correction flow;
 - searchable SQLite transcript history with copy, reinsert, dictionary
@@ -405,6 +406,22 @@ stop-to-final time moved from 2.167 seconds to 1.556 seconds. This measurement
 describes the isolated rolling benchmark; daily runtime remains on the
 authoritative full-buffer path.
 
+The authoritative decode has two local integrity checks. First, the coordinator
+compares the monotonic recording-session duration with the number of captured
+16 kHz samples. If the audio buffer is more than 750 ms shorter than the
+recording session, Wordhand refuses to transcribe or insert a partial buffer and
+shows a recoverable capture failure. Second, a vocabulary-conditioned result is
+flagged when it begins with a truncated prompt term followed by a transcript
+delimiter, or when it ends without punctuation while the final two seconds of
+audio remain active. Only flagged results receive one prompt-free full-buffer
+decode. Wordhand selects that retry only when it removes the leading artifact
+without materially losing words or recovers an equal-or-longer complete ending.
+If the retry fails or is not demonstrably better, the primary decode survives.
+This avoids deleting legitimate names post hoc and keeps ordinary dictation on
+the single-decode path. Both passes use the same local WhisperKit model; no
+audio, vocabulary, or transcript content leaves the Mac. See
+`docs/verification/2026-07-29-transcription-integrity-regressions.md`.
+
 The runtime now holds a per-data-directory process lock so a duplicate launch
 cannot create two competing microphone, hotkey, or insertion owners. Toggle
 recordings automatically stop and process at ten minutes instead of growing an
@@ -450,6 +467,8 @@ shortcut event
   -> recording coordinator
   -> audio capture
        daily runtime retains one complete captured buffer
+       compare captured samples with monotonic recording duration
+       refuse a materially short buffer instead of inserting partial text
        offline rolling benchmark forwards chunks through one ordered stream
   -> local transcriber
        snapshot enabled canonical dictionary spellings
@@ -457,6 +476,9 @@ shortcut event
        tokenize them into WhisperKit promptTokens
        guard forced prompt prefill from premature completion
        decode locally with Core ML
+       inspect conditioned output for prompt leakage or an active-audio cutoff
+       retry suspicious output once without prompt conditioning
+       select the retry only when it is demonstrably cleaner or more complete
        offline rolling benchmark stabilizes repeated rolling results
        daily runtime decodes the complete captured buffer once at release
   -> transcript processor

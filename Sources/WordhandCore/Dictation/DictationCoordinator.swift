@@ -78,6 +78,7 @@ public final class DictationCoordinator {
     private let currentTarget: () -> TranscriptTarget
     private let date: () -> Date
     private let now: () -> TimeInterval
+    private let maximumCaptureGapSeconds: TimeInterval
     private let maximumRecordingNanoseconds: UInt64?
     private let sleep: @Sendable (UInt64) async throws -> Void
     private var activeOperationID: UUID?
@@ -87,6 +88,7 @@ public final class DictationCoordinator {
     private var activeStreamingTranscriber: (any StreamingTranscribing)?
     private var streamingAudioContinuation: AsyncStream<[Float]>.Continuation?
     private var streamingForwardingTask: Task<Void, Never>?
+    private var recordingStartedAt: TimeInterval?
 
     public init(
         capture: AudioCapturing,
@@ -101,6 +103,7 @@ public final class DictationCoordinator {
         currentTarget: @escaping () -> TranscriptTarget = { .unknown },
         date: @escaping () -> Date = Date.init,
         now: @escaping () -> TimeInterval = { ProcessInfo.processInfo.systemUptime },
+        maximumCaptureGapSeconds: TimeInterval = 0.75,
         maximumRecordingNanoseconds: UInt64? = 600_000_000_000,
         sleep: @escaping @Sendable (UInt64) async throws -> Void = {
             try await Task.sleep(nanoseconds: $0)
@@ -118,6 +121,7 @@ public final class DictationCoordinator {
         self.currentTarget = currentTarget
         self.date = date
         self.now = now
+        self.maximumCaptureGapSeconds = maximumCaptureGapSeconds
         self.maximumRecordingNanoseconds = maximumRecordingNanoseconds
         self.sleep = sleep
     }
@@ -153,10 +157,12 @@ public final class DictationCoordinator {
                     activeStreamingTranscriber = streamingTranscriber
                 }
                 try capture.start()
+                recordingStartedAt = now()
                 activeOperationID = UUID()
                 state = .recording
                 scheduleRecordingLimit()
             } catch {
+                recordingStartedAt = nil
                 await stopActiveStreaming()
                 state = .failed(.capture(String(describing: error)))
             }
@@ -164,6 +170,9 @@ public final class DictationCoordinator {
         case .released:
             guard state == .recording else { return }
             guard let operationID = activeOperationID else { return }
+            let recordingEndedAt = now()
+            let recordingStartedAt = self.recordingStartedAt
+            self.recordingStartedAt = nil
             cancelRecordingLimit()
             state = .transcribing
             isCaptureStopping = true
@@ -177,6 +186,22 @@ public final class DictationCoordinator {
                 return
             }
             onCapture?(samples)
+            if let recordingStartedAt,
+               hasCaptureGap(
+                   samples: samples,
+                   recordingStartedAt: recordingStartedAt,
+                   recordingEndedAt: recordingEndedAt
+               )
+            {
+                await activeStreamingTranscriber?.cancelStreaming()
+                activeStreamingTranscriber = nil
+                activeOperationID = nil
+                state = .failed(.capture(
+                    "Audio input stopped before recording ended. "
+                        + "Wordhand did not insert a partial transcript."
+                ))
+                return
+            }
             guard !samples.isEmpty else {
                 await activeStreamingTranscriber?.cancelStreaming()
                 activeStreamingTranscriber = nil
@@ -294,6 +319,7 @@ public final class DictationCoordinator {
         switch state {
         case .recording:
             cancelRecordingLimit()
+            recordingStartedAt = nil
             activeOperationID = nil
             await stopActiveStreaming()
             _ = await capture.stop()
@@ -363,5 +389,16 @@ public final class DictationCoordinator {
             await streamingForwardingTask.value
         }
         streamingForwardingTask = nil
+    }
+
+    private func hasCaptureGap(
+        samples: [Float],
+        recordingStartedAt: TimeInterval,
+        recordingEndedAt: TimeInterval
+    ) -> Bool {
+        guard audioSampleRate > 0 else { return false }
+        let wallDuration = max(0, recordingEndedAt - recordingStartedAt)
+        let audioDuration = Double(samples.count) / audioSampleRate
+        return wallDuration - audioDuration > maximumCaptureGapSeconds
     }
 }
