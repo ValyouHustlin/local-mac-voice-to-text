@@ -223,12 +223,51 @@ struct DictionaryStoreTests {
         ])
 
         #expect(source.terms() == ["Valyou", "Blumira"])
-        #expect(source.prompt() == "Vocabulary: Valyou, Blumira.")
+        #expect(
+            source.prompt()
+                == "Vocabulary: Blumira, Valyou. Preferred spellings: Blumira, Valyou."
+        )
 
         source.update(entries: [
             DictionaryEntry(spokenForm: "word hand", replacement: "Wordhand"),
         ])
-        #expect(source.prompt() == "Vocabulary: Wordhand.")
+        #expect(
+            source.prompt()
+                == "Vocabulary: Wordhand. Preferred spellings: Wordhand."
+        )
+    }
+
+    @Test
+    func vocabularyPromptPlacesHighestPriorityTermAtDecodeBoundary() {
+        let timestamp = Date(timeIntervalSince1970: 1_000)
+        let source = DictionaryVocabularySource(entries: [
+            DictionaryEntry(
+                spokenForm: "Valyou",
+                replacement: "Valyou",
+                origin: .starterVocabulary,
+                starterVocabularyOrder: 0,
+                createdAt: timestamp,
+                updatedAt: timestamp
+            ),
+            DictionaryEntry(
+                spokenForm: "new correction",
+                replacement: "NewestTerm",
+                updatedAt: timestamp.addingTimeInterval(2)
+            ),
+            DictionaryEntry(
+                spokenForm: "older correction",
+                replacement: "OlderTerm",
+                updatedAt: timestamp.addingTimeInterval(1)
+            ),
+        ])
+
+        #expect(source.terms() == ["NewestTerm", "OlderTerm", "Valyou"])
+        #expect(
+            source.prompt()
+                == """
+                Vocabulary: Valyou, OlderTerm, NewestTerm. Preferred spellings: Valyou, OlderTerm, NewestTerm.
+                """
+        )
     }
 
     @Test

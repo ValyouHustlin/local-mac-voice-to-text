@@ -152,7 +152,7 @@ receipts may promote latency or compatibility claims.
 
 P0 ground truth and P1 foundation are complete as of 2026-07-28. The package
 now has `WordhandCore`, protocol-backed coordinator seams, versioned settings,
-107 deterministic tests across core and macOS adapter targets, and macOS CI.
+108 deterministic tests across core and macOS adapter targets, and macOS CI.
 
 The daily-driver bundle is built by `scripts/build-app.sh` and installed by
 `scripts/install-app.sh`. The installer prefers `/Applications`, falls back to
@@ -186,6 +186,15 @@ version. Files are forced to owner-only `0600` permissions. Decode prompts
 prioritize user-created corrections and cap starter fill at 24 terms, the
 measured point that preserved five-term accuracy without the dilution observed
 with the entire starter set.
+
+The selected terms are written into Whisper's simulated prior-transcript
+context in reverse priority order, placing the newest/highest-priority terms
+nearest the decode boundary. The four strongest terms are repeated once at the
+boundary. This matters because Whisper consumes `promptTokens` as preceding
+transcript context rather than as an instruction; a live `Valyou -> value`
+miss and identical controlled fixture confirmed that proximity plus one bounded
+reinforcement was stronger than a leading vocabulary list. Wordhand does not
+install a broad `value -> Valyou` post-hoc replacement.
 
 WhisperKit exposes `DecodingOptions.promptTokens`, but its 1.0 decoder can honor
 an end-of-text sample while it is still forcing those prompt tokens. Large v3

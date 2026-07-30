@@ -108,6 +108,13 @@ public final class DictionaryVocabularySource: @unchecked Sendable {
     public func prompt() -> String? {
         let canonicalTerms = terms()
         guard !canonicalTerms.isEmpty else { return nil }
-        return "Vocabulary: \(canonicalTerms.joined(separator: ", "))."
+        // Whisper treats this as prior transcript context, not as an
+        // instruction. Put the highest-priority and most recently corrected
+        // terms nearest the decode boundary, where conditioning is strongest.
+        let orderedTerms = canonicalTerms.reversed().joined(separator: ", ")
+        let strongestTerms = canonicalTerms.prefix(4).reversed().joined(separator: ", ")
+        return """
+        Vocabulary: \(orderedTerms). Preferred spellings: \(strongestTerms).
+        """
     }
 }

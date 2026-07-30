@@ -292,6 +292,9 @@ gesture remains.
 - [x] Upgrade to the official Argmax OSS/WhisperKit 1.0 dependency line.
 - [x] Guard Large v3 prompt prefill from WhisperKit's premature end-token stop.
 - [x] Prioritize custom corrections and cap each decode prompt at 24 terms.
+- [x] Place highest-priority terms nearest Whisper's decode boundary and repeat
+  only the strongest four once; an identical fixture changed `Valio` to
+  `Valyou` without a dangerous global `value -> Valyou` replacement.
 - [x] Force local dictionary files to owner-only `0600` permissions.
 - [x] Pass the five-term identical-audio before/after benchmark (`2/5` to
   `5/5` exact terms).
