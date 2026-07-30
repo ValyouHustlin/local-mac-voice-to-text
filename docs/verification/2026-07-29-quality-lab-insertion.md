@@ -78,3 +78,40 @@ Test run with 121 tests in 15 suites passed after 1.409 seconds.
   TextEdit, Chrome, and Visual Studio Code.
 - Audio files alone are not labeled training data. Actual evaluation or
   fine-tuning needs an explicit corrected-reference transcript workflow.
+
+## Installed checkpoint
+
+The local-only preference was enabled with:
+
+```sh
+.build/release/wordhand quality enable --retention-days 7
+```
+
+Observed status:
+
+```text
+enabled · 7-day retention
+recordings: 0
+location: /Users/legacy/Library/Application Support/Wordhand/Quality Recordings
+```
+
+Build 11 was installed with:
+
+```sh
+WORDHAND_BUILD_NUMBER=11 ./scripts/install-app.sh --launch-at-login
+```
+
+Observed results:
+
+```text
+Version 0.1.0 (11)
+Signature: Wordhand Local Signing
+✓ Wordhand will launch when you sign in
+Installed /Applications/Wordhand.app
+```
+
+Post-install inspection observed exactly one process, PID 88884, running from
+`/Applications/Wordhand.app/Contents/MacOS/wordhand`. Strict signature
+verification passed. The installed doctor reported Microphone, Accessibility,
+Input Monitoring, and Control-Space all `ok`. Settings remained `0600` inside
+the `0700` Wordhand data directory. No microphone or insertion gesture was used.

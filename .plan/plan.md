@@ -262,7 +262,9 @@ checks and the real affected flow.
 ### Private Quality Lab checkpoint
 
 Status: implementation and isolated storage verification complete. Natural
-dictation capture is intentionally deferred while Aaron is working.
+dictation capture is intentionally deferred while Aaron is working. Signed
+build 11 is installed with Aaron's local profile opted into seven-day retention;
+the public default remains off.
 
 - [x] Keep public/fresh-install audio retention off by default.
 - [x] Add a visible Settings toggle with 1, 3, 7, 14, and 30-day expiry choices.
