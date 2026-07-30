@@ -17,6 +17,13 @@ struct TranscriptProcessorTests {
     }
 
     @Test
+    func sanitizeRepairsMalformedWebSchemeSlashes() {
+        let input = #"Visit https:\value.solutions and http:/example.com."#
+        let expected = "Visit https://value.solutions and http://example.com."
+        #expect(TranscriptProcessor.sanitize(input) == expected)
+    }
+
+    @Test
     func removesHesitationFillersAnywhereInTranscript() {
         let input = "Um, I, uh, think we should erm ship. Hmm... Please do."
         #expect(
@@ -42,6 +49,15 @@ struct TranscriptProcessorTests {
                 == "Done. Start the next task."
         )
         #expect(TranscriptProcessor.removeSpeechFillers("Um, uh, hmm...") == "")
+    }
+
+    @Test
+    func removingPostSentenceFillersCapitalizesTheNextWord() {
+        let input = "Where is it? Hmm. Um, this is the end."
+        #expect(
+            TranscriptProcessor.removeSpeechFillers(input)
+                == "Where is it? This is the end."
+        )
     }
 
     @Test

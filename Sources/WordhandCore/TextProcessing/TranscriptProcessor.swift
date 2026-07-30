@@ -41,6 +41,11 @@ public struct TranscriptProcessor: TranscriptProcessing, Sendable {
             )
         }
         output = output.replacingOccurrences(
+            of: #"(?i)\b(https?):[\\/]+(?=[\p{L}\p{N}])"#,
+            with: "$1://",
+            options: .regularExpression
+        )
+        output = output.replacingOccurrences(
             of: #"\s+"#,
             with: " ",
             options: .regularExpression
@@ -52,7 +57,8 @@ public struct TranscriptProcessor: TranscriptProcessing, Sendable {
     /// preserving words that merely contain the same letters. Dictionary
     /// substitutions run first so a user-defined meaning for a token wins.
     public static func removeSpeechFillers(_ text: String) -> String {
-        var output = text.replacingOccurrences(
+        var output = removePostSentenceFillersBeforeLowercaseWord(text)
+        output = output.replacingOccurrences(
             of: #"(?i)^\s*(?:(?:um+|uh+|erm+|hmm+)(?![\p{L}\p{N}-])\s*[,.;:!?…—–-]*\s*)+"#,
             with: "",
             options: .regularExpression
@@ -78,6 +84,31 @@ public struct TranscriptProcessor: TranscriptProcessing, Sendable {
             options: .regularExpression
         )
         return output.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private static func removePostSentenceFillersBeforeLowercaseWord(
+        _ text: String
+    ) -> String {
+        let pattern =
+            #"(?i)(?<=[.!?])\s+"#
+            + #"(?:(?:um+|uh+|erm+|hmm+)(?![\p{L}\p{N}-])"#
+            + #"\s*[,.;:!?…—–-]*\s*)+(?<next>\p{Ll})"#
+        guard let expression = try? NSRegularExpression(pattern: pattern) else {
+            return text
+        }
+
+        let mutable = NSMutableString(string: text)
+        let matches = expression.matches(
+            in: text,
+            range: NSRange(location: 0, length: mutable.length)
+        )
+        for match in matches.reversed() {
+            let nextRange = match.range(withName: "next")
+            guard nextRange.location != NSNotFound else { continue }
+            let next = mutable.substring(with: nextRange).uppercased()
+            mutable.replaceCharacters(in: match.range, with: " " + next)
+        }
+        return mutable as String
     }
 
     public static func polish(_ text: String) -> String {

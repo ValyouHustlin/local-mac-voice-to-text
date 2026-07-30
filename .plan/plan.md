@@ -375,8 +375,8 @@ Receipts: `docs/verification/2026-07-28-decode-vocabulary.md` and
 
 ### Transcript integrity regression checkpoint
 
-Status: implementation, deterministic verification, and development build 14
-installation complete. Natural-voice verification remains open.
+Status: complete for the reported Ghostty regressions. Development build 15 is
+installed; broader target-specific compatibility gates remain in their phases.
 
 - [x] Detect a truncated vocabulary term leaking at the beginning of a
   conditioned transcript without globally stripping legitimate names.
@@ -396,8 +396,12 @@ installation complete. Natural-voice verification remains open.
 - [x] Install the corrected development build without registering a login item
   and confirm Microphone, Input Monitoring, Accessibility, and Control-Space
   readiness.
-- [ ] Observe short and 60-second natural dictations preserve both their first
+- [x] Observe short and 60-second natural dictations preserve both their first
   and final clauses without a name prefix.
+- [x] Fix the receipt's lowercase-after-filler edge and malformed web-scheme
+  slashes, then install build 15 with permissions intact.
+- [x] Remove the retired plain build from Applications and preserve it as a
+  non-launchable rollback backup.
 
 Receipt:
 `docs/verification/2026-07-29-transcription-integrity-regressions.md`.

@@ -55,7 +55,7 @@ WORDHAND_SAFE=1 /usr/bin/swift test
 Observed result:
 
 ```text
-Test run with 137 tests in 16 suites passed
+Test run with 139 tests in 16 suites passed
 ```
 
 The nine new guard tests cover:
@@ -124,17 +124,64 @@ build 13. WhisperKit logged that it was loading the cached
 or transcription result after 61 seconds. The benchmark process was terminated.
 That attempt is not a passing receipt and supports no accuracy claim.
 
-## Open natural-voice gate
+## Natural-voice receipt
 
-No microphone, global shortcut gesture, or synthetic insertion was driven by
-the agent while Aaron was working. Automated checks prove the decision logic,
-buildability, installed identity, and permission preflight, not natural speech
-behavior.
+Aaron drove both acceptance dictations with Control-Space into Ghostty using
+installed development build 14. The agent did not drive the microphone or
+global shortcut.
 
-Before this regression is closed:
+The short recording was 25.387875 seconds. Its raw result began with the words
+Aaron actually spoke rather than a dictionary name and retained the distinctive
+ending `this is the end of the transcription`. Local transcription took
+2.828782 seconds and insertion status was `inserted`.
 
-1. dictate one short sentence and one 60-second passage with an intentionally
-   unpunctuated final clause;
-2. confirm neither begins with a vocabulary term that was not spoken;
-3. confirm both include the spoken final clause in history and at the cursor;
-4. record stop-to-insertion time and whether the conditional retry ran.
+The long recording was 61.284938 seconds. Its raw result also had no injected
+name prefix and retained the final sentence. Local transcription took 3.910788
+seconds and insertion status was `inserted`. The dictionary corrected
+`Value LLC` to `Valyou LLC`; `Blumira` was already correct in the raw decode.
+
+This closes the two reported integrity regressions for the observed Ghostty
+path. It does not replace the roadmap's separate native/browser/Electron
+compatibility gate.
+
+## Follow-up polish from the receipt
+
+The short result exposed one deterministic formatting defect: removing
+`Hmm. Um,` after a question mark left the next word lowercase. The long result
+also exposed a malformed decoded web scheme, `https:\`, plus an
+Aaron-specific `value.solutions` spelling.
+
+Build 15 adds:
+
+- narrow capitalization of the first lowercase word after post-sentence
+  fillers are removed;
+- normalization of malformed `http:\`, `https:\`, `http:/`, and `https:/`
+  schemes to two forward slashes;
+- a local editable `value.solutions -> valyou.solutions` dictionary correction
+  in Aaron's application-support data, not a hard-coded public rule.
+
+The exact deterministic formatter command:
+
+```sh
+WORDHAND_SAFE=1 .build/release/wordhand format \
+  'Where is it? Hmm. Um, this is the end of the transcription.' \
+  --style casual --application Ghostty
+```
+
+produced:
+
+```text
+Where is it? This is the end of the transcription.
+```
+
+Build 15 was installed at `/Applications/Wordhand Dev.app`; all three privacy
+checks and Control-Space remained ready. The retired plain build 13 was
+unregistered and moved recoverably to:
+
+```text
+~/Library/Application Support/Wordhand/App Backups/
+  Wordhand.retired-build-13.20260729-2200.app-backup
+```
+
+Only Wordhand Dev remained in `/Applications` and only its runtime process was
+observed.

@@ -549,12 +549,16 @@ text plus a small context value and returns text plus optional diagnostics.
 
 Initial order:
 
-1. sanitize model control and non-speech tokens;
+1. sanitize model control and non-speech tokens, and normalize a malformed
+   decoded `http` or `https` scheme only when it already contains slash
+   characters;
 2. normalize whitespace;
 3. apply custom dictionary replacements;
 4. remove unambiguous hesitation sounds such as `um`, `uh`, `erm`, and `hmm`
    deterministically, including stretched forms and surrounding pause
-   punctuation; user dictionary substitutions take precedence;
+   punctuation; user dictionary substitutions take precedence, and removing
+   fillers immediately after sentence punctuation capitalizes the following
+   lowercase word;
 5. resolve explicit spoken repairs such as `wait, no`, `I meant`, `make that`,
    `correction`, `scratch that`, and immediate false starts; ambiguous language
    is preserved rather than guessed;
