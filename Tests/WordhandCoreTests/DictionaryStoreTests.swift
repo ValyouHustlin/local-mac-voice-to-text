@@ -313,6 +313,31 @@ struct DictionaryStoreTests {
     }
 
     @Test
+    func vocabularyPromptSnapshotExposesExactBoundedDecodeSemantics() {
+        let timestamp = Date(timeIntervalSince1970: 1_000)
+        let snapshot = DictionaryVocabularySource(entries: [
+            DictionaryEntry(
+                spokenForm: "Aaron Brown more",
+                replacement: "Aaron Browne-Moore",
+                updatedAt: timestamp.addingTimeInterval(1)
+            ),
+            DictionaryEntry(
+                spokenForm: "Aaron Browne-Moore",
+                replacement: "Aaron Browne-Moore",
+                updatedAt: timestamp
+            ),
+        ]).promptSnapshot()
+
+        #expect(snapshot.canonicalTerms == ["Aaron Browne-Moore"])
+        #expect(snapshot.pronunciationAssociations == [
+            DictionaryPronunciationAssociation(
+                spokenForm: "Aaron Brown more",
+                canonicalTerm: "Aaron Browne-Moore"
+            ),
+        ])
+    }
+
+    @Test
     func decoderPromptGateMovesConfidenceCheckToFirstRealOutput() {
         let gate = DecoderPromptPrefillGate(forcedTokenCount: 2)
 

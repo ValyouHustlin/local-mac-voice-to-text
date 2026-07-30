@@ -128,6 +128,57 @@ struct VocabularyCandidateReplayOracleTests {
         #expect(decision.reasons.contains("metric_tie_changed_corpus_text"))
     }
 
+    @Test
+    func pronunciationAliasRequiresObservedSourceAndProvesDecodeImprovement()
+        throws
+    {
+        let observations = try aliasObservations()
+
+        let decision = VocabularyCandidateReplayOracle.assess(
+            observations: observations,
+            requiredRepetitions: 4
+        )
+
+        #expect(decision.verdict == .proved)
+        #expect(decision.reasons.isEmpty)
+    }
+
+    @Test
+    func pronunciationAliasWithoutRepeatableSourceEvidenceRejects() throws {
+        var observations = try aliasObservations()
+        for index in observations.indices
+        where observations[index].recordingID == "support-a"
+            && observations[index].repetition > 1
+        {
+            let original = observations[index]
+            observations[index] = VocabularyCandidateReplayObservation(
+                recordingID: original.recordingID,
+                audioSHA256: original.audioSHA256,
+                repetition: original.repetition,
+                isSupporting: true,
+                candidateKind: .pronunciationAlias,
+                baselineQuality: original.baselineQuality,
+                candidateQuality: original.candidateQuality,
+                baselineNormalizedSHA256: original.baselineNormalizedSHA256,
+                candidateNormalizedSHA256: original.candidateNormalizedSHA256,
+                baselineContainsCandidate: false,
+                candidateContainsCandidate: true,
+                baselineContainsSpokenForm: false,
+                protectedSpanRegression: false,
+                baselineDuration: 1,
+                candidateDuration: 1
+            )
+        }
+
+        let decision = VocabularyCandidateReplayOracle.assess(
+            observations: observations,
+            requiredRepetitions: 4
+        )
+
+        #expect(decision.verdict == .rejected)
+        #expect(decision.reasons.contains("alias_source_not_repeatably_observed"))
+    }
+
     private func makeProofObservations()
         throws -> [VocabularyCandidateReplayObservation]
     {
@@ -149,13 +200,95 @@ struct VocabularyCandidateReplayOracleTests {
                 baseline: "email brown more tomorrow",
                 candidate: "email Browne-Moore tomorrow"
             ))
-            result.append(try observation(
-                id: "control",
-                audio: String(repeating: "c", count: 64),
+            let controlScore = try #require(
+                TranscriptionQualityMetrics.score(
+                    reference: "ordinary control sentence",
+                    hypothesis: "ordinary control sentence"
+                )
+            )
+            result.append(VocabularyCandidateReplayObservation(
+                recordingID: "control",
+                audioSHA256: String(repeating: "c", count: 64),
                 repetition: repetition,
-                supporting: false,
-                baseline: "ordinary control sentence",
-                candidate: "ordinary control sentence"
+                isSupporting: false,
+                candidateKind: .canonicalTerm,
+                baselineQuality: controlScore,
+                candidateQuality: controlScore,
+                baselineNormalizedSHA256: String(repeating: "d", count: 64),
+                candidateNormalizedSHA256: String(repeating: "d", count: 64),
+                baselineContainsCandidate: false,
+                candidateContainsCandidate: false,
+                baselineContainsSpokenForm: false,
+                protectedSpanRegression: false,
+                baselineDuration: 1,
+                candidateDuration: 1
+            ))
+        }
+        return result
+    }
+
+    private func aliasObservations()
+        throws -> [VocabularyCandidateReplayObservation]
+    {
+        var result: [VocabularyCandidateReplayObservation] = []
+        for repetition in 0..<4 {
+            for (id, audio, prefix) in [
+                ("support-a", "a", "please call"),
+                ("support-b", "b", "email"),
+            ] {
+                let reference = "\(prefix) Aaron Browne-Moore today"
+                let baseline = "\(prefix) Aaron Brown more today"
+                let candidate = reference
+                result.append(VocabularyCandidateReplayObservation(
+                    recordingID: id,
+                    audioSHA256: String(repeating: audio, count: 64),
+                    repetition: repetition,
+                    isSupporting: true,
+                    candidateKind: .pronunciationAlias,
+                    baselineQuality: try #require(
+                        TranscriptionQualityMetrics.score(
+                            reference: reference,
+                            hypothesis: baseline
+                        )
+                    ),
+                    candidateQuality: try #require(
+                        TranscriptionQualityMetrics.score(
+                            reference: reference,
+                            hypothesis: candidate
+                        )
+                    ),
+                    baselineNormalizedSHA256: String(repeating: "d", count: 64),
+                    candidateNormalizedSHA256: String(repeating: "e", count: 64),
+                    baselineContainsCandidate: false,
+                    candidateContainsCandidate: true,
+                    baselineContainsSpokenForm: true,
+                    protectedSpanRegression: false,
+                    baselineDuration: 1,
+                    candidateDuration: 1
+                ))
+            }
+            let controlScore = try #require(
+                TranscriptionQualityMetrics.score(
+                    reference: "ordinary control sentence",
+                    hypothesis: "ordinary control sentence"
+                )
+            )
+            result.append(VocabularyCandidateReplayObservation(
+                recordingID: "control",
+                audioSHA256: String(repeating: "c", count: 64),
+                repetition: repetition,
+                isSupporting: false,
+                candidateKind: .pronunciationAlias,
+                baselineQuality: controlScore,
+                candidateQuality: controlScore,
+                baselineNormalizedSHA256: String(repeating: "d", count: 64),
+                candidateNormalizedSHA256: String(repeating: "d", count: 64),
+                baselineContainsCandidate: false,
+                candidateContainsCandidate: false,
+                baselineContainsSpokenForm: false,
+                protectedSpanRegression: false,
+                baselineDuration: 1,
+                candidateDuration: 1
             ))
         }
         return result

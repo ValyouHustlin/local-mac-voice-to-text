@@ -54,6 +54,29 @@ public enum BundledDictionaryVocabulary {
     }
 }
 
+public struct DictionaryPronunciationAssociation: Equatable, Sendable {
+    public let spokenForm: String
+    public let canonicalTerm: String
+
+    public init(spokenForm: String, canonicalTerm: String) {
+        self.spokenForm = spokenForm
+        self.canonicalTerm = canonicalTerm
+    }
+}
+
+public struct DictionaryVocabularyPromptSnapshot: Equatable, Sendable {
+    public let canonicalTerms: [String]
+    public let pronunciationAssociations: [DictionaryPronunciationAssociation]
+
+    public init(
+        canonicalTerms: [String],
+        pronunciationAssociations: [DictionaryPronunciationAssociation]
+    ) {
+        self.canonicalTerms = canonicalTerms
+        self.pronunciationAssociations = pronunciationAssociations
+    }
+}
+
 public final class DictionaryVocabularySource: @unchecked Sendable {
     public static let maximumPromptTerms = 24
     public static let maximumPronunciationAliases = 8
@@ -75,13 +98,13 @@ public final class DictionaryVocabularySource: @unchecked Sendable {
         Self.canonicalTerms(from: prioritizedEntries())
     }
 
-    public func prompt() -> String? {
+    public func promptSnapshot() -> DictionaryVocabularyPromptSnapshot {
         let prioritized = prioritizedEntries()
         let canonicalTerms = Self.canonicalTerms(from: prioritized)
-        guard !canonicalTerms.isEmpty else { return nil }
         let canonicalKeys = Set(canonicalTerms.map(Self.normalized))
         var seenAliases = Set<String>()
-        let aliases = prioritized.compactMap { entry -> (String, String)? in
+        let aliases = prioritized.compactMap {
+            entry -> DictionaryPronunciationAssociation? in
             guard entry.isEnabled else { return nil }
             let spoken = entry.spokenForm.trimmingCharacters(in: .whitespacesAndNewlines)
             let canonical = entry.replacement.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -96,8 +119,22 @@ public final class DictionaryVocabularySource: @unchecked Sendable {
             else {
                 return nil
             }
-            return (spoken, canonical)
+            return DictionaryPronunciationAssociation(
+                spokenForm: spoken,
+                canonicalTerm: canonical
+            )
         }.prefix(Self.maximumPronunciationAliases)
+        return DictionaryVocabularyPromptSnapshot(
+            canonicalTerms: canonicalTerms,
+            pronunciationAssociations: Array(aliases)
+        )
+    }
+
+    public func prompt() -> String? {
+        let snapshot = promptSnapshot()
+        let canonicalTerms = snapshot.canonicalTerms
+        guard !canonicalTerms.isEmpty else { return nil }
+        let aliases = snapshot.pronunciationAssociations
 
         // Whisper treats this as prior transcript context, not as an
         // instruction. Put the highest-priority and most recently corrected
@@ -109,7 +146,7 @@ public final class DictionaryVocabularySource: @unchecked Sendable {
         let pronunciationGuide = aliases.isEmpty
             ? ""
             : " Pronunciation guide: " + aliases
-                .map { "\($0.0) is written \($0.1)" }
+                .map { "\($0.spokenForm) is written \($0.canonicalTerm)" }
                 .joined(separator: "; ") + "."
         return """
         Vocabulary: \(orderedTerms).\(pronunciationGuide) Preferred spellings: \(strongestTerms).

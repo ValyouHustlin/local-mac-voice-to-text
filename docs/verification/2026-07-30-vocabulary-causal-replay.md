@@ -17,7 +17,9 @@ its measured accuracy gain came with a material decode-time regression.
   shared-memory sidecar are never opened by SQLite. Dictionary JSON is decoded
   without migration or permission changes.
 - Baseline is the current enabled dictionary. Candidate is the same snapshot
-  plus one in-memory `term -> term` entry.
+  plus one in-memory `term -> term` entry. Both arms use the baseline
+  deterministic transcript processor, so only decode-time conditioning can
+  establish a win.
 - Two distinct supporting audio identities and at least one unrelated paired
   recording are mandatory.
 - Every recording runs four times in B/C, C/B, C/B, B/C order.
@@ -74,7 +76,7 @@ verdict=rejected
 word edits=60->36
 character edits=240->204
 normalized exact=0->0
-decode=37.795s->48.738s
+decode=44.679s->54.753s
 reason=latency_regression
 ```
 
@@ -84,7 +86,8 @@ data-tree snapshot—directory membership, permission modes, file sizes, and
 SHA-256 for Dictionary, History, SQLite WAL/SHM, and all audio—was identical
 before and after. No Settings file or recommendation cache was created.
 
-`/usr/bin/time -l` observed 135.89 seconds wall time and 548,896,768 bytes
+The receipt was rerun after locking both arms to the baseline processor.
+`/usr/bin/time -l` observed 104.74 seconds wall time and 520,437,760 bytes
 maximum resident set size for build, test host, parent command, isolated worker,
 model load, and all replays. This is offline evaluation evidence, not a
 daily-runtime latency claim.
@@ -95,5 +98,6 @@ The current History suggestion remains cheap, contextual, and explicitly
 confirmed. No synchronous or background replay was added: the live corpus had
 zero corrected references, so either design would add model contention and UI
 job state with no eligible decision. Persisted replay evidence waits for real
-yield and a separate invalidation design. The next bounded learning candidate
-is pronunciation-alias replay through this same offline gate.
+yield and a separate invalidation design. Pronunciation-alias replay now has
+its own stricter three-arm gate; see
+`docs/verification/2026-07-30-pronunciation-alias-replay.md`.

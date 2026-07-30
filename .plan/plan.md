@@ -37,8 +37,9 @@ order:
    that suggests improvements without silently changing behavior; the first
    canonical-vocabulary recommendation slice is implemented and isolated-
    verified, and an offline causal replay now proves or rejects a vocabulary
-   candidate without mutating the live recommendation; pronunciation,
-   persisted replay evidence, model, and configuration suggestions remain;
+   candidate or evidence-backed pronunciation alias without mutating the live
+   recommendation; user-facing pronunciation suggestions, persisted replay
+   evidence, model, and configuration suggestions remain;
 4. optional application-to-profile routing behind one understandable global
    default;
 5. deeper explicit spoken correction and editing commands;
@@ -144,20 +145,28 @@ material latency regression. It uses one bounded cached-model-only worker,
 receives the private candidate through stdin, emits no transcript text, and
 writes no user state.
 
-The public retained-corpus receipt improved word edits from 60 to 36 and
-character edits from 240 to 204, but candidate decode time rose from 37.795 to
-48.738 seconds. The oracle rejected promotion for latency, so the existing
-History suggestion remains unchanged and no replay verdict is persisted.
-Current live data has no corrected references, making synchronous or background
-UI replay pure cost today. The next learning slice should extend the same
-explicit offline proof to a pronunciation alias before considering persisted UI
-evidence. Model or configuration suggestions remain behind larger-corpus
-stability gates.
+The tightened canonical receipt still improved word edits from 60 to 36 and
+character edits from 240 to 204 using the baseline processor in both arms, but
+candidate decode time rose from 44.679 to 54.753 seconds. The oracle rejected
+promotion for latency.
+
+Pronunciation replay now requires two repeated explicit `heard -> canonical`
+corrections, an already-enabled canonical self-entry, one unrelated control,
+and all six live-baseline/priority-control/alias orders. Prompt semantics must
+match except for exactly one requested pronunciation guide, and no scored arm
+uses candidate deterministic cleanup. The isolated alias receipt was rejected:
+both controls already emitted the canonical name, causal word edits stayed
+0 to 0, and matched-control decode time rose from 18.034 to 21.222 seconds.
+No behavior or replay verdict is persisted. The next learning slice should wait
+for real corrected-corpus yield before exposing pronunciation suggestions or
+background evaluation. Model or configuration suggestions remain behind
+larger-corpus stability gates.
 
 Receipt:
 `docs/verification/2026-07-30-exact-inference-cache-candidate.md` and
 `docs/verification/2026-07-30-canonical-vocabulary-suggestions.md` and
-`docs/verification/2026-07-30-vocabulary-causal-replay.md`.
+`docs/verification/2026-07-30-vocabulary-causal-replay.md` and
+`docs/verification/2026-07-30-pronunciation-alias-replay.md`.
 
 ## Public checkpoint cadence
 

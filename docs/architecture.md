@@ -550,28 +550,49 @@ recording on replay.
 claim. Its private request arrives through stdin so the candidate is absent
 from process arguments. One bounded child process loads an already cached
 model, makes a byte-stable private copy of History and its WAL without opening
-the live SQLite files, decodes Dictionary without migration, and replays
-baseline and the in-memory `term -> term` candidate in fixed B/C, C/B, C/B, B/C
-order. It requires
+the live SQLite files, and decodes Dictionary without migration. Canonical-term
+replay compares baseline with an in-memory `term -> term` candidate in fixed
+B/C, C/B, C/B, B/C order. Both arms use the baseline deterministic processor,
+so a candidate replacement cannot manufacture a decode-time win. It requires
 two distinct supporting recordings, at least one unrelated paired recording,
 four complete repetitions per recording, exact canonical spelling in every
 supporting candidate result, strict word- and character-edit improvement on at
 least three repetitions of each source, no per-run or aggregate corpus
 regression, no protected boundary/number/negation/dictionary loss, no exact-
 match loss, and no material latency regression. Missing or malformed evidence
-is inconclusive; observed harm is rejected. Neither result changes History,
-Dictionary, Settings, the recommendation UI, or daily transcription.
+is inconclusive; observed harm is rejected.
+
+Schema 2 extends the same gate to pronunciation aliases. The requested
+`heardAs -> canonical` pair must already be supported by two explicit retained
+History corrections, the canonical self-entry must already be enabled, and the
+forms must be a close split/merge spelling with the same initial character and
+distinctive canonical orthography such as a hyphen, internal capital, acronym,
+or technical punctuation. Ordinary word-for-word edits such as
+`Friday -> Monday` and semantic compounds such as `every day -> everyday`
+abstain instead of becoming global aliases; supporting those safely requires a
+future explicit heard-as correction signal.
+Each recording runs all six B/K/A orders: live baseline, a canonical-priority
+control, and the alias. Prompt snapshots must prove K and A have identical
+canonical terms, ordering, and priority and differ by exactly the requested
+pronunciation association. A must beat K to establish alias causality and B
+for live safety. Candidate deterministic cleanup is excluded from every scored
+arm, and both decisions must prove. Neither result changes History, Dictionary,
+Settings, the recommendation UI, or daily transcription.
 
 The transcript-free report contains hashes, aggregate counts, durations, and a
 versioned verdict. The public retained fixture proved the mechanism and rejected
 the tested name candidate because its accuracy gain cost material decode time.
-The current History suggestion therefore remains evidence-independent and
-explicitly confirmed, rather than implying replay proof. Persisted evidence or
-background UI evaluation waits for real corrected-corpus yield. Pronunciation
-aliases, model selection, and configuration suggestions still require their own
-evidence gates. See
+An isolated pronunciation receipt also rejected the tested alias because both
+baseline controls already emitted the canonical spelling, leaving no causal
+accuracy gain and a latency regression. The current History suggestion
+therefore remains evidence-independent and explicitly confirmed, rather than
+implying replay proof. Persisted evidence or background UI evaluation waits for
+real corrected-corpus yield. User-facing pronunciation suggestions, model
+selection, and configuration suggestions still require their own evidence
+gates. See
 `docs/verification/2026-07-30-canonical-vocabulary-suggestions.md` and
-`docs/verification/2026-07-30-vocabulary-causal-replay.md`.
+`docs/verification/2026-07-30-vocabulary-causal-replay.md` and
+`docs/verification/2026-07-30-pronunciation-alias-replay.md`.
 
 The authoritative decode has layered local integrity checks. First, the coordinator
 compares the monotonic recording-session duration with the number of captured
@@ -903,10 +924,10 @@ and aggregate recording-storage ceiling:
 - evaluation never downloads a missing model implicitly, never prints
   transcript or reference text, and can disable dictionary conditioning for a
   controlled recognizer-only comparison;
-- `wordhand quality prove-vocabulary` runs one transcript-free, four-repetition
-  baseline/candidate causal replay in a bounded isolated worker, requires
-  independent source and control audio, and never persists its verdict or
-  candidate;
+- `wordhand quality prove-vocabulary` runs transcript-free canonical-term or
+  six-order priority-matched pronunciation-alias causal replay in a bounded
+  isolated worker, requires independent source and control audio, and never
+  persists its verdict or candidate;
 - no upload, sync, analytics, or background training path exists.
 
 The files inherit the Mac's volume-at-rest protection when FileVault is enabled;

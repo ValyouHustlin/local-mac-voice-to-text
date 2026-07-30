@@ -94,6 +94,44 @@ struct QualityEvaluationCommandTests {
     }
 
     @Test
+    func pronunciationAliasReplayRequiresDistinctHeardFormAndSixOrders() throws {
+        let valid = VocabularyReplayRequest(
+            schema: 2,
+            candidate: "Aaron Browne-Moore",
+            heardAs: "Aaron Brown more",
+            supportingTranscriptIDs: [UUID(), UUID()],
+            modelID: "whisper-large-v3",
+            repetitions: 6,
+            limit: 3
+        )
+        try valid.validate()
+        #expect(valid.candidateKind == .pronunciationAlias)
+
+        #expect(throws: (any Error).self) {
+            try VocabularyReplayRequest(
+                schema: 2,
+                candidate: "Aaron Browne-Moore",
+                heardAs: "Aaron Browne-Moore",
+                supportingTranscriptIDs: [UUID(), UUID()],
+                modelID: "whisper-large-v3",
+                repetitions: 6,
+                limit: 3
+            ).validate()
+        }
+        #expect(throws: (any Error).self) {
+            try VocabularyReplayRequest(
+                schema: 2,
+                candidate: "Aaron Browne-Moore",
+                heardAs: "Aaron Brown more",
+                supportingTranscriptIDs: [UUID(), UUID()],
+                modelID: "whisper-large-v3",
+                repetitions: 4,
+                limit: 3
+            ).validate()
+        }
+    }
+
+    @Test
     func vocabularyReplayRejectsOversizedStandardInput() throws {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent(
             "wordhand-replay-input-\(UUID().uuidString)"

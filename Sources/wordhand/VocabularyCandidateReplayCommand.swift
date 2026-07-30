@@ -162,6 +162,7 @@ struct QualityProveVocabulary: ParsableCommand {
 
     private func printHumanReport(_ report: VocabularyReplayReport) {
         print("Vocabulary causal replay")
+        print("candidate kind: \(report.candidateKind.rawValue)")
         print("candidate sha256: \(report.candidateSHA256)")
         print("model: \(report.modelID)")
         print(
@@ -188,6 +189,13 @@ struct QualityProveVocabulary: ParsableCommand {
         if !report.decision.reasons.isEmpty {
             print("reasons: \(report.decision.reasons.joined(separator: ", "))")
         }
+        if let live = report.liveBaselineDecision {
+            print(
+                "live-baseline check: \(live.verdict.rawValue) · "
+                    + "word edits \(live.baselineWordEditDistance) → "
+                    + "\(live.candidateWordEditDistance)"
+            )
+        }
         print("writes: none · network: disabled · report: transcript-free")
     }
 
@@ -208,17 +216,38 @@ struct QualityProveVocabulary: ParsableCommand {
 }
 
 struct VocabularyReplayRequest: Codable, Equatable {
-    static let schemaVersion = 1
-
     let schema: Int
     let candidate: String
+    let heardAs: String?
     let supportingTranscriptIDs: [UUID]
     let modelID: String
     let repetitions: Int
     let limit: Int
 
+    init(
+        schema: Int,
+        candidate: String,
+        heardAs: String? = nil,
+        supportingTranscriptIDs: [UUID],
+        modelID: String,
+        repetitions: Int,
+        limit: Int
+    ) {
+        self.schema = schema
+        self.candidate = candidate
+        self.heardAs = heardAs
+        self.supportingTranscriptIDs = supportingTranscriptIDs
+        self.modelID = modelID
+        self.repetitions = repetitions
+        self.limit = limit
+    }
+
+    var candidateKind: VocabularyReplayCandidateKind {
+        schema == 2 ? .pronunciationAlias : .canonicalTerm
+    }
+
     func validate() throws {
-        guard schema == Self.schemaVersion else {
+        guard schema == 1 || schema == 2 else {
             throw ValidationError("Unsupported replay request schema.")
         }
         let term = candidate.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -235,14 +264,40 @@ struct VocabularyReplayRequest: Codable, Equatable {
                 "The corpus limit cannot be smaller than the supporting set."
             )
         }
-        guard repetitions == 4 else {
-            throw ValidationError(
-                "Causal proof requires exactly four paired repetitions."
-            )
+        if schema == 1 {
+            guard heardAs == nil, repetitions == 4 else {
+                throw ValidationError(
+                    "Canonical proof requires exactly four paired repetitions."
+                )
+            }
+        } else {
+            let heard = heardAs?
+                .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            guard !heard.isEmpty, heard.count <= 100,
+                  normalizedRequestText(heard) != normalizedRequestText(term)
+            else {
+                throw ValidationError(
+                    "Alias proof requires a distinct 1 through 100 character heardAs."
+                )
+            }
+            guard repetitions == 6 else {
+                throw ValidationError(
+                    "Alias proof requires exactly six counterbalanced repetitions."
+                )
+            }
         }
         guard (3...50).contains(limit) else {
-            throw ValidationError("--limit in the request must be from 3 through 50.")
+            throw ValidationError(
+                "--limit in the request must be from 3 through 50."
+            )
         }
+    }
+
+    private func normalizedRequestText(_ text: String) -> String {
+        text.folding(
+            options: [.caseInsensitive, .diacriticInsensitive],
+            locale: Locale(identifier: "en_US_POSIX")
+        )
     }
 }
 
@@ -258,11 +313,14 @@ struct VocabularyReplayReport: Codable {
     let schema: Int
     let modelID: String
     let decoderConfigurationID: String
+    let candidateKind: VocabularyReplayCandidateKind
     let candidateSHA256: String
+    let spokenFormSHA256: String?
     let dictionarySHA256: String
     let corpusSHA256: String
     let supportingTranscriptIDSHA256: [String]
     let decision: VocabularyCandidateReplayDecision
+    let liveBaselineDecision: VocabularyCandidateReplayDecision?
 }
 
 enum VocabularyReplayRunner {
@@ -289,15 +347,79 @@ enum VocabularyReplayRunner {
         let baselineEntries = dictionarySnapshot.document.entries
         let candidate = request.candidate
             .trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !canonicalTerms(from: baselineEntries)
+        let records = try loadHistoryReadOnly(
+            dataURL.appendingPathComponent("history.sqlite")
+        )
+        let samples = try loadSamples(
+            request,
+            records: records,
+            dataURL: dataURL
+        )
+        let enabledCanonical = canonicalTerms(from: baselineEntries)
             .contains(where: { normalized($0) == normalized(candidate) })
-        else {
-            throw ValidationError("Candidate is already enabled in the dictionary.")
+        let candidateEntries: [DictionaryEntry]
+        let priorityControlEntries: [DictionaryEntry]?
+        let spokenForm: String?
+        if request.candidateKind == .canonicalTerm {
+            guard !enabledCanonical else {
+                throw ValidationError(
+                    "Candidate is already enabled in the dictionary."
+                )
+            }
+            candidateEntries = baselineEntries + [
+                DictionaryEntry(spokenForm: candidate, replacement: candidate),
+            ]
+            priorityControlEntries = nil
+            spokenForm = nil
+        } else {
+            guard enabledCanonical, let requestedHeard = request.heardAs?
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            else {
+                throw ValidationError(
+                    "Alias proof requires an enabled canonical dictionary term."
+                )
+            }
+            let retainedIDs = Set(samples.map(\.transcriptID))
+            let suggestions = PronunciationAliasSuggestionOracle.suggestions(
+                records: records,
+                retainedRecordingIDs: retainedIDs,
+                existingEntries: baselineEntries
+            )
+            let supportIDs = Set(request.supportingTranscriptIDs)
+            guard suggestions.contains(where: {
+                normalized($0.heardForm) == normalized(requestedHeard)
+                    && normalized($0.canonicalTerm) == normalized(candidate)
+                    && supportIDs.isSubset(of: Set($0.supportingTranscriptIDs))
+            }) else {
+                throw ValidationError(
+                    "Retained History does not prove this repeated explicit alias."
+                )
+            }
+            let matchedDate = Date(timeIntervalSince1970: 4_102_444_800)
+            let priorityEntry = DictionaryEntry(
+                spokenForm: candidate,
+                replacement: candidate,
+                createdAt: matchedDate,
+                updatedAt: matchedDate
+            )
+            let aliasEntry = DictionaryEntry(
+                spokenForm: requestedHeard,
+                replacement: candidate,
+                createdAt: matchedDate,
+                updatedAt: matchedDate
+            )
+            let control = baselineEntries + [priorityEntry]
+            let alias = baselineEntries + [aliasEntry]
+            try validateMatchedAliasPrompts(
+                controlEntries: control,
+                aliasEntries: alias,
+                spokenForm: requestedHeard,
+                canonicalTerm: candidate
+            )
+            priorityControlEntries = control
+            candidateEntries = alias
+            spokenForm = requestedHeard
         }
-        let candidateEntries = baselineEntries + [
-            DictionaryEntry(spokenForm: candidate, replacement: candidate),
-        ]
-        let samples = try loadSamples(request, dataURL: dataURL)
         let vocabulary = DictionaryVocabularySource(entries: baselineEntries)
         let transcriber = WhisperKitTranscriber(
             model: model,
@@ -307,96 +429,29 @@ enum VocabularyReplayRunner {
         let baselineProcessor = TranscriptProcessor(
             dictionaryEntries: baselineEntries
         )
-        let candidateProcessor = TranscriptProcessor(
-            dictionaryEntries: candidateEntries
-        )
-        var observations: [VocabularyCandidateReplayObservation] = []
-
-        for repetition in 0..<request.repetitions {
-            let candidateFirst = repetition == 1 || repetition == 2
-            for sample in samples {
-                let audio = try AudioProcessor.loadAudioAsFloatArray(
-                    fromPath: sample.audioURL.path
-                )
-                guard !audio.isEmpty else {
-                    throw ValidationError(
-                        "A selected Quality Lab recording contains no audio."
-                    )
-                }
-                let baseline: ReplayTranscript
-                let withCandidate: ReplayTranscript
-                if candidateFirst {
-                    withCandidate = try await transcribe(
-                        audio,
-                        entries: candidateEntries,
-                        vocabulary: vocabulary,
-                        transcriber: transcriber,
-                        processor: candidateProcessor
-                    )
-                    baseline = try await transcribe(
-                        audio,
-                        entries: baselineEntries,
-                        vocabulary: vocabulary,
-                        transcriber: transcriber,
-                        processor: baselineProcessor
-                    )
-                } else {
-                    baseline = try await transcribe(
-                        audio,
-                        entries: baselineEntries,
-                        vocabulary: vocabulary,
-                        transcriber: transcriber,
-                        processor: baselineProcessor
-                    )
-                    withCandidate = try await transcribe(
-                        audio,
-                        entries: candidateEntries,
-                        vocabulary: vocabulary,
-                        transcriber: transcriber,
-                        processor: candidateProcessor
-                    )
-                }
-                guard let baselineScore = TranscriptionQualityMetrics.score(
-                    reference: sample.reference,
-                    hypothesis: baseline.text
-                ), let candidateScore = TranscriptionQualityMetrics.score(
-                    reference: sample.reference,
-                    hypothesis: withCandidate.text
-                ) else {
-                    throw ValidationError("A selected reference is not scorable.")
-                }
-                observations.append(VocabularyCandidateReplayObservation(
-                    recordingID: sample.transcriptID.uuidString.lowercased(),
-                    audioSHA256: sample.audioSHA256,
-                    repetition: repetition,
-                    isSupporting: sample.isSupporting,
-                    baselineQuality: baselineScore,
-                    candidateQuality: candidateScore,
-                    baselineNormalizedSHA256: sha256(
-                        Data(normalized(baseline.text).utf8)
-                    ),
-                    candidateNormalizedSHA256: sha256(
-                        Data(normalized(withCandidate.text).utf8)
-                    ),
-                    baselineContainsCandidate: containsCanonicalSpelling(
-                        candidate,
-                        in: baseline.text
-                    ),
-                    candidateContainsCandidate: containsCanonicalSpelling(
-                        candidate,
-                        in: withCandidate.text
-                    ),
-                    protectedSpanRegression: protectedSpanRegression(
-                        reference: sample.reference,
-                        baseline: baseline.text,
-                        candidate: withCandidate.text,
-                        dictionaryEntries: baselineEntries
-                    ),
-                    baselineDuration: baseline.duration,
-                    candidateDuration: withCandidate.duration
-                ))
-            }
-        }
+        let result = request.candidateKind == .canonicalTerm
+            ? try await runCanonicalReplay(
+                request: request,
+                samples: samples,
+                candidate: candidate,
+                baselineEntries: baselineEntries,
+                candidateEntries: candidateEntries,
+                vocabulary: vocabulary,
+                transcriber: transcriber,
+                processor: baselineProcessor
+            )
+            : try await runAliasReplay(
+                request: request,
+                samples: samples,
+                candidate: candidate,
+                spokenForm: spokenForm!,
+                baselineEntries: baselineEntries,
+                priorityControlEntries: priorityControlEntries!,
+                aliasEntries: candidateEntries,
+                vocabulary: vocabulary,
+                transcriber: transcriber,
+                processor: baselineProcessor
+            )
         guard try loadDictionaryReadOnly(dictionaryURL).data
             == dictionarySnapshot.data
         else {
@@ -405,10 +460,14 @@ enum VocabularyReplayRunner {
             )
         }
         return VocabularyReplayReport(
-            schema: 1,
+            schema: request.schema,
             modelID: request.modelID,
-            decoderConfigurationID: "full-buffer-v1-transcript-processor-v1",
+            decoderConfigurationID: request.candidateKind == .canonicalTerm
+                ? "full-buffer-v1-baseline-processor-v2"
+                : "full-buffer-v1-priority-matched-alias-v1",
+            candidateKind: request.candidateKind,
             candidateSHA256: sha256(Data(candidate.utf8)),
+            spokenFormSHA256: spokenForm.map { sha256(Data($0.utf8)) },
             dictionarySHA256: sha256(dictionarySnapshot.data),
             corpusSHA256: corpusSHA256(samples),
             supportingTranscriptIDSHA256: samples.filter(\.isSupporting)
@@ -418,20 +477,309 @@ enum VocabularyReplayRunner {
                     ))
                 }
                 .sorted(),
+            decision: result.decision,
+            liveBaselineDecision: result.liveBaselineDecision
+        )
+    }
+
+    private static func runCanonicalReplay(
+        request: VocabularyReplayRequest,
+        samples: [VocabularyReplaySample],
+        candidate: String,
+        baselineEntries: [DictionaryEntry],
+        candidateEntries: [DictionaryEntry],
+        vocabulary: DictionaryVocabularySource,
+        transcriber: WhisperKitTranscriber,
+        processor: TranscriptProcessor
+    ) async throws -> ReplayEvaluationResult {
+        var observations: [VocabularyCandidateReplayObservation] = []
+        for repetition in 0..<request.repetitions {
+            let candidateFirst = repetition == 1 || repetition == 2
+            for sample in samples {
+                let audio = try loadAudio(sample)
+                let baseline: ReplayTranscript
+                let withCandidate: ReplayTranscript
+                if candidateFirst {
+                    withCandidate = try await transcribe(
+                        audio,
+                        entries: candidateEntries,
+                        vocabulary: vocabulary,
+                        transcriber: transcriber,
+                        processor: processor
+                    )
+                    baseline = try await transcribe(
+                        audio,
+                        entries: baselineEntries,
+                        vocabulary: vocabulary,
+                        transcriber: transcriber,
+                        processor: processor
+                    )
+                } else {
+                    baseline = try await transcribe(
+                        audio,
+                        entries: baselineEntries,
+                        vocabulary: vocabulary,
+                        transcriber: transcriber,
+                        processor: processor
+                    )
+                    withCandidate = try await transcribe(
+                        audio,
+                        entries: candidateEntries,
+                        vocabulary: vocabulary,
+                        transcriber: transcriber,
+                        processor: processor
+                    )
+                }
+                observations.append(try observation(
+                    sample: sample,
+                    repetition: repetition,
+                    candidateKind: .canonicalTerm,
+                    candidate: candidate,
+                    spokenForm: nil,
+                    baseline: baseline,
+                    withCandidate: withCandidate,
+                    dictionaryEntries: baselineEntries
+                ))
+            }
+        }
+        return ReplayEvaluationResult(
             decision: VocabularyCandidateReplayOracle.assess(
                 observations: observations,
                 requiredRepetitions: request.repetitions
-            )
+            ),
+            liveBaselineDecision: nil
         )
+    }
+
+    private static func runAliasReplay(
+        request: VocabularyReplayRequest,
+        samples: [VocabularyReplaySample],
+        candidate: String,
+        spokenForm: String,
+        baselineEntries: [DictionaryEntry],
+        priorityControlEntries: [DictionaryEntry],
+        aliasEntries: [DictionaryEntry],
+        vocabulary: DictionaryVocabularySource,
+        transcriber: WhisperKitTranscriber,
+        processor: TranscriptProcessor
+    ) async throws -> ReplayEvaluationResult {
+        let orders: [[ReplayArm]] = [
+            [.baseline, .priorityControl, .alias],
+            [.baseline, .alias, .priorityControl],
+            [.priorityControl, .baseline, .alias],
+            [.priorityControl, .alias, .baseline],
+            [.alias, .baseline, .priorityControl],
+            [.alias, .priorityControl, .baseline],
+        ]
+        var causal: [VocabularyCandidateReplayObservation] = []
+        var liveSafety: [VocabularyCandidateReplayObservation] = []
+        for (repetition, order) in orders.enumerated() {
+            for sample in samples {
+                let audio = try loadAudio(sample)
+                var transcripts: [ReplayArm: ReplayTranscript] = [:]
+                for arm in order {
+                    let entries: [DictionaryEntry]
+                    switch arm {
+                    case .baseline:
+                        entries = baselineEntries
+                    case .priorityControl:
+                        entries = priorityControlEntries
+                    case .alias:
+                        entries = aliasEntries
+                    }
+                    transcripts[arm] = try await transcribe(
+                        audio,
+                        entries: entries,
+                        vocabulary: vocabulary,
+                        transcriber: transcriber,
+                        processor: processor
+                    )
+                }
+                guard let baseline = transcripts[.baseline],
+                      let control = transcripts[.priorityControl],
+                      let alias = transcripts[.alias]
+                else {
+                    throw ValidationError("Alias replay did not complete every arm.")
+                }
+                causal.append(try observation(
+                    sample: sample,
+                    repetition: repetition,
+                    candidateKind: .pronunciationAlias,
+                    candidate: candidate,
+                    spokenForm: spokenForm,
+                    baseline: control,
+                    withCandidate: alias,
+                    dictionaryEntries: baselineEntries
+                ))
+                liveSafety.append(try observation(
+                    sample: sample,
+                    repetition: repetition,
+                    candidateKind: .pronunciationAlias,
+                    candidate: candidate,
+                    spokenForm: spokenForm,
+                    baseline: baseline,
+                    withCandidate: alias,
+                    dictionaryEntries: baselineEntries
+                ))
+            }
+        }
+        let causalDecision = VocabularyCandidateReplayOracle.assess(
+            observations: causal,
+            requiredRepetitions: request.repetitions
+        )
+        let liveDecision = VocabularyCandidateReplayOracle.assess(
+            observations: liveSafety,
+            requiredRepetitions: request.repetitions
+        )
+        return ReplayEvaluationResult(
+            decision: combinedAliasDecision(
+                causal: causalDecision,
+                liveSafety: liveDecision
+            ),
+            liveBaselineDecision: liveDecision
+        )
+    }
+
+    private static func combinedAliasDecision(
+        causal: VocabularyCandidateReplayDecision,
+        liveSafety: VocabularyCandidateReplayDecision
+    ) -> VocabularyCandidateReplayDecision {
+        let verdict: VocabularyCandidateReplayVerdict
+        if causal.verdict == .inconclusive || liveSafety.verdict == .inconclusive {
+            verdict = .inconclusive
+        } else if causal.verdict == .proved && liveSafety.verdict == .proved {
+            verdict = .proved
+        } else {
+            verdict = .rejected
+        }
+        let reasons = causal.reasons.map { "priority_control:\($0)" }
+            + liveSafety.reasons.map { "live_baseline:\($0)" }
+        return VocabularyCandidateReplayDecision(
+            verdict: verdict,
+            reasons: reasons,
+            supportingRecordingCount: causal.supportingRecordingCount,
+            corpusRecordingCount: causal.corpusRecordingCount,
+            repetitionCount: causal.repetitionCount,
+            baselineWordEditDistance: causal.baselineWordEditDistance,
+            candidateWordEditDistance: causal.candidateWordEditDistance,
+            baselineCharacterEditDistance: causal.baselineCharacterEditDistance,
+            candidateCharacterEditDistance: causal.candidateCharacterEditDistance,
+            baselineExactMatchCount: causal.baselineExactMatchCount,
+            candidateExactMatchCount: causal.candidateExactMatchCount,
+            baselineDuration: causal.baselineDuration,
+            candidateDuration: causal.candidateDuration
+        )
+    }
+
+    private static func observation(
+        sample: VocabularyReplaySample,
+        repetition: Int,
+        candidateKind: VocabularyReplayCandidateKind,
+        candidate: String,
+        spokenForm: String?,
+        baseline: ReplayTranscript,
+        withCandidate: ReplayTranscript,
+        dictionaryEntries: [DictionaryEntry]
+    ) throws -> VocabularyCandidateReplayObservation {
+        guard let baselineScore = TranscriptionQualityMetrics.score(
+            reference: sample.reference,
+            hypothesis: baseline.text
+        ), let candidateScore = TranscriptionQualityMetrics.score(
+            reference: sample.reference,
+            hypothesis: withCandidate.text
+        ) else {
+            throw ValidationError("A selected reference is not scorable.")
+        }
+        return VocabularyCandidateReplayObservation(
+            recordingID: sample.transcriptID.uuidString.lowercased(),
+            audioSHA256: sample.audioSHA256,
+            repetition: repetition,
+            isSupporting: sample.isSupporting,
+            candidateKind: candidateKind,
+            baselineQuality: baselineScore,
+            candidateQuality: candidateScore,
+            baselineNormalizedSHA256: sha256(
+                Data(normalized(baseline.text).utf8)
+            ),
+            candidateNormalizedSHA256: sha256(
+                Data(normalized(withCandidate.text).utf8)
+            ),
+            baselineContainsCandidate: containsCanonicalSpelling(
+                candidate,
+                in: baseline.text
+            ),
+            candidateContainsCandidate: containsCanonicalSpelling(
+                candidate,
+                in: withCandidate.text
+            ),
+            baselineContainsSpokenForm: spokenForm.map {
+                contains($0, in: baseline.text)
+            } ?? false,
+            protectedSpanRegression: protectedSpanRegression(
+                reference: sample.reference,
+                baseline: baseline.text,
+                candidate: withCandidate.text,
+                dictionaryEntries: dictionaryEntries
+            ),
+            baselineDuration: baseline.duration,
+            candidateDuration: withCandidate.duration
+        )
+    }
+
+    private static func loadAudio(
+        _ sample: VocabularyReplaySample
+    ) throws -> [Float] {
+        let audio = try AudioProcessor.loadAudioAsFloatArray(
+            fromPath: sample.audioURL.path
+        )
+        guard !audio.isEmpty else {
+            throw ValidationError(
+                "A selected Quality Lab recording contains no audio."
+            )
+        }
+        return audio
+    }
+
+    private static func validateMatchedAliasPrompts(
+        controlEntries: [DictionaryEntry],
+        aliasEntries: [DictionaryEntry],
+        spokenForm: String,
+        canonicalTerm: String
+    ) throws {
+        let control = DictionaryVocabularySource(
+            entries: controlEntries
+        ).promptSnapshot()
+        let alias = DictionaryVocabularySource(
+            entries: aliasEntries
+        ).promptSnapshot()
+        guard control.canonicalTerms == alias.canonicalTerms else {
+            throw ValidationError(
+                "Alias and priority-control canonical prompts are not equivalent."
+            )
+        }
+        let expected = DictionaryPronunciationAssociation(
+            spokenForm: spokenForm,
+            canonicalTerm: canonicalTerm
+        )
+        var remaining = alias.pronunciationAssociations
+        guard let index = remaining.firstIndex(of: expected) else {
+            throw ValidationError(
+                "Alias was displaced from the bounded pronunciation prompt."
+            )
+        }
+        remaining.remove(at: index)
+        guard remaining == control.pronunciationAssociations else {
+            throw ValidationError(
+                "Alias changed another pronunciation association."
+            )
+        }
     }
 
     private static func loadSamples(
         _ request: VocabularyReplayRequest,
+        records: [TranscriptRecord],
         dataURL: URL
     ) throws -> [VocabularyReplaySample] {
-        let records = try loadHistoryReadOnly(
-            dataURL.appendingPathComponent("history.sqlite")
-        )
         let supportIDs = Set(request.supportingTranscriptIDs)
         let archive = LocalQualityAudioArchive(
             directoryURL: dataURL.appendingPathComponent(
@@ -442,7 +790,8 @@ enum VocabularyReplayRunner {
         var seenAudio = Set<String>()
         let eligible = try records.compactMap {
             record -> VocabularyReplaySample? in
-            let reference = record.referenceText
+            guard let storedReference = record.referenceText else { return nil }
+            let reference = storedReference
                 .trimmingCharacters(in: .whitespacesAndNewlines)
             guard !reference.isEmpty else { return nil }
             let audioURL = archive.fileURL(for: record.id)
@@ -609,7 +958,7 @@ enum VocabularyReplayRunner {
 
     private static func loadHistoryReadOnly(
         _ fileURL: URL
-    ) throws -> [ReadOnlyQualityRecord] {
+    ) throws -> [TranscriptRecord] {
         let temporary = FileManager.default.temporaryDirectory
             .appendingPathComponent(
                 "wordhand-quality-history-\(UUID().uuidString)",
@@ -637,15 +986,7 @@ enum VocabularyReplayRunner {
                 let records = try TranscriptHistoryStore(
                     fileURL: snapshotURL
                 ).records(limit: 5_000)
-                return records.compactMap { record in
-                    guard let reference = record.referenceText else {
-                        return nil
-                    }
-                    return ReadOnlyQualityRecord(
-                        id: record.id,
-                        referenceText: reference
-                    )
-                }
+                return records
             } catch TranscriptHistoryError.unsupportedSchema(let version) {
                 throw ValidationError(
                     "Transcript history schema \(version) requires the "
@@ -695,9 +1036,15 @@ private struct ReplayTranscript {
     let duration: TimeInterval
 }
 
-private struct ReadOnlyQualityRecord {
-    let id: UUID
-    let referenceText: String
+private enum ReplayArm: Hashable {
+    case baseline
+    case priorityControl
+    case alias
+}
+
+private struct ReplayEvaluationResult {
+    let decision: VocabularyCandidateReplayDecision
+    let liveBaselineDecision: VocabularyCandidateReplayDecision?
 }
 
 private struct HistoryFileBytes: Equatable {

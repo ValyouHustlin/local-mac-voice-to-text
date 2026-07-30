@@ -1,5 +1,10 @@
 import Foundation
 
+public enum VocabularyReplayCandidateKind: String, Codable, Sendable {
+    case canonicalTerm
+    case pronunciationAlias
+}
+
 public enum VocabularyCandidateReplayVerdict: String, Codable, Sendable {
     case proved
     case rejected
@@ -15,12 +20,14 @@ public struct VocabularyCandidateReplayObservation:
     public let audioSHA256: String
     public let repetition: Int
     public let isSupporting: Bool
+    public let candidateKind: VocabularyReplayCandidateKind
     public let baselineQuality: TranscriptionQualityScore
     public let candidateQuality: TranscriptionQualityScore
     public let baselineNormalizedSHA256: String
     public let candidateNormalizedSHA256: String
     public let baselineContainsCandidate: Bool
     public let candidateContainsCandidate: Bool
+    public let baselineContainsSpokenForm: Bool
     public let protectedSpanRegression: Bool
     public let baselineDuration: TimeInterval
     public let candidateDuration: TimeInterval
@@ -30,12 +37,14 @@ public struct VocabularyCandidateReplayObservation:
         audioSHA256: String,
         repetition: Int,
         isSupporting: Bool,
+        candidateKind: VocabularyReplayCandidateKind = .canonicalTerm,
         baselineQuality: TranscriptionQualityScore,
         candidateQuality: TranscriptionQualityScore,
         baselineNormalizedSHA256: String,
         candidateNormalizedSHA256: String,
         baselineContainsCandidate: Bool,
         candidateContainsCandidate: Bool,
+        baselineContainsSpokenForm: Bool = false,
         protectedSpanRegression: Bool,
         baselineDuration: TimeInterval,
         candidateDuration: TimeInterval
@@ -44,12 +53,14 @@ public struct VocabularyCandidateReplayObservation:
         self.audioSHA256 = audioSHA256
         self.repetition = repetition
         self.isSupporting = isSupporting
+        self.candidateKind = candidateKind
         self.baselineQuality = baselineQuality
         self.candidateQuality = candidateQuality
         self.baselineNormalizedSHA256 = baselineNormalizedSHA256
         self.candidateNormalizedSHA256 = candidateNormalizedSHA256
         self.baselineContainsCandidate = baselineContainsCandidate
         self.candidateContainsCandidate = candidateContainsCandidate
+        self.baselineContainsSpokenForm = baselineContainsSpokenForm
         self.protectedSpanRegression = protectedSpanRegression
         self.baselineDuration = baselineDuration
         self.candidateDuration = candidateDuration
@@ -74,6 +85,36 @@ public struct VocabularyCandidateReplayDecision:
     public let candidateExactMatchCount: Int
     public let baselineDuration: TimeInterval
     public let candidateDuration: TimeInterval
+
+    public init(
+        verdict: VocabularyCandidateReplayVerdict,
+        reasons: [String],
+        supportingRecordingCount: Int,
+        corpusRecordingCount: Int,
+        repetitionCount: Int,
+        baselineWordEditDistance: Int,
+        candidateWordEditDistance: Int,
+        baselineCharacterEditDistance: Int,
+        candidateCharacterEditDistance: Int,
+        baselineExactMatchCount: Int,
+        candidateExactMatchCount: Int,
+        baselineDuration: TimeInterval,
+        candidateDuration: TimeInterval
+    ) {
+        self.verdict = verdict
+        self.reasons = reasons
+        self.supportingRecordingCount = supportingRecordingCount
+        self.corpusRecordingCount = corpusRecordingCount
+        self.repetitionCount = repetitionCount
+        self.baselineWordEditDistance = baselineWordEditDistance
+        self.candidateWordEditDistance = candidateWordEditDistance
+        self.baselineCharacterEditDistance = baselineCharacterEditDistance
+        self.candidateCharacterEditDistance = candidateCharacterEditDistance
+        self.baselineExactMatchCount = baselineExactMatchCount
+        self.candidateExactMatchCount = candidateExactMatchCount
+        self.baselineDuration = baselineDuration
+        self.candidateDuration = candidateDuration
+    }
 }
 
 public enum VocabularyCandidateReplayOracle {
@@ -90,7 +131,7 @@ public enum VocabularyCandidateReplayOracle {
         var inconclusive: [String] = []
         var rejected: [String] = []
 
-        if requiredRepetitions != 4 {
+        if requiredRepetitions != 4 && requiredRepetitions != 6 {
             inconclusive.append("invalid_repetition_requirement")
         }
         if supportingRecords.count < 2
@@ -115,6 +156,7 @@ public enum VocabularyCandidateReplayOracle {
                 || recordValues.contains(where: {
                     $0.audioSHA256 != first.audioSHA256
                         || $0.isSupporting != first.isSupporting
+                        || $0.candidateKind != first.candidateKind
                         || !StreamingAudioIdentity.isCanonicalSHA256(
                             $0.baselineNormalizedSHA256
                         )
@@ -137,11 +179,26 @@ public enum VocabularyCandidateReplayOracle {
         }
 
         let supportValues = values.filter(\.isSupporting)
+        let candidateKinds = Set(values.map(\.candidateKind))
+        if candidateKinds.count != 1 {
+            inconclusive.append("mixed_candidate_kinds")
+        }
         if supportValues.contains(where: { !$0.candidateContainsCandidate }) {
             rejected.append("candidate_missing_from_support")
         }
         if !supportValues.contains(where: { !$0.baselineContainsCandidate }) {
             rejected.append("baseline_already_contains_candidate")
+        }
+        let requiredWins = (requiredRepetitions * 2 + 2) / 3
+        if candidateKinds == [.pronunciationAlias] {
+            for (_, recordValues) in supportingRecords {
+                if recordValues.count(where: \.baselineContainsSpokenForm)
+                    < requiredWins
+                {
+                    rejected.append("alias_source_not_repeatably_observed")
+                    break
+                }
+            }
         }
         for (_, recordValues) in supportingRecords {
             let strictWins = recordValues.count(where: {
@@ -150,7 +207,7 @@ public enum VocabularyCandidateReplayOracle {
                     && $0.candidateQuality.characterEditDistance
                         < $0.baselineQuality.characterEditDistance
             })
-            if strictWins < 3 {
+            if strictWins < requiredWins {
                 rejected.append("support_not_repeatably_improved")
                 break
             }
