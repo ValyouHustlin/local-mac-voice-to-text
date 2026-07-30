@@ -17,6 +17,8 @@ final class SettingsController: NSObject, ObservableObject, NSWindowDelegate {
     var onShortcutCaptureChange: ((Bool) -> Void)?
     var onPermissionsRefresh: ((WordhandPermissionStatus) -> Void)?
     var onRelaunchRequested: (() throws -> Void)?
+    var onRevealQualityAudio: (() -> Void)?
+    var onDeleteQualityAudio: (() throws -> Void)?
 
     private let store: SettingsStore
     private let launchAtLoginManager: any LaunchAtLoginManaging
@@ -140,6 +142,39 @@ final class SettingsController: NSObject, ObservableObject, NSWindowDelegate {
 
     func setInsertionMode(_ insertionMode: InsertionMode) {
         update { $0.insertionMode = insertionMode }
+    }
+
+    func setQualityAudioRetentionEnabled(_ enabled: Bool) {
+        update { $0.qualityAudioRetentionEnabled = enabled }
+    }
+
+    func setQualityAudioRetentionDays(_ days: Int) {
+        update { $0.qualityAudioRetentionDays = days }
+    }
+
+    func revealQualityAudio() {
+        onRevealQualityAudio?()
+    }
+
+    func deleteQualityAudio() {
+        let alert = NSAlert()
+        alert.messageText = "Delete all retained recordings?"
+        alert.informativeText = """
+        This permanently removes the local Quality Lab audio. Transcript history \
+        and your custom dictionary are not affected.
+        """
+        alert.alertStyle = .critical
+        alert.addButton(withTitle: "Delete Recordings")
+        alert.addButton(withTitle: "Cancel")
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+
+        do {
+            try onDeleteQualityAudio?()
+            saveError = nil
+        } catch {
+            saveError = "Couldn’t delete recordings: \(error.localizedDescription)"
+            NSSound.beep()
+        }
     }
 
     func setLaunchAtLogin(_ enabled: Bool) {
@@ -375,6 +410,7 @@ private struct SettingsView: View {
                     formattingCard
                     shortcutsCard
                     recordingCard
+                    qualityLabCard
                     privacyNote
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -877,6 +913,80 @@ private struct SettingsView: View {
                     )
                     .labelsHidden()
                     .toggleStyle(.switch)
+                }
+            }
+        }
+    }
+
+    private var qualityLabCard: some View {
+        settingsCard {
+            VStack(alignment: .leading, spacing: 16) {
+                HStack {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Quality Lab")
+                            .font(.headline)
+                        Text(
+                            "Keep audio locally so you can compare mistakes and improve accuracy over time."
+                        )
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    Toggle(
+                        "",
+                        isOn: Binding(
+                            get: { controller.settings.qualityAudioRetentionEnabled },
+                            set: { controller.setQualityAudioRetentionEnabled($0) }
+                        )
+                    )
+                    .labelsHidden()
+                    .toggleStyle(.switch)
+                }
+
+                if controller.settings.qualityAudioRetentionEnabled {
+                    Divider()
+                    HStack {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Automatic deletion")
+                                .font(.subheadline.weight(.semibold))
+                            Text("Raw recordings expire even if transcript history remains.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        Picker(
+                            "Retention",
+                            selection: Binding(
+                                get: { controller.settings.qualityAudioRetentionDays },
+                                set: { controller.setQualityAudioRetentionDays($0) }
+                            )
+                        ) {
+                            Text("1 day").tag(1)
+                            Text("3 days").tag(3)
+                            Text("7 days").tag(7)
+                            Text("14 days").tag(14)
+                            Text("30 days").tag(30)
+                        }
+                        .labelsHidden()
+                        .frame(width: 110)
+                    }
+                }
+
+                Divider()
+                HStack {
+                    Label("Stored only in Wordhand’s private data folder.", systemImage: "lock")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                    Button("Show Files") {
+                        controller.revealQualityAudio()
+                    }
+                    .buttonStyle(.borderless)
+                    Button("Delete All…") {
+                        controller.deleteQualityAudio()
+                    }
+                    .buttonStyle(.borderless)
+                    .foregroundStyle(.red)
                 }
             }
         }

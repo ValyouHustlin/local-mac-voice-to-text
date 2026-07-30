@@ -111,7 +111,9 @@ Verified by source inspection and dated receipts through 2026-07-29:
 - configurable global shortcuts through `CGEventTap`, including hold-to-talk
   and tap-to-start/tap-to-stop modes;
 - paste-first cursor insertion with rich clipboard restoration, copy-only mode,
-  direct Unicode fallback, and Secure Input detection;
+  direct Unicode fallback, Secure Input detection, cursor acknowledgement,
+  one safe retry after a proven no-op, and guarded undo of the last verified
+  insertion;
 - native recording overlay, branded menu bar control, Dock presence, and
   Settings window;
 - quiet local start/stop/cancel cues, an expressive eleven-bar waveform, a
@@ -133,6 +135,8 @@ Verified by source inspection and dated receipts through 2026-07-29:
   defaults and immediate correction flow;
 - searchable SQLite transcript history with copy, reinsert, correction, and
   deletion actions;
+- opt-in local Quality Lab audio retention with automatic expiry and owner-only
+  storage; public installs keep it disabled by default;
 - versioned settings and automatic migration from the legacy product name;
 - permission doctor and visible in-app recovery that independently checks
   Microphone, Input Monitoring, and Accessibility instead of reporting a
@@ -153,7 +157,7 @@ receipts may promote latency or compatibility claims.
 
 P0 ground truth and P1 foundation are complete as of 2026-07-28. The package
 now has `WordhandCore`, protocol-backed coordinator seams, versioned settings,
-114 deterministic tests across core and macOS adapter targets, and macOS CI.
+121 deterministic tests across core and macOS adapter targets, and macOS CI.
 
 The daily-driver bundle is built by `scripts/build-app.sh` and installed by
 `scripts/install-app.sh`. The installer prefers `/Applications`, falls back to
@@ -267,9 +271,15 @@ global input, or text injection. See
 Paste is now the live default instead of merely a stored setting. Wordhand
 snapshots every pasteboard item/type, stages the transcript, posts Command-V,
 and restores the original clipboard only if no newer clipboard write won the
-race. The pasteboard gets a 40 ms cold-start settle interval before Wordhand
+race. The first paste from each process receives a 120 ms pasteboard settle
+interval; later pastes use 40 ms before Wordhand
 posts a complete Command-down, V-down, V-up, Command-up chord from a combined
-session event source; clipboard restoration waits 320 ms for slower targets.
+session event source. Cursor observation waits 360 ms for slower targets.
+When Accessibility exposes the focused element and selection, an unchanged
+cursor proves a no-op and permits exactly one retry. A moved or changed target
+is a recoverable failure, not a success. Fields that do not expose selection
+retain the compatibility fallback and cannot be honestly marked as verified.
+The previous clipboard is restored on both success and failure.
 Copy-only and direct Unicode remain selectable in Settings and update the
 running coordinator without relaunching. Secure Input is checked before
 mutation. Chrome and VS Code accepted complete live transcripts while an RTF
@@ -283,6 +293,15 @@ exposed that posting Command-V is not proof that the intended field received
 the transcript: a browser advertising iframe took focus during one recording,
 the textarea stayed empty, and history still recorded the paste as inserted.
 See `docs/verification/2026-07-29-three-target-checkpoint.md`.
+
+The last verified insertion retains only a focused-element checkpoint and text
+range in memory. `Undo Last Insertion` is enabled in the menu bar only while
+that proof remains available. Undo refuses to run if focus or the cursor moved;
+it selects and deletes only Wordhand's verified range and never sends a broad
+Command-Z that could revert unrelated user work. This acknowledgement, retry,
+and undo path is fake-driven and must still receive an attended installed-app
+receipt before being promoted to a three-target runtime claim. See
+`docs/verification/2026-07-29-quality-lab-insertion.md`.
 
 The recording surface is intentionally visually quiet: one shadowed matte
 capsule, an eleven-bar mint waveform, and a bare compact cancel glyph. The
@@ -520,6 +539,26 @@ The history window supports:
 The transcript is saved before insertion, so an Accessibility or secure-input
 failure never loses the words.
 
+## Private Quality Lab
+
+Audio retention is useful as an evaluation corpus, not as automatic training.
+Wordhand therefore exposes an explicit Quality Lab toggle and retention window:
+
+- public and fresh installs default to disabled;
+- an existing user may opt in locally without changing the repository default;
+- each 16 kHz mono WAV is named by the matching transcript-history UUID;
+- no transcript text is duplicated into an audio manifest;
+- the directory is owner-only `0700` and each WAV is owner-only `0600`;
+- recordings expire after 1–90 days, with 7 days as the recommended default;
+- deleting one history record deletes its paired audio, and clearing history or
+  using Delete All removes retained recordings;
+- no upload, sync, analytics, or background training path exists.
+
+The files inherit the Mac's volume-at-rest protection when FileVault is enabled;
+Wordhand does not claim independent application-level encryption. A later
+fine-tuning or regression workflow must use explicit corrected reference text,
+keep all processing local, and receive a separate design and verification pass.
+
 ## Insertion and clipboard behavior
 
 Paste is the default insertion strategy because Electron and Java applications
@@ -529,23 +568,28 @@ Paste insertion:
 
 1. snapshot all current pasteboard items and change count;
 2. place transcript text on the pasteboard;
-3. wait briefly for the first app-to-pasteboard transaction to settle;
+3. wait 120 ms for the first process paste or 40 ms for later transactions;
 4. send a complete Command-V key chord;
-5. wait for the target to consume the paste;
-6. restore the previous pasteboard only if no third party changed it in the
+5. wait for the target to consume the paste and, where supported, confirm the
+   expected cursor advance;
+6. retry exactly once only when the same focused field proves the cursor did
+   not move;
+7. restore the previous pasteboard only if no third party changed it in the
    meantime;
-7. report a recoverable failure instead of silently discarding text.
+8. report a recoverable failure instead of silently discarding text.
 
 A posted paste event is not sufficient evidence that the intended field
-received text. Wordhand must capture a target/focus fingerprint before
-processing, revalidate it immediately before insertion, and surface a
-recoverable focus-changed conflict if another element, window, or browser frame
-took focus. Until that is implemented, a history status of `inserted` means
-Wordhand posted the paste event; it does not mean the intended field contents
-were verified.
+received text. Wordhand captures the focused Accessibility element and selection
+immediately before insertion where the target exposes them. It accepts an
+expected UTF-16 cursor advance as acknowledgement, retries a proven no-op once,
+and rejects a changed element or unexpected range. Some browser, Electron, and
+custom-canvas fields do not expose a selection; their compatibility fallback
+still means a history status of `inserted` records successful event posting,
+not verified field contents. A future history schema should distinguish those
+two outcomes explicitly.
 
 Direct Unicode insertion remains a fallback. Copy-only intentionally leaves the
-transcript on the clipboard. The last successful insertion keeps enough local
+transcript on the clipboard. The last verified insertion keeps enough local
 state for an immediate undo/revert command.
 
 When secure input or an inaccessible target is detected, the app keeps the
@@ -592,6 +636,7 @@ User data stays under:
   settings.json
   dictionary.json
   history.sqlite
+  Quality Recordings/             opt-in, automatically expired WAV files
   Models/
 ```
 
@@ -620,6 +665,8 @@ Pure tests cover:
 - dictionary matching, precedence, Unicode boundaries, and persistence;
 - settings defaults, migrations, validation, and atomic-write recovery;
 - history insertion, search, retention, and deletion;
+- Quality Lab opt-in defaults, WAV encoding, file permissions, record pairing,
+  expiry, and deletion;
 - insertion routing and clipboard restoration decisions;
 - hotkey parsing, serialization, validation, conflicts, and coordinator states;
 - rolling-transcript agreement, correction horizon, bounded-window progress,

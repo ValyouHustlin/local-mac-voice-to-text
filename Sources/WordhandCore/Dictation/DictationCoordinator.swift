@@ -60,6 +60,7 @@ public final class DictationCoordinator {
     public var onStateChange: ((DictationState) -> Void)?
     public var onCapture: (([Float]) -> Void)?
     public var onTranscript: ((String, TimeInterval) -> Void)?
+    public var onQualityAudio: ((QualityAudioSample) -> Void)?
     public var onProcessingDuration: ((TimeInterval) -> Void)?
     public var onStreamingFinalizationDuration: ((TimeInterval) -> Void)?
     public var onHistoryChange: (() -> Void)?
@@ -247,6 +248,14 @@ public final class DictationCoordinator {
                     state = .failed(.history(String(describing: error)))
                     return
                 }
+            }
+            if history != nil {
+                onQualityAudio?(QualityAudioSample(
+                    transcriptID: record.id,
+                    createdAt: record.createdAt,
+                    samples: samples,
+                    sampleRate: Int(audioSampleRate.rounded())
+                ))
             }
             onTranscript?(text, transcriptionElapsed)
 

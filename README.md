@@ -35,6 +35,8 @@ and inserts the result into ordinary Mac apps.
 | **Natural self-corrections** | Say “wait, no,” “I meant,” “make that,” or “scratch that.” Wordhand removes the abandoned wording locally before formatting. |
 | **Maximum Performance preview** | On high-end Apple silicon, opt into formatter prewarming while you speak. Final transcription uses the complete audio buffer in every mode so speed never comes from risking dropped words. |
 | **Reliable insertion** | Paste-first insertion works across native, browser, and Electron targets while restoring the previous rich clipboard. Direct typing and copy-only modes are available. |
+| **Private Quality Lab** | Optionally retain short-lived local WAVs paired to transcript history for accuracy evaluation. It is off by default, owner-only, automatically expires, and never uploads. |
+| **Safe retry and undo** | When a text field exposes its cursor, Wordhand acknowledges delivery, retries one proven no-op, and can remove only its own last verified insertion. |
 | **Flow-focused feedback** | Quiet start/stop tones, an expressive live waveform, a display-following recording control, and one-click cancellation keep dictation legible without demanding attention. |
 | **Four writing styles** | Choose Casual, Formatted, Professional, or AI Communication. AI mode keeps connected reasoning as prose and uses lists, steps, or lightweight sections only when the content calls for them. The three richer modes use Apple’s on-device model with meaning-preservation checks and safe local fallback. |
 | **Restart without hunting** | Settings that require a restart expose an inline Relaunch button only after their value changes. Current live-updating settings stay out of the way. |
@@ -116,6 +118,14 @@ also tell the recognizer that, for example, a commonly heard phrase is written
 with a particular canonical spelling; the same entry remains a deterministic
 post-processing fallback.
 
+Quality Lab audio retention is disabled by default. When explicitly enabled,
+16 kHz mono WAV files are kept under
+`~/Library/Application Support/Wordhand/Quality Recordings`, named by their
+matching transcript-history IDs, restricted to the current user, and deleted
+automatically after the selected retention window. The files make controlled
+evaluation and future local fine-tuning possible; Wordhand does not train on
+them automatically and does not upload them.
+
 If macOS uses `Control-Space` to switch input sources, disable **Select the
 previous input source** under **System Settings > Keyboard > Keyboard
 Shortcuts > Input Sources**.
@@ -131,6 +141,10 @@ wordhand models download <id>            # download a model before first use
 wordhand models benchmark <audio> --model <id>
 wordhand dictionary add --heard-as "tee mux" --replace-with "tmux"
 wordhand format "dictated text" --style professional
+wordhand quality status
+wordhand quality enable --retention-days 7
+wordhand quality disable
+wordhand quality clear --confirm
 wordhand install --launch-at-login       # register Wordhand at login
 wordhand install --uninstall             # remove launch-at-login registration
 wordhand --model whisper-large-v3-turbo  # use a larger multilingual model
@@ -176,8 +190,9 @@ dedicated to the test. The immediate kill command is
 
 ## Roadmap
 
-The next daily-use slices are immediate undo/revert, fresh-account onboarding,
-an attended Maximum Performance latency pass, and a signed release path. See
+The next daily-use slices are corrected Quality Lab reference transcripts,
+fresh-account onboarding, an attended Maximum Performance latency pass, and a
+signed release path. See
 [the product roadmap](.plan/plan.md) and
 [architecture](docs/architecture.md).
 

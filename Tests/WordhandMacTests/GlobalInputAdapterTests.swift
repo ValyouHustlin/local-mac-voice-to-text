@@ -35,6 +35,7 @@ struct GlobalInputAdapterTests {
         let poster = FakeTextEventPoster()
         let inserter = MacTextInserter(
             eventPoster: poster,
+            observer: FakeTextInsertionObserver(results: [.unavailable]),
             secureInputEnabled: { false }
         )
 
@@ -42,6 +43,82 @@ struct GlobalInputAdapterTests {
 
         #expect(poster.unicodeTexts == ["local only"])
         #expect(poster.pasteShortcutCount == 0)
+    }
+
+    @Test
+    func pasteRetriesOnceAfterAConfirmedNoOpAndCreatesSafeUndo() async throws {
+        let poster = FakeTextEventPoster()
+        let checkpoint = TextInsertionCheckpoint(
+            id: UUID(),
+            selection: NSRange(location: 4, length: 0)
+        )
+        let token = TextInsertionUndoToken(
+            checkpointID: checkpoint.id,
+            insertedRange: NSRange(location: 4, length: 5),
+            expectedSelection: NSRange(location: 9, length: 0)
+        )
+        let observer = FakeTextInsertionObserver(
+            checkpoint: checkpoint,
+            results: [.unchanged, .verified(token)]
+        )
+        let inserter = MacTextInserter(
+            eventPoster: poster,
+            observer: observer,
+            secureInputEnabled: { false }
+        )
+
+        try await inserter.insert("hello", mode: .paste)
+
+        #expect(poster.pasteShortcutCount == 2)
+        #expect(inserter.canUndoLastInsertion)
+        try inserter.undoLastInsertion()
+        #expect(observer.undoTokens == [token])
+        #expect(!inserter.canUndoLastInsertion)
+    }
+
+    @Test
+    func pasteFailsHonestlyWhenTheRetryIsAlsoANoOp() async {
+        let poster = FakeTextEventPoster()
+        let observer = FakeTextInsertionObserver(
+            checkpoint: TextInsertionCheckpoint(
+                id: UUID(),
+                selection: NSRange(location: 0, length: 0)
+            ),
+            results: [.unchanged, .unchanged]
+        )
+        let inserter = MacTextInserter(
+            eventPoster: poster,
+            observer: observer,
+            secureInputEnabled: { false }
+        )
+
+        await #expect(throws: TextInsertionError.self) {
+            try await inserter.insert("hello", mode: .paste)
+        }
+        #expect(poster.pasteShortcutCount == 2)
+        #expect(!inserter.canUndoLastInsertion)
+    }
+
+    @Test
+    func acknowledgedSelectionReplacementDoesNotOfferDestructiveUndo() async throws {
+        let poster = FakeTextEventPoster()
+        let observer = FakeTextInsertionObserver(
+            checkpoint: TextInsertionCheckpoint(
+                id: UUID(),
+                selection: NSRange(location: 4, length: 8)
+            ),
+            results: [.verifiedWithoutUndo]
+        )
+        let inserter = MacTextInserter(
+            eventPoster: poster,
+            observer: observer,
+            secureInputEnabled: { false }
+        )
+
+        try await inserter.insert("hello", mode: .paste)
+
+        #expect(poster.pasteShortcutCount == 1)
+        #expect(!inserter.canUndoLastInsertion)
     }
 
     @Test
@@ -409,6 +486,40 @@ private final class FakeTextEventPoster: TextEventPosting, @unchecked Sendable {
     func postPasteShortcut() throws {
         lock.withLock {
             pasteShortcutCount += 1
+        }
+    }
+}
+
+private final class FakeTextInsertionObserver: TextInsertionObserving, @unchecked Sendable {
+    private let lock = NSLock()
+    private let checkpoint: TextInsertionCheckpoint?
+    private var results: [TextInsertionVerification]
+    private(set) var undoTokens: [TextInsertionUndoToken] = []
+
+    init(
+        checkpoint: TextInsertionCheckpoint? = nil,
+        results: [TextInsertionVerification]
+    ) {
+        self.checkpoint = checkpoint
+        self.results = results
+    }
+
+    func captureCheckpoint() -> TextInsertionCheckpoint? {
+        checkpoint
+    }
+
+    func verify(
+        _ checkpoint: TextInsertionCheckpoint,
+        insertedUTF16Count: Int
+    ) -> TextInsertionVerification {
+        lock.withLock {
+            results.isEmpty ? .unavailable : results.removeFirst()
+        }
+    }
+
+    func undo(_ token: TextInsertionUndoToken) throws {
+        lock.withLock {
+            undoTokens.append(token)
         }
     }
 }

@@ -369,6 +369,8 @@ struct DictationCoordinatorTests {
             date: { createdAt },
             now: makeClock([10, 10.75])
         )
+        var qualitySample: QualityAudioSample?
+        coordinator.onQualityAudio = { qualitySample = $0 }
 
         await coordinator.handle(.pressed)
         await coordinator.handle(.released)
@@ -386,6 +388,10 @@ struct DictationCoordinatorTests {
         #expect(history.updates.count == 1)
         #expect(history.updates[0].0 == saved.id)
         #expect(history.updates[0].1 == .inserted)
+        #expect(qualitySample?.transcriptID == saved.id)
+        #expect(qualitySample?.createdAt == createdAt)
+        #expect(qualitySample?.samples.count == 32_000)
+        #expect(qualitySample?.sampleRate == 16_000)
     }
 
     @Test

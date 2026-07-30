@@ -151,7 +151,8 @@ failed record still needs the full native/browser/Electron lane receipt.
 ## P4: reliable paste and clipboard modes
 
 Status: core implementation and native/browser/Electron live receipts complete.
-The forced Secure Input receipt and immediate undo/revert remain open.
+The forced Secure Input receipt plus live acknowledgement/retry/undo receipts
+remain open.
 
 Goal: make insertion work in apps that reject synthetic Unicode input without
 destroying the user's clipboard.
@@ -161,9 +162,12 @@ destroying the user's clipboard.
 - [x] Do not overwrite clipboard changes made by another app during insertion.
 - [x] Keep direct Unicode as a fallback and add copy-only mode.
 - [x] Detect Secure Input before clipboard mutation and surface the failure.
-- [x] Harden the first post-launch paste with a 40 ms pasteboard settle,
-  explicit four-event Command-V chord, and 320 ms consumption window.
-- Add an immediate undo/revert action for the last insertion.
+- [x] Harden the first post-launch paste with a 120 ms pasteboard settle
+  (40 ms thereafter), explicit four-event Command-V chord, and cursor
+  acknowledgement where Accessibility exposes a selection.
+- [x] Retry exactly once only after the same field proves the paste was a no-op.
+- [x] Add an immediate guarded undo/revert action for the last verified
+  insertion; refuse if focus or the cursor changed.
 - [x] Test the clipboard ownership/race policy and live rich-content
   restoration.
 - Add adapter contract tests for empty pasteboards, write failures, and
@@ -190,6 +194,11 @@ The cold-start hardening is implemented and fake-backed paths remain green, but
 the exact first transcription after a new installed-app launch still needs an
 attended cursor-target receipt. Do not claim that symptom closed from event
 posting alone.
+
+The 2026-07-29 acknowledgement slice adds fake-backed no-op retry, changed-focus
+failure, and safe range-only undo. It does not claim the first-paste symptom is
+closed until the installed app is observed in native, browser, and Electron
+targets. Receipt: `docs/verification/2026-07-29-quality-lab-insertion.md`.
 
 ## P5: configurable hotkeys
 
@@ -234,9 +243,10 @@ Current ranking:
    fresh-account onboarding flow remains;
 4. [x] first app-aware AI/coding profile; prose, chat, and code-comment
    specialization remains;
-5. undo/revert of the last insertion if not completed in P4;
-6. text snippets and explicit voice commands;
-7. multilingual selection and language auto-detect.
+5. [x] guarded undo/revert of the last verified insertion;
+6. [x] private Quality Lab audio retention for local accuracy evaluation;
+7. text snippets and explicit voice commands;
+8. multilingual selection and language auto-detect.
 
 Why this order: formatting and recovery affect nearly every dictation. App-aware
 output and editing commands save repeated cleanup. Multilingual and streaming
@@ -248,6 +258,28 @@ surrounding document content.
 
 Exit receipts are defined per slice before implementation and include both unit
 checks and the real affected flow.
+
+### Private Quality Lab checkpoint
+
+Status: implementation and isolated storage verification complete. Natural
+dictation capture is intentionally deferred while Aaron is working.
+
+- [x] Keep public/fresh-install audio retention off by default.
+- [x] Add a visible Settings toggle with 1, 3, 7, 14, and 30-day expiry choices.
+- [x] Pair each WAV to the matching transcript-history UUID without duplicating
+  transcript text into a second manifest.
+- [x] Restrict the directory to `0700` and WAV files to `0600`.
+- [x] Prune expired recordings at startup and after each retained capture.
+- [x] Delete paired audio with one history record and delete all retained audio
+  when history is cleared or the Settings action is confirmed.
+- [x] Add local CLI status, enable, disable, and confirmed clear actions.
+- [x] Keep all audio local; add no cloud, sync, analytics, or training job.
+- [ ] Add explicit corrected reference transcripts before using the corpus for
+  actual evaluation or fine-tuning.
+- [ ] Observe one opted-in natural dictation produce a paired WAV after Aaron is
+  available for attended audio verification.
+
+Receipt: `docs/verification/2026-07-29-quality-lab-insertion.md`.
 
 ### Flow feedback and app-aware formatting checkpoint
 
@@ -454,6 +486,8 @@ Goal: install and update like a normal trusted Mac app.
 - [x] Support a persistent local Keychain signing identity and warn explicitly
   when an ad-hoc rebuild can invalidate macOS privacy grants.
 - [x] Restrict local settings, vocabulary, and history data to the owner.
+- [x] Add opt-in, automatically expired, owner-only local Quality Lab audio
+  retention while keeping the public default off.
 - [x] Select Aaron's local signing identity and verify privacy grants survive
   multiple installed rebuilds with different bundle hashes.
 - Sign with hardened runtime.

@@ -79,6 +79,10 @@ struct SettingsTests {
             _ = try AppSettings(historyRetentionDays: 0).validated()
             Issue.record("expected zero retention to fail validation")
         } catch {}
+
+        #expect(throws: SettingsError.invalidQualityAudioRetentionDays(0)) {
+            _ = try AppSettings(qualityAudioRetentionDays: 0).validated()
+        }
     }
 
     @Test
@@ -93,6 +97,8 @@ struct SettingsTests {
         expected.formattingProfile = .aiCommunication
         expected.performanceMode = .maximum
         expected.insertionMode = .unicode
+        expected.qualityAudioRetentionEnabled = true
+        expected.qualityAudioRetentionDays = 14
 
         try store.save(expected)
 
@@ -143,6 +149,8 @@ struct SettingsTests {
         #expect(settings.soundEffectsEnabled)
         #expect(settings.formattingProfile == .formatted)
         #expect(settings.performanceMode == .adaptive)
+        #expect(!settings.qualityAudioRetentionEnabled)
+        #expect(settings.qualityAudioRetentionDays == 7)
     }
 
     @Test

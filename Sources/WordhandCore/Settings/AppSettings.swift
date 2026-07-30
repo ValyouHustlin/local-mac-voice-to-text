@@ -125,6 +125,8 @@ public struct AppSettings: Codable, Equatable, Sendable {
     public var formattingProfile: TranscriptFormattingProfile
     public var performanceMode: ProcessingPerformanceMode
     public var historyRetentionDays: Int
+    public var qualityAudioRetentionEnabled: Bool
+    public var qualityAudioRetentionDays: Int
     public var hotkeys: [HotkeyBinding]
 
     public init(
@@ -136,6 +138,8 @@ public struct AppSettings: Codable, Equatable, Sendable {
         formattingProfile: TranscriptFormattingProfile = .formatted,
         performanceMode: ProcessingPerformanceMode = .adaptive,
         historyRetentionDays: Int = 30,
+        qualityAudioRetentionEnabled: Bool = false,
+        qualityAudioRetentionDays: Int = 7,
         hotkeys: [HotkeyBinding] = [
             HotkeyBinding(key: "space", modifiers: ["control"], action: .pushToTalk),
         ]
@@ -148,6 +152,8 @@ public struct AppSettings: Codable, Equatable, Sendable {
         self.formattingProfile = formattingProfile
         self.performanceMode = performanceMode
         self.historyRetentionDays = historyRetentionDays
+        self.qualityAudioRetentionEnabled = qualityAudioRetentionEnabled
+        self.qualityAudioRetentionDays = qualityAudioRetentionDays
         self.hotkeys = hotkeys
     }
 
@@ -160,6 +166,8 @@ public struct AppSettings: Codable, Equatable, Sendable {
         case formattingProfile
         case performanceMode
         case historyRetentionDays
+        case qualityAudioRetentionEnabled
+        case qualityAudioRetentionDays
         case hotkeys
     }
 
@@ -182,6 +190,14 @@ public struct AppSettings: Codable, Equatable, Sendable {
             forKey: .performanceMode
         ) ?? .adaptive
         historyRetentionDays = try container.decode(Int.self, forKey: .historyRetentionDays)
+        qualityAudioRetentionEnabled = try container.decodeIfPresent(
+            Bool.self,
+            forKey: .qualityAudioRetentionEnabled
+        ) ?? false
+        qualityAudioRetentionDays = try container.decodeIfPresent(
+            Int.self,
+            forKey: .qualityAudioRetentionDays
+        ) ?? 7
         hotkeys = try container.decode([HotkeyBinding].self, forKey: .hotkeys)
     }
 
@@ -194,6 +210,11 @@ public struct AppSettings: Codable, Equatable, Sendable {
         }
         guard (1...3_650).contains(historyRetentionDays) else {
             throw SettingsError.invalidRetentionDays(historyRetentionDays)
+        }
+        guard (1...90).contains(qualityAudioRetentionDays) else {
+            throw SettingsError.invalidQualityAudioRetentionDays(
+                qualityAudioRetentionDays
+            )
         }
         guard !hotkeys.isEmpty, hotkeys.allSatisfy({ !$0.key.isEmpty }) else {
             throw SettingsError.invalidHotkeys
@@ -223,6 +244,7 @@ public enum SettingsError: Error, Equatable {
     case unsupportedSchema(Int)
     case unknownModel(String)
     case invalidRetentionDays(Int)
+    case invalidQualityAudioRetentionDays(Int)
     case invalidHotkeys
     case invalidHotkey
     case duplicateHotkey

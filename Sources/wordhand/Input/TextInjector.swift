@@ -9,6 +9,34 @@ protocol TextEventPosting: Sendable {
     func postPasteShortcut() throws
 }
 
+struct TextInsertionCheckpoint: Equatable, Sendable {
+    let id: UUID
+    let selection: NSRange
+}
+
+struct TextInsertionUndoToken: Equatable, Sendable {
+    let checkpointID: UUID
+    let insertedRange: NSRange
+    let expectedSelection: NSRange
+}
+
+enum TextInsertionVerification: Equatable, Sendable {
+    case verified(TextInsertionUndoToken)
+    case verifiedWithoutUndo
+    case unchanged
+    case unavailable
+    case targetChanged
+}
+
+protocol TextInsertionObserving: Sendable {
+    func captureCheckpoint() -> TextInsertionCheckpoint?
+    func verify(
+        _ checkpoint: TextInsertionCheckpoint,
+        insertedUTF16Count: Int
+    ) -> TextInsertionVerification
+    func undo(_ token: TextInsertionUndoToken) throws
+}
+
 struct CGTextEventPoster: TextEventPosting {
     func postUnicode(_ text: String) {
         TextInjector.inject(text)
@@ -56,29 +84,43 @@ enum TextInjector {
     }
 }
 
-struct MacTextInserter: TextInserting, @unchecked Sendable {
+final class MacTextInserter: TextInserting, @unchecked Sendable {
     private let eventPoster: any TextEventPosting
+    private let observer: any TextInsertionObserving
     private let secureInputEnabled: @Sendable () -> Bool
+    private let lock = NSLock()
+    private var undoToken: TextInsertionUndoToken?
+    private var hasPostedPaste = false
+    var onUndoAvailabilityChange: (@Sendable (Bool) -> Void)?
 
     init(
         eventPoster: any TextEventPosting = CGTextEventPoster(),
+        observer: any TextInsertionObserving = AXTextInsertionObserver(),
         secureInputEnabled: @escaping @Sendable () -> Bool = {
             IsSecureEventInputEnabled()
         }
     ) {
         self.eventPoster = eventPoster
+        self.observer = observer
         self.secureInputEnabled = secureInputEnabled
     }
 
     func insert(_ text: String, mode: InsertionMode) async throws {
         guard !text.isEmpty else { return }
+        clearUndo()
 
         switch mode {
         case .unicode:
             guard !secureInputEnabled() else {
                 throw TextInsertionError.secureInputEnabled
             }
+            let checkpoint = observer.captureCheckpoint()
             eventPoster.postUnicode(text)
+            try? await Task.sleep(nanoseconds: 200_000_000)
+            try finalizeObservation(
+                checkpoint,
+                insertedUTF16Count: text.utf16.count
+            )
 
         case .copyOnly:
             try await MainActor.run {
@@ -110,12 +152,18 @@ struct MacTextInserter: TextInserting, @unchecked Sendable {
                     ownedChangeCount: ownedChangeCount
                 )
             }
+            let checkpoint = observer.captureCheckpoint()
 
             // A newly launched app can reach the pasteboard before macOS has
             // made the first write visible to the target process. Let that
             // transaction settle before posting a complete Command-V chord.
+            let pasteboardSettleNanoseconds: UInt64 = lock.withLock {
+                let isFirstPaste = !hasPostedPaste
+                hasPostedPaste = true
+                return isFirstPaste ? 120_000_000 : 40_000_000
+            }
             do {
-                try await Task.sleep(nanoseconds: 40_000_000)
+                try await Task.sleep(nanoseconds: pasteboardSettleNanoseconds)
             } catch {
                 await MainActor.run {
                     let pasteboard = NSPasteboard.general
@@ -140,9 +188,39 @@ struct MacTextInserter: TextInserting, @unchecked Sendable {
                 throw error
             }
 
-            // Give browser/Electron targets time to consume the paste before
-            // returning the user's rich clipboard contents.
-            try? await Task.sleep(nanoseconds: 320_000_000)
+            // Give browser/Electron targets time to consume the paste, then
+            // confirm delivery from the target's cursor. A proven no-op gets
+            // one retry; unsupported fields keep the compatibility fallback.
+            try? await Task.sleep(nanoseconds: 360_000_000)
+            var observationError: Error?
+            if let checkpoint {
+                do {
+                    switch observer.verify(
+                        checkpoint,
+                        insertedUTF16Count: text.utf16.count
+                    ) {
+                    case .unchanged:
+                        try await MainActor.run {
+                            try eventPoster.postPasteShortcut()
+                        }
+                        try? await Task.sleep(nanoseconds: 360_000_000)
+                        try finalizeObservation(
+                            checkpoint,
+                            insertedUTF16Count: text.utf16.count
+                        )
+                case .verified(let token):
+                    setUndo(token)
+                case .verifiedWithoutUndo:
+                    break
+                case .unavailable:
+                        break
+                    case .targetChanged:
+                        throw TextInsertionError.insertionTargetChanged
+                    }
+                } catch {
+                    observationError = error
+                }
+            }
             await MainActor.run {
                 let pasteboard = NSPasteboard.general
                 guard PasteboardRestorationPolicy.shouldRestore(
@@ -153,6 +231,59 @@ struct MacTextInserter: TextInserting, @unchecked Sendable {
                 }
                 transaction.snapshot.restore(to: pasteboard)
             }
+            if let observationError {
+                throw observationError
+            }
+        }
+    }
+
+    var canUndoLastInsertion: Bool {
+        lock.withLock { undoToken != nil }
+    }
+
+    func undoLastInsertion() throws {
+        guard let token = lock.withLock({ undoToken }) else {
+            throw TextInsertionError.nothingSafeToUndo
+        }
+        try observer.undo(token)
+        clearUndo()
+    }
+
+    private func finalizeObservation(
+        _ checkpoint: TextInsertionCheckpoint?,
+        insertedUTF16Count: Int
+    ) throws {
+        guard let checkpoint else { return }
+        switch observer.verify(
+            checkpoint,
+            insertedUTF16Count: insertedUTF16Count
+        ) {
+        case .verified(let token):
+            setUndo(token)
+        case .verifiedWithoutUndo:
+            break
+        case .unavailable:
+            break
+        case .unchanged:
+            throw TextInsertionError.deliveryNotConfirmed
+        case .targetChanged:
+            throw TextInsertionError.insertionTargetChanged
+        }
+    }
+
+    private func setUndo(_ token: TextInsertionUndoToken) {
+        lock.withLock { undoToken = token }
+        onUndoAvailabilityChange?(true)
+    }
+
+    private func clearUndo() {
+        let hadUndo = lock.withLock {
+            let hadUndo = undoToken != nil
+            undoToken = nil
+            return hadUndo
+        }
+        if hadUndo {
+            onUndoAvailabilityChange?(false)
         }
     }
 }
@@ -161,6 +292,11 @@ enum TextInsertionError: LocalizedError {
     case secureInputEnabled
     case clipboardWriteFailed
     case pasteEventCreationFailed
+    case deliveryNotConfirmed
+    case insertionTargetChanged
+    case nothingSafeToUndo
+    case undoTargetChanged
+    case undoFailed
 
     var errorDescription: String? {
         switch self {
@@ -170,7 +306,146 @@ enum TextInsertionError: LocalizedError {
             return "Wordhand couldn’t place the transcript on the clipboard."
         case .pasteEventCreationFailed:
             return "Wordhand couldn’t create the Command-V event."
+        case .deliveryNotConfirmed:
+            return "The target didn’t acknowledge the paste. The transcript is safe in History."
+        case .insertionTargetChanged:
+            return "The active text field changed before Wordhand could confirm insertion."
+        case .nothingSafeToUndo:
+            return "There is no verified Wordhand insertion to undo."
+        case .undoTargetChanged:
+            return "Wordhand won’t undo because the cursor moved after insertion."
+        case .undoFailed:
+            return "The current text field refused Wordhand’s safe undo."
         }
+    }
+}
+
+final class AXTextInsertionObserver: TextInsertionObserving, @unchecked Sendable {
+    private struct StoredCheckpoint {
+        let element: AXUIElement
+        let selection: NSRange
+    }
+
+    private let lock = NSLock()
+    private var checkpoints: [UUID: StoredCheckpoint] = [:]
+
+    func captureCheckpoint() -> TextInsertionCheckpoint? {
+        guard let element = Self.focusedElement(),
+              let selection = Self.selection(of: element)
+        else {
+            return nil
+        }
+        let id = UUID()
+        lock.withLock {
+            checkpoints = [id: StoredCheckpoint(element: element, selection: selection)]
+        }
+        return TextInsertionCheckpoint(id: id, selection: selection)
+    }
+
+    func verify(
+        _ checkpoint: TextInsertionCheckpoint,
+        insertedUTF16Count: Int
+    ) -> TextInsertionVerification {
+        guard let stored = lock.withLock({ checkpoints[checkpoint.id] }),
+              let focused = Self.focusedElement()
+        else {
+            return .unavailable
+        }
+        guard CFEqual(stored.element, focused) else {
+            return .targetChanged
+        }
+        guard let selection = Self.selection(of: focused) else {
+            return .unavailable
+        }
+        if selection == stored.selection {
+            return .unchanged
+        }
+        let replacementStart = stored.selection.location
+        let expectedLocation = replacementStart + insertedUTF16Count
+        guard selection == NSRange(location: expectedLocation, length: 0) else {
+            return .targetChanged
+        }
+        guard stored.selection.length == 0 else {
+            // Replacing a selection destroys pre-existing user text. We can
+            // acknowledge the paste, but must not call deleting the new range
+            // an undo because it would not restore the replaced content.
+            return .verifiedWithoutUndo
+        }
+        return .verified(TextInsertionUndoToken(
+            checkpointID: checkpoint.id,
+            insertedRange: NSRange(
+                location: replacementStart,
+                length: insertedUTF16Count
+            ),
+            expectedSelection: selection
+        ))
+    }
+
+    func undo(_ token: TextInsertionUndoToken) throws {
+        guard let stored = lock.withLock({ checkpoints[token.checkpointID] }),
+              let focused = Self.focusedElement(),
+              CFEqual(stored.element, focused),
+              Self.selection(of: focused) == token.expectedSelection
+        else {
+            throw TextInsertionError.undoTargetChanged
+        }
+        var range = CFRange(
+            location: token.insertedRange.location,
+            length: token.insertedRange.length
+        )
+        guard let rangeValue = AXValueCreate(.cfRange, &range),
+              AXUIElementSetAttributeValue(
+                focused,
+                kAXSelectedTextRangeAttribute as CFString,
+                rangeValue
+              ) == .success,
+              AXUIElementSetAttributeValue(
+                focused,
+                kAXSelectedTextAttribute as CFString,
+                "" as CFString
+              ) == .success,
+              Self.selection(of: focused) == NSRange(
+                  location: token.insertedRange.location,
+                  length: 0
+              )
+        else {
+            throw TextInsertionError.undoFailed
+        }
+    }
+
+    private static func focusedElement() -> AXUIElement? {
+        let systemWide = AXUIElementCreateSystemWide()
+        var value: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(
+            systemWide,
+            kAXFocusedUIElementAttribute as CFString,
+            &value
+        ) == .success,
+        let value,
+        CFGetTypeID(value) == AXUIElementGetTypeID()
+        else {
+            return nil
+        }
+        return unsafeBitCast(value, to: AXUIElement.self)
+    }
+
+    private static func selection(of element: AXUIElement) -> NSRange? {
+        var value: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(
+            element,
+            kAXSelectedTextRangeAttribute as CFString,
+            &value
+        ) == .success,
+        let value,
+        CFGetTypeID(value) == AXValueGetTypeID()
+        else {
+            return nil
+        }
+        let axValue = unsafeBitCast(value, to: AXValue.self)
+        guard AXValueGetType(axValue) == .cfRange else { return nil }
+        var range = CFRange()
+        guard AXValueGetValue(axValue, .cfRange, &range) else { return nil }
+        return NSRange(location: range.location, length: range.length)
     }
 }
 

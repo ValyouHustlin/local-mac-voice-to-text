@@ -6,17 +6,20 @@ final class HistoryController {
     private let store: TranscriptHistoryStore
     private unowned let dictionary: DictionaryController
     private let inserter: TextInserting
+    private let qualityAudioArchive: LocalQualityAudioArchive?
     private var windowController: HistoryWindowController?
     private var previousApplication: NSRunningApplication?
 
     init(
         store: TranscriptHistoryStore,
         dictionary: DictionaryController,
-        inserter: TextInserting
+        inserter: TextInserting,
+        qualityAudioArchive: LocalQualityAudioArchive? = nil
     ) {
         self.store = store
         self.dictionary = dictionary
         self.inserter = inserter
+        self.qualityAudioArchive = qualityAudioArchive
     }
 
     func showHistory() {
@@ -85,6 +88,7 @@ final class HistoryController {
         guard alert.runModal() == .alertFirstButtonReturn else { return }
 
         do {
+            try qualityAudioArchive?.delete(transcriptID: record.id)
             try store.delete(id: record.id)
             windowController?.reload()
         } catch {
@@ -108,6 +112,7 @@ final class HistoryController {
         guard alert.runModal() == .alertFirstButtonReturn else { return }
 
         do {
+            try qualityAudioArchive?.deleteAll()
             try store.clear()
             windowController?.reload()
         } catch {

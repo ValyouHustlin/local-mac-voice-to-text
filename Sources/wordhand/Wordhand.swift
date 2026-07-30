@@ -16,6 +16,7 @@ struct Wordhand: ParsableCommand {
             Doctor.self,
             Models.self,
             DictionaryCommands.self,
+            Quality.self,
             Install.self,
             OverlayPreview.self,
         ],
@@ -133,6 +134,9 @@ struct Run: ParsableCommand {
             ?? TranscriptHistoryStore.defaultFileURL()
         let settingsURL = customDataDirectory?.appendingPathComponent("settings.json")
             ?? SettingsStore.defaultFileURL()
+        let qualityAudioURL = customDataDirectory?
+            .appendingPathComponent("Quality Recordings", isDirectory: true)
+            ?? LocalQualityAudioArchive.defaultDirectoryURL()
         let runtimeLockURL = settingsURL.deletingLastPathComponent()
             .appendingPathComponent("wordhand.lock")
         let instanceLock = try SingleInstanceLock(fileURL: runtimeLockURL)
@@ -176,6 +180,7 @@ struct Run: ParsableCommand {
         )
         let inserter = MacTextInserter()
         let historyStore = try TranscriptHistoryStore(fileURL: historyURL)
+        let qualityAudioArchive = LocalQualityAudioArchive(directoryURL: qualityAudioURL)
         let retentionDays: Int? = settings.historyRetentionDays
         if let retentionDays,
            let retentionCutoff = Calendar.current.date(
@@ -186,8 +191,22 @@ struct Run: ParsableCommand {
         {
             try historyStore.prune(before: retentionCutoff)
         }
+        if settings.qualityAudioRetentionEnabled,
+           let qualityCutoff = Calendar.current.date(
+               byAdding: .day,
+               value: -settings.qualityAudioRetentionDays,
+               to: Date()
+           )
+        {
+            try qualityAudioArchive.prune(olderThan: qualityCutoff)
+        }
         let history = MainActor.assumeIsolated {
-            HistoryController(store: historyStore, dictionary: dictionary, inserter: inserter)
+            HistoryController(
+                store: historyStore,
+                dictionary: dictionary,
+                inserter: inserter,
+                qualityAudioArchive: qualityAudioArchive
+            )
         }
         let dumpWav = self.dumpWav
         let overlay: RecordingOverlay? = noOverlay ? nil : MainActor.assumeIsolated { RecordingOverlay() }
@@ -205,14 +224,24 @@ struct Run: ParsableCommand {
             )
         }
         let menuBar = MainActor.assumeIsolated {
-            MenuBarController(
+            var controller: MenuBarController!
+            controller = MenuBarController(
                 modelID: chosenModel.id,
                 settings: settings,
                 onOpenSettings: { settingsController.showSettings() },
                 onOpenHistory: { history.showHistory() },
                 onOpenDictionary: { dictionary.showDictionary() },
-                onCorrectLast: { dictionary.correctLatestTranscript() }
+                onCorrectLast: { dictionary.correctLatestTranscript() },
+                onUndoLast: {
+                    do {
+                        try inserter.undoLastInsertion()
+                    } catch {
+                        NSSound.beep()
+                        controller.setFailure(error.localizedDescription)
+                    }
+                }
             )
+            return controller!
         }
         let readiness = MainActor.assumeIsolated {
             RuntimeReadiness()
@@ -279,11 +308,23 @@ struct Run: ParsableCommand {
                     overlay?.hide()
                 }
             }
+            inserter.onUndoAvailabilityChange = { available in
+                Task { @MainActor in
+                    menuBar.setCanUndoLastInsertion(available)
+                }
+            }
             settingsController.onShortcutCaptureChange = { capturing in
                 monitor.setSuspended(capturing)
             }
             settingsController.onRelaunchRequested = {
                 try ApplicationRelauncher.relaunchCurrentApplication()
+            }
+            settingsController.onRevealQualityAudio = {
+                try? qualityAudioArchive.ensureDirectory()
+                NSWorkspace.shared.open(qualityAudioArchive.directoryURL)
+            }
+            settingsController.onDeleteQualityAudio = {
+                try qualityAudioArchive.deleteAll()
             }
             settingsController.onPermissionsRefresh = { permissions in
                 guard permissions.globalInputReady else {
@@ -382,6 +423,28 @@ struct Run: ParsableCommand {
                 ))
                 dictionary.rememberLatestTranscript(text)
                 menuBar.setHasLatestTranscript(true)
+            }
+            coordinator.onQualityAudio = { sample in
+                guard settingsController.settings.qualityAudioRetentionEnabled else {
+                    return
+                }
+                let retentionDays = settingsController.settings.qualityAudioRetentionDays
+                Task.detached {
+                    do {
+                        _ = try qualityAudioArchive.store(sample)
+                        if let cutoff = Calendar.current.date(
+                            byAdding: .day,
+                            value: -retentionDays,
+                            to: Date()
+                        ) {
+                            try qualityAudioArchive.prune(olderThan: cutoff)
+                        }
+                    } catch {
+                        FileHandle.standardError.write(Data(
+                            "quality audio archive failed: \(error)\n".utf8
+                        ))
+                    }
+                }
             }
             coordinator.onProcessingDuration = { elapsed in
                 FileHandle.standardError.write(Data(
@@ -494,6 +557,75 @@ struct Run: ParsableCommand {
             appDelegate
         )) {
             app.run()
+        }
+    }
+}
+
+struct Quality: ParsableCommand {
+    static let configuration = CommandConfiguration(
+        commandName: "quality",
+        abstract: "Manage the private, local transcription Quality Lab.",
+        subcommands: [Status.self, Enable.self, Disable.self, Clear.self]
+    )
+
+    struct Status: ParsableCommand {
+        func run() throws {
+            let settings = try SettingsStore(
+                fileURL: SettingsStore.defaultFileURL()
+            ).load()
+            let archive = LocalQualityAudioArchive()
+            print(
+                settings.qualityAudioRetentionEnabled
+                    ? "enabled · \(settings.qualityAudioRetentionDays)-day retention"
+                    : "disabled"
+            )
+            print("recordings: \(try archive.recordingCount())")
+            print("location: \(archive.directoryURL.path)")
+        }
+    }
+
+    struct Enable: ParsableCommand {
+        @Option(name: .long, help: "Automatically delete audio after 1–90 days.")
+        var retentionDays: Int = 7
+
+        func validate() throws {
+            guard (1...90).contains(retentionDays) else {
+                throw ValidationError("--retention-days must be from 1 through 90.")
+            }
+        }
+
+        func run() throws {
+            let store = SettingsStore(fileURL: SettingsStore.defaultFileURL())
+            var settings = try store.load()
+            settings.qualityAudioRetentionEnabled = true
+            settings.qualityAudioRetentionDays = retentionDays
+            try store.save(settings)
+            print("Quality Lab enabled locally with \(retentionDays)-day retention.")
+            print("Relaunch Wordhand if it is currently open.")
+        }
+    }
+
+    struct Disable: ParsableCommand {
+        func run() throws {
+            let store = SettingsStore(fileURL: SettingsStore.defaultFileURL())
+            var settings = try store.load()
+            settings.qualityAudioRetentionEnabled = false
+            try store.save(settings)
+            print("Quality Lab disabled. Existing recordings were left in place.")
+            print("Relaunch Wordhand if it is currently open.")
+        }
+    }
+
+    struct Clear: ParsableCommand {
+        @Flag(name: .long, help: "Confirm permanent deletion of retained audio.")
+        var confirm: Bool = false
+
+        func run() throws {
+            guard confirm else {
+                throw ValidationError("Pass --confirm to permanently delete retained audio.")
+            }
+            try LocalQualityAudioArchive().deleteAll()
+            print("Deleted all locally retained Quality Lab audio.")
         }
     }
 }
