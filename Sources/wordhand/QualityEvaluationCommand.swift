@@ -542,7 +542,7 @@ private enum QualityEvaluationRunner {
         )
 
         let warmupStarted = ProcessInfo.processInfo.systemUptime
-        try await transcriber.warmUp()
+        try await transcriber.warmUpRequiringCachedModel()
         let warmupDuration =
             ProcessInfo.processInfo.systemUptime - warmupStarted
 

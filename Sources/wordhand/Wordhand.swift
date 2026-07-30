@@ -920,6 +920,7 @@ struct Quality: ParsableCommand {
             Disable.self,
             Clear.self,
             QualityEvaluate.self,
+            QualityProveVocabulary.self,
         ]
     )
 

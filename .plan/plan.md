@@ -36,8 +36,9 @@ order:
 3. [ ] local self-learning from explicit corrections and retained recordings
    that suggests improvements without silently changing behavior; the first
    canonical-vocabulary recommendation slice is implemented and isolated-
-   verified, while pronunciation, replay-proven vocabulary, model, and
-   configuration suggestions remain;
+   verified, and an offline causal replay now proves or rejects a vocabulary
+   candidate without mutating the live recommendation; pronunciation,
+   persisted replay evidence, model, and configuration suggestions remain;
 4. optional application-to-profile routing behind one understandable global
    default;
 5. deeper explicit spoken correction and editing commands;
@@ -134,14 +135,29 @@ creates no pronunciation alias or broad post-decode substitution, and removes
 the now-covered suggestion. An isolated native AppKit render confirmed the
 single action fits the existing History detail pane.
 
-The next learning slice should replay a candidate term or pronunciation alias
-against its source recording and the available paired local corpus, then
-recommend it only when the source score improves without aggregate regression.
-Model or configuration suggestions remain behind larger-corpus stability gates.
+The candidate-vs-corpus replay slice is now executable as an explicit offline
+Quality Lab report. It requires two distinct supporting recordings, one or more
+unrelated controls, four balanced paired repetitions, repeatable strict source
+improvement, exact canonical spelling, protected-content preservation, zero
+per-run and aggregate accuracy regression, stable exact-match count, and no
+material latency regression. It uses one bounded cached-model-only worker,
+receives the private candidate through stdin, emits no transcript text, and
+writes no user state.
+
+The public retained-corpus receipt improved word edits from 60 to 36 and
+character edits from 240 to 204, but candidate decode time rose from 37.795 to
+48.738 seconds. The oracle rejected promotion for latency, so the existing
+History suggestion remains unchanged and no replay verdict is persisted.
+Current live data has no corrected references, making synchronous or background
+UI replay pure cost today. The next learning slice should extend the same
+explicit offline proof to a pronunciation alias before considering persisted UI
+evidence. Model or configuration suggestions remain behind larger-corpus
+stability gates.
 
 Receipt:
 `docs/verification/2026-07-30-exact-inference-cache-candidate.md` and
-`docs/verification/2026-07-30-canonical-vocabulary-suggestions.md`.
+`docs/verification/2026-07-30-canonical-vocabulary-suggestions.md` and
+`docs/verification/2026-07-30-vocabulary-causal-replay.md`.
 
 ## Public checkpoint cadence
 

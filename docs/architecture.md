@@ -544,10 +544,34 @@ behavior unchanged.
 
 This is not yet a claim that Wordhand has enough real corrected evidence to
 recommend a term for Aaron, nor that a suggested term improves a retained
-recording on replay. Pronunciation aliases, candidate-vs-corpus replay, model
-selection, and configuration suggestions require their own evidence gates
-before promotion. See
-`docs/verification/2026-07-30-canonical-vocabulary-suggestions.md`.
+recording on replay.
+
+`wordhand quality prove-vocabulary` is the offline causal gate for that second
+claim. Its private request arrives through stdin so the candidate is absent
+from process arguments. One bounded child process loads an already cached
+model, makes a byte-stable private copy of History and its WAL without opening
+the live SQLite files, decodes Dictionary without migration, and replays
+baseline and the in-memory `term -> term` candidate in fixed B/C, C/B, C/B, B/C
+order. It requires
+two distinct supporting recordings, at least one unrelated paired recording,
+four complete repetitions per recording, exact canonical spelling in every
+supporting candidate result, strict word- and character-edit improvement on at
+least three repetitions of each source, no per-run or aggregate corpus
+regression, no protected boundary/number/negation/dictionary loss, no exact-
+match loss, and no material latency regression. Missing or malformed evidence
+is inconclusive; observed harm is rejected. Neither result changes History,
+Dictionary, Settings, the recommendation UI, or daily transcription.
+
+The transcript-free report contains hashes, aggregate counts, durations, and a
+versioned verdict. The public retained fixture proved the mechanism and rejected
+the tested name candidate because its accuracy gain cost material decode time.
+The current History suggestion therefore remains evidence-independent and
+explicitly confirmed, rather than implying replay proof. Persisted evidence or
+background UI evaluation waits for real corrected-corpus yield. Pronunciation
+aliases, model selection, and configuration suggestions still require their own
+evidence gates. See
+`docs/verification/2026-07-30-canonical-vocabulary-suggestions.md` and
+`docs/verification/2026-07-30-vocabulary-causal-replay.md`.
 
 The authoritative decode has layered local integrity checks. First, the coordinator
 compares the monotonic recording-session duration with the number of captured
@@ -879,6 +903,10 @@ and aggregate recording-storage ceiling:
 - evaluation never downloads a missing model implicitly, never prints
   transcript or reference text, and can disable dictionary conditioning for a
   controlled recognizer-only comparison;
+- `wordhand quality prove-vocabulary` runs one transcript-free, four-repetition
+  baseline/candidate causal replay in a bounded isolated worker, requires
+  independent source and control audio, and never persists its verdict or
+  candidate;
 - no upload, sync, analytics, or background training path exists.
 
 The files inherit the Mac's volume-at-rest protection when FileVault is enabled;
