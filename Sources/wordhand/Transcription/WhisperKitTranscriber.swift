@@ -300,22 +300,30 @@ actor WhisperKitTranscriber: Transcribing, StreamingTranscribing {
         )
     }
 
-    private func decodingOptions(for pipeline: WhisperKit) -> DecodingOptions? {
-        guard
+    private func decodingOptions(for pipeline: WhisperKit) -> DecodingOptions {
+        var promptTokens: [Int]?
+        if
             let prompt = vocabulary.prompt(),
             let tokenizer = pipeline.tokenizer
-        else {
-            return nil
+        {
+            // Whisper tokenizers add special tokens by default. Prompt
+            // conditioning accepts only ordinary text tokens and, like
+            // WhisperKit's own CLI, needs a leading space for word boundaries.
+            let encoded = tokenizer
+                .encode(text: " " + prompt.trimmingCharacters(in: .whitespaces))
+                .filter { $0 < tokenizer.specialTokens.specialTokenBegin }
+            if !encoded.isEmpty {
+                promptTokens = encoded
+            }
         }
-        // Whisper tokenizers add special tokens by default. Prompt
-        // conditioning accepts only ordinary text tokens and, like
-        // WhisperKit's own CLI, needs a leading space for word boundaries.
-        let promptTokens = tokenizer
-            .encode(text: " " + prompt.trimmingCharacters(in: .whitespaces))
-            .filter { $0 < tokenizer.specialTokens.specialTokenBegin }
-        return promptTokens.isEmpty
-            ? nil
-            : DecodingOptions(promptTokens: promptTokens)
+        return Self.makeDecodingOptions(promptTokens: promptTokens)
+    }
+
+    static func makeDecodingOptions(promptTokens: [Int]?) -> DecodingOptions {
+        DecodingOptions(
+            promptTokens: promptTokens,
+            chunkingStrategy: .vad
+        )
     }
 
     private func resetStreamingState(cancelTask: Bool) async {

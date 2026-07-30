@@ -361,11 +361,17 @@ microphone latency receipt remains open.
   revisable for corrections.
 - [x] Bound the working decode window at 20 seconds and retain the complete
   capture as a no-data-loss fallback.
+- [x] Enable WhisperKit silence-aware chunking for recordings longer than one
+  model window so long batch and streaming-fallback decodes split at pauses and
+  use the Mac's concurrent decode workers.
+- [x] Verify the identical 61.72-second fixture improves from 7.156 seconds to
+  4.778 seconds and retains the final clause dropped by fixed-window decoding.
 - [ ] Measure stop-to-insertion latency for short and four-minute natural
   dictation after Aaron is available for attended microphone verification.
 
 Receipts: `docs/verification/2026-07-28-accuracy-paste.md` and
-`docs/verification/2026-07-29-corrections-streaming.md`.
+`docs/verification/2026-07-29-corrections-streaming.md` and
+`docs/verification/2026-07-29-long-dictation-vad.md`.
 
 ### Spoken corrections and Maximum Performance checkpoint
 

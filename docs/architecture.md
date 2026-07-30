@@ -152,7 +152,7 @@ receipts may promote latency or compatibility claims.
 
 P0 ground truth and P1 foundation are complete as of 2026-07-28. The package
 now has `WordhandCore`, protocol-backed coordinator seams, versioned settings,
-108 deterministic tests across core and macOS adapter targets, and macOS CI.
+110 deterministic tests across core and macOS adapter targets, and macOS CI.
 
 The daily-driver bundle is built by `scripts/build-app.sh` and installed by
 `scripts/install-app.sh`. The installer prefers `/Applications`, falls back to
@@ -239,7 +239,12 @@ same local audio. Settings exposes model choice, with an explicit relaunch note.
 The smaller 1024-frame microphone tap and 80 ms capture tail prioritize complete
 last words. On the local 11.00-second JFK fixture, Base transcribed in 0.742
 seconds and Large v3 in 1.025 seconds; both were correct, with Large producing
-slightly stronger punctuation.
+slightly stronger punctuation. Audio longer than one Whisper model window uses
+WhisperKit's local voice-activity chunker to split at silence and decode chunks
+concurrently. This applies to Adaptive long dictation and the authoritative
+full-buffer fallback from Maximum mode; sub-window recordings keep the same
+single-decode path. See
+`docs/verification/2026-07-29-long-dictation-vad.md`.
 
 Paste is now the live default instead of merely a stored setting. Wordhand
 snapshots every pasteboard item/type, stages the transcript, posts Command-V,

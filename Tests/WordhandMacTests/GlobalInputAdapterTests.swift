@@ -234,6 +234,14 @@ struct GlobalInputAdapterTests {
     }
 
     @Test
+    func longTranscriptionUsesSilenceAwareChunkingWithoutVocabulary() {
+        let options = WhisperKitTranscriber.makeDecodingOptions(promptTokens: nil)
+
+        #expect(options.promptTokens == nil)
+        #expect(options.chunkingStrategy == .vad)
+    }
+
+    @Test
     func writingStylesUseDistinctLocalRewriteInstructions() async {
         let rewriter = RecordingLocalTranscriptRewriter(
             responses: [
