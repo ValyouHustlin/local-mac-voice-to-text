@@ -84,8 +84,27 @@ Complete gates:
 # Build complete! (4.97s)
 
 /usr/bin/swift test --sanitize=thread
-# Test run with 113 tests in 14 suites passed after 0.867 seconds.
+# Test run with 113 tests in 14 suites passed after 0.629 seconds.
 ```
+
+## Installed build
+
+Build 8 was installed with launch at login enabled and the existing stable local
+signature. The observed runtime state was:
+
+```text
+PID=52359
+CFBundleVersion=8
+Identifier=com.valyou.wordhand
+Authority=Wordhand Local Signing
+microphone: ok
+accessibility: ok
+input monitoring: ok
+Control-Space: ok
+```
+
+The installed executable then ran the connected-prose formatter receipt and
+returned the same non-bulleted text shown above.
 
 ## Residual UI gate
 
