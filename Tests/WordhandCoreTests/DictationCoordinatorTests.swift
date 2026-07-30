@@ -302,10 +302,11 @@ struct DictationCoordinatorTests {
 
     @Test
     func cancelDuringTranscriptionPreventsInsertion() async {
+        let capture = FakeRecoveryCapture(samples: [0.1])
         let transcriber = SuspendedTranscriber()
         let inserter = FakeInserter()
         let coordinator = DictationCoordinator(
-            capture: FakeCapture(samples: [0.1]),
+            capture: capture,
             transcriber: transcriber,
             processor: TranscriptProcessor(),
             inserter: inserter
@@ -321,6 +322,7 @@ struct DictationCoordinatorTests {
         #expect(coordinator.state == .idle)
         #expect(inserter.insertions.isEmpty)
         #expect(transcriber.cancelCount == 1)
+        #expect(capture.discardedIDs == capture.preparedIDs)
     }
 
     @Test
@@ -488,6 +490,64 @@ struct DictationCoordinatorTests {
         }
         #expect(coordinator.state == .failed(.insertion("failure")))
     }
+
+    @Test
+    func recoveredCaptureIsSavedToHistoryWithoutInsertion() async throws {
+        let history = FakeHistory()
+        let inserter = FakeInserter()
+        let id = UUID()
+        let createdAt = Date(timeIntervalSince1970: 1_700_000_000)
+        let coordinator = DictationCoordinator(
+            capture: FakeCapture(samples: []),
+            transcriber: FakeTranscriber(result: "beginning and exact ending"),
+            processor: TranscriptProcessor(),
+            inserter: inserter,
+            history: history,
+            now: makeClock([10, 10.5])
+        )
+
+        let handled = await coordinator.recover(RecoveredAudioCapture(
+            id: id,
+            createdAt: createdAt,
+            sampleRate: 16_000,
+            samples: [0.1, 0.2, 0.3]
+        ))
+
+        let saved = try #require(history.saved.only)
+        #expect(handled)
+        #expect(saved.id == id)
+        #expect(saved.createdAt == createdAt)
+        #expect(saved.text == "beginning and exact ending")
+        #expect(
+            saved.status
+                == .insertionFailed(
+                    "Recovered after Wordhand closed before insertion."
+                )
+        )
+        #expect(inserter.insertions.isEmpty)
+        #expect(coordinator.state == .idle)
+    }
+
+    @Test
+    func recoveryJournalDeletesOnlyAfterHistoryCommit() async throws {
+        let capture = FakeRecoveryCapture(samples: [0.1, 0.2])
+        let history = FakeHistory()
+        let coordinator = DictationCoordinator(
+            capture: capture,
+            transcriber: FakeTranscriber(result: "safe result"),
+            processor: TranscriptProcessor(),
+            inserter: FakeInserter(),
+            history: history
+        )
+
+        await coordinator.handle(.pressed)
+        await coordinator.handle(.released)
+
+        let saved = try #require(history.saved.only)
+        #expect(capture.preparedIDs == [saved.id])
+        #expect(capture.committedIDs == [saved.id])
+        #expect(capture.discardedIDs.isEmpty)
+    }
 }
 
 private enum FakeError: Error {
@@ -510,6 +570,35 @@ private final class FakeCapture: AudioCapturing {
     func stop() async -> [Float] {
         stopCount += 1
         return samples
+    }
+}
+
+private final class FakeRecoveryCapture: RecoveryManagedAudioCapturing {
+    private let samples: [Float]
+    private(set) var preparedIDs: [UUID] = []
+    private(set) var committedIDs: [UUID] = []
+    private(set) var discardedIDs: [UUID] = []
+
+    init(samples: [Float]) {
+        self.samples = samples
+    }
+
+    func prepareRecovery(id: UUID, createdAt: Date, sampleRate: Int) throws {
+        preparedIDs.append(id)
+    }
+
+    func start() throws {}
+
+    func stop() async -> [Float] {
+        samples
+    }
+
+    func markRecoveryCommitted(id: UUID) throws {
+        committedIDs.append(id)
+    }
+
+    func discardRecovery(id: UUID) throws {
+        discardedIDs.append(id)
     }
 }
 
@@ -834,4 +923,10 @@ private final class FakeHistory: TranscriptRecording, @unchecked Sendable {
 private func makeClock(_ values: [TimeInterval]) -> () -> TimeInterval {
     var iterator = values.makeIterator()
     return { iterator.next() ?? values.last ?? 0 }
+}
+
+private extension Collection {
+    var only: Element? {
+        count == 1 ? first : nil
+    }
 }

@@ -117,6 +117,10 @@ Verified by source inspection and dated receipts through 2026-07-30:
   models; optimized Large v3 (626 MB) is the accuracy-first default;
 - `AVAudioEngine` capture converted to 16 kHz mono Float32, using 1024-frame
   input buffers and an 80 ms post-release tail to retain final phonemes;
+- owner-only append journals for every active capture, with framed Float32
+  checksums, torn-final-frame recovery, exact restart replay through the
+  authoritative full-buffer transcriber, and deletion only after History
+  commits;
 - configurable global shortcuts through `CGEventTap`, including hold-to-talk
   and tap-to-start/tap-to-stop modes;
 - paste-first cursor insertion with rich clipboard restoration, copy-only mode,
@@ -490,6 +494,8 @@ shortcut event
   -> recording coordinator
   -> audio capture
        daily runtime retains one complete captured buffer
+       append every converted chunk to Pending Captures under the same UUID
+       preserve complete frames across process death, quit, or interruption
        compare captured samples with monotonic recording duration
        refuse a materially short buffer instead of inserting partial text
        offline rolling benchmark forwards chunks through one ordered stream
@@ -513,6 +519,7 @@ shortcut event
        optionally rewrite with Apple's on-device system language model
        apply local voice commands
   -> history store (before insertion)
+       delete the matching pending-capture journal only after commit
   -> insertion router
        paste with clipboard preservation
        direct Unicode fallback
@@ -531,6 +538,37 @@ idle -> recording -> transcribing -> processing -> inserting -> idle
 Repeated presses, a release without a matching press, explicit cancellation,
 overlapping transcription, and shutdown during work must have defined behavior
 and tests.
+
+## Crash-safe capture recovery
+
+The complete capture exists in two forms while dictation is in flight. RAM
+remains the normal authoritative input at release. In parallel, `Pending
+Captures` stores an immutable JSON manifest plus ordered append-only frames of
+the same 16 kHz Float32 samples. Each frame carries a sequence number, sample
+count, and checksum. Recovery accepts only contiguous complete frames, so a
+process killed during the final write loses only that unacknowledged torn frame
+and cannot fabricate or duplicate audio.
+
+The audio callback only enqueues immutable chunks onto one ordered local writer;
+it performs no filesystem work. Release waits for that queue to drain before
+sealing the journal. A write error latches the session closed and quarantines
+its files instead of allowing a later frame to hide a missing middle. Startup
+scans exclude the currently active UUID. Unreadable files remain available for
+manual inspection for 30 days, then expire locally.
+
+The journal uses the coordinator's dictation UUID, which later becomes the
+History primary key. Normal capture deletes the journal only after History
+successfully stores the transcript. Capture, transcription, and History
+failures retain it. Explicit user cancellation deletes it. On restart, Wordhand
+replays orphaned samples through the same full-buffer transcriber and processor,
+saves the result once under the original UUID, and marks it not inserted because
+the former focus target is no longer trustworthy. A duplicate History UUID makes
+cleanup idempotent after a crash between commit and journal deletion.
+
+The directory is always local and owner-only (`0700`, files `0600`). It is
+separate from opt-in Quality Lab retention because recovery is loss prevention,
+not evaluation consent. No partial transcript becomes authoritative, and no
+recovered text is inserted automatically.
 
 ## Core contracts
 
@@ -800,6 +838,7 @@ User data stays under:
   settings.json
   dictionary.json
   history.sqlite
+  Pending Captures/              temporary crash-recovery Float32 journals
   Quality Recordings/             opt-in, automatically expired WAV files
   Models/
 ```

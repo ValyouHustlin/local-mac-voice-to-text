@@ -16,6 +16,39 @@ contract and target boundaries.
   commit.
 - Update this roadmap when evidence changes the order.
 
+## Desktop mastery sequence
+
+Status: crash-safe rolling capture is implemented and isolated-verification
+complete. An attended installed-app dictation receipt remains before this source
+checkpoint can be called daily-runtime verified.
+
+Measured daily-use impact keeps the remaining English-first macOS work in this
+order:
+
+1. [x] crash-safe rolling capture so acknowledged audio survives process
+   failure, sleep interruption, or accidental quit and is recovered to History
+   after restart without automatic insertion;
+2. safe work-during-speech that lowers stop-to-final latency while preserving
+   full-buffer authority until retained English fixtures prove beginnings,
+   endings, numbers, negations, technical terms, and dictionary spellings;
+3. local self-learning from explicit corrections and retained recordings that
+   suggests improvements without silently changing behavior;
+4. optional application-to-profile routing behind one understandable global
+   default;
+5. deeper explicit spoken correction and editing commands;
+6. a native evidence-based diagnostics and quality view;
+7. fresh-Mac onboarding plus the signed, notarized, permission-stable updater.
+
+The first slice stores ordered 16 kHz Float32 frames in owner-only `Pending
+Captures` files. A torn last frame is ignored while every earlier complete frame
+is recovered bit for bit. The normal stop path still transcribes the complete
+in-memory buffer. A restart sends orphaned audio through that same authoritative
+full-buffer transcriber, saves it to History as not inserted, and deletes the
+journal only after the History commit succeeds. Explicit cancellation deletes
+its journal immediately.
+
+Receipt: `docs/verification/2026-07-30-crash-safe-capture.md`.
+
 ## Public checkpoint cadence
 
 Public updates follow product evidence, not a calendar. Each checkpoint groups

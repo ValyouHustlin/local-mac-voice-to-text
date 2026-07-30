@@ -27,6 +27,12 @@ public protocol AudioCapturing: AnyObject {
     func stop() async -> [Float]
 }
 
+public protocol RecoveryManagedAudioCapturing: AudioCapturing {
+    func prepareRecovery(id: UUID, createdAt: Date, sampleRate: Int) throws
+    func markRecoveryCommitted(id: UUID) throws
+    func discardRecovery(id: UUID) throws
+}
+
 public protocol HotkeyMonitoring: AnyObject {
     func start(onEvent: @escaping (HotkeyEvent) -> Void) throws
     func stop()
@@ -138,7 +144,13 @@ public final class DictationCoordinator {
                 state = .idle
             }
             guard state == .idle else { return }
+            let operationID = UUID()
             do {
+                try (capture as? any RecoveryManagedAudioCapturing)?.prepareRecovery(
+                    id: operationID,
+                    createdAt: date(),
+                    sampleRate: Int(audioSampleRate.rounded())
+                )
                 if streamingEnabled,
                    let streamingCapture = capture as? any StreamingAudioCapturing,
                    let streamingTranscriber = transcriber as? any StreamingTranscribing
@@ -164,7 +176,6 @@ public final class DictationCoordinator {
                 try capture.start()
                 recordingStartedAt = now()
                 activeOperationStartedAt = recordingStartedAt
-                let operationID = UUID()
                 activeOperationID = operationID
                 state = .recording
                 let target = currentTarget()
@@ -181,6 +192,8 @@ public final class DictationCoordinator {
                 )
                 scheduleRecordingLimit()
             } catch {
+                try? (capture as? any RecoveryManagedAudioCapturing)?
+                    .discardRecovery(id: operationID)
                 recordingStartedAt = nil
                 activeOperationStartedAt = nil
                 await stopActiveStreaming()
@@ -379,6 +392,7 @@ public final class DictationCoordinator {
             }
 
             let record = TranscriptRecord(
+                id: operationID,
                 createdAt: date(),
                 rawText: raw,
                 text: text,
@@ -414,6 +428,17 @@ public final class DictationCoordinator {
                     )
                     state = .failed(.history(String(describing: error)))
                     return
+                }
+                do {
+                    try (capture as? any RecoveryManagedAudioCapturing)?
+                        .markRecoveryCommitted(id: operationID)
+                } catch {
+                    recordDiagnostic(
+                        severity: .warning,
+                        name: "capture_recovery.cleanup_failed",
+                        dictationID: operationID,
+                        attributes: ["reason": String(describing: error)]
+                    )
                 }
             }
             if history != nil {
@@ -523,6 +548,10 @@ public final class DictationCoordinator {
             activeOperationStartedAt = nil
             await stopActiveStreaming()
             _ = await capture.stop()
+            if let operationID {
+                try? (capture as? any RecoveryManagedAudioCapturing)?
+                    .discardRecovery(id: operationID)
+            }
             recordDiagnostic(
                 severity: .warning,
                 name: "dictation.cancelled",
@@ -538,6 +567,10 @@ public final class DictationCoordinator {
             activeOperationID = nil
             activeOperationStartedAt = nil
             await stopActiveStreaming()
+            if let operationID {
+                try? (capture as? any RecoveryManagedAudioCapturing)?
+                    .discardRecovery(id: operationID)
+            }
             if !isCaptureStopping {
                 if state == .transcribing {
                     await transcriber.cancel()
@@ -558,6 +591,106 @@ public final class DictationCoordinator {
     public func resetFailure() {
         guard case .failed = state else { return }
         state = .idle
+    }
+
+    /// Replays an orphaned audio journal through the same complete-buffer
+    /// transcription and processing path. Recovered work is saved to History
+    /// but never inserted because the original target is no longer trustworthy.
+    public func recover(_ recovered: RecoveredAudioCapture) async -> Bool {
+        guard state == .idle, let history else { return false }
+        state = .transcribing
+        let started = now()
+        let raw: String
+        do {
+            raw = try await transcriber.transcribe(recovered.samples)
+        } catch {
+            recordDiagnostic(
+                severity: .error,
+                name: "capture_recovery.failed",
+                dictationID: recovered.id,
+                attributes: [
+                    "stage": "transcription",
+                    "reason": String(describing: error),
+                ]
+            )
+            state = .failed(.transcription(String(describing: error)))
+            return false
+        }
+        let transcriptionElapsed = now() - started
+        state = .processing
+        let text = await processor.process(raw, target: .unknown)
+        guard !text.isEmpty else {
+            recordDiagnostic(
+                severity: .warning,
+                name: "capture_recovery.failed",
+                dictationID: recovered.id,
+                attributes: ["stage": "empty_processing"]
+            )
+            state = .failed(.transcription("Recovered audio produced no text."))
+            return false
+        }
+
+        let diagnostics = if let provider =
+            transcriber as? any TranscriptionDiagnosticsProviding
+        {
+            await provider.lastRunDiagnostics()
+        } else {
+            TranscriptionRunDiagnostics.none
+        }
+        let record = TranscriptRecord(
+            id: recovered.id,
+            createdAt: recovered.createdAt,
+            rawText: raw,
+            text: text,
+            modelID: transcriber.modelID,
+            language: language,
+            audioDuration: Double(recovered.samples.count)
+                / Double(recovered.sampleRate),
+            transcriptionDuration: transcriptionElapsed,
+            insertionMode: insertionMode,
+            target: .unknown,
+            status: .insertionFailed(
+                "Recovered after Wordhand closed before insertion."
+            ),
+            tailRecoveryOutcome: diagnostics.tailRecoveryOutcome
+        )
+        do {
+            try history.save(record)
+        } catch TranscriptHistoryError.duplicateRecord {
+            state = .idle
+            return true
+        } catch {
+            recordDiagnostic(
+                severity: .error,
+                name: "capture_recovery.failed",
+                dictationID: recovered.id,
+                attributes: [
+                    "stage": "history",
+                    "reason": String(describing: error),
+                ]
+            )
+            state = .failed(.history(String(describing: error)))
+            return false
+        }
+        onQualityAudio?(QualityAudioSample(
+            transcriptID: record.id,
+            createdAt: record.createdAt,
+            samples: recovered.samples,
+            sampleRate: recovered.sampleRate
+        ))
+        onTranscript?(text, transcriptionElapsed)
+        onHistoryChange?()
+        recordDiagnostic(
+            name: "capture_recovery.completed",
+            dictationID: recovered.id,
+            metrics: [
+                "audio_seconds": record.audioDuration,
+                "transcription_seconds": transcriptionElapsed,
+            ],
+            attributes: ["model_id": transcriber.modelID]
+        )
+        state = .idle
+        return true
     }
 
     public func updateInsertionMode(_ insertionMode: InsertionMode) {

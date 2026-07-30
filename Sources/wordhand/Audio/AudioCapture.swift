@@ -5,7 +5,7 @@ import WordhandCore
 /// Captures microphone audio while recording is active and returns a 16 kHz
 /// mono Float32 buffer when stopped. Format-converts on the fly so callers
 /// don't have to worry about the input device's native rate.
-final class AudioCapture: StreamingAudioCapturing {
+final class AudioCapture: StreamingAudioCapturing, RecoveryManagedAudioCapturing {
     enum CaptureError: Error {
         case engineStartFailed(Error)
         case converterCreationFailed
@@ -15,15 +15,44 @@ final class AudioCapture: StreamingAudioCapturing {
     private static let tailCaptureNanoseconds: UInt64 = 80_000_000
 
     private let engine = AVAudioEngine()
+    private let recoveryJournal: CrashSafeCaptureJournal
     private var converter: AVAudioConverter?
     private var samples: [Float] = []
     private var streamingChunkHandler: (@Sendable ([Float]) -> Void)?
     private var isRecording = false
     private let lock = NSLock()
+    private let recoveryWriterQueue = DispatchQueue(
+        label: "com.valyou.wordhand.capture-recovery",
+        qos: .userInitiated
+    )
+    private let recoveryWrites = DispatchGroup()
+    private var acceptsRecoveryChunks = false
 
     /// Called for every audio buffer with the buffer's RMS level (0…~1).
     /// Invoked on an arbitrary thread; hop to main if you touch UI.
     var onLevel: ((Float) -> Void)?
+
+    init(
+        recoveryJournal: CrashSafeCaptureJournal = CrashSafeCaptureJournal()
+    ) {
+        self.recoveryJournal = recoveryJournal
+    }
+
+    func prepareRecovery(id: UUID, createdAt: Date, sampleRate: Int) throws {
+        try recoveryJournal.beginCapture(
+            id: id,
+            createdAt: createdAt,
+            sampleRate: sampleRate
+        )
+    }
+
+    func markRecoveryCommitted(id: UUID) throws {
+        try recoveryJournal.discard(id: id)
+    }
+
+    func discardRecovery(id: UUID) throws {
+        try recoveryJournal.discard(id: id)
+    }
 
     func setStreamingChunkHandler(
         _ handler: (@Sendable ([Float]) -> Void)?
@@ -52,9 +81,10 @@ final class AudioCapture: StreamingAudioCapturing {
         }
         self.converter = converter
 
-        lock.lock()
-        samples.removeAll(keepingCapacity: true)
-        lock.unlock()
+        lock.withLock {
+            samples.removeAll(keepingCapacity: true)
+            acceptsRecoveryChunks = true
+        }
 
         // Tap with input format; convert inside the callback.
         // Smaller buffers surface speech about four times more frequently than
@@ -88,11 +118,15 @@ final class AudioCapture: StreamingAudioCapturing {
         engine.inputNode.removeTap(onBus: 0)
         isRecording = false
 
-        return lock.withLock {
+        let captured = lock.withLock {
+            acceptsRecoveryChunks = false
             let captured = samples
             samples.removeAll(keepingCapacity: true)
             return captured
         }
+        await drainRecoveryWrites()
+        try? recoveryJournal.finishCapture()
+        return captured
     }
 
     private func process(
@@ -130,12 +164,33 @@ final class AudioCapture: StreamingAudioCapturing {
 
         let chunkHandler = lock.withLock {
             samples.append(contentsOf: chunk)
+            if acceptsRecoveryChunks {
+                recoveryWrites.enter()
+                recoveryWriterQueue.async { [recoveryJournal, recoveryWrites] in
+                    defer { recoveryWrites.leave() }
+                    do {
+                        try recoveryJournal.append(chunk)
+                    } catch {
+                        FileHandle.standardError.write(Data(
+                            "capture recovery write failed: \(error)\n".utf8
+                        ))
+                    }
+                }
+            }
             return streamingChunkHandler
         }
         chunkHandler?(chunk)
 
         if let onLevel {
             onLevel(computeRMS(chunk))
+        }
+    }
+
+    private func drainRecoveryWrites() async {
+        await withCheckedContinuation { continuation in
+            recoveryWrites.notify(queue: recoveryWriterQueue) {
+                continuation.resume()
+            }
         }
     }
 }

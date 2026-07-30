@@ -18,11 +18,80 @@ struct Wordhand: ParsableCommand {
             DictionaryCommands.self,
             Quality.self,
             DiagnosticsCommands.self,
+            CaptureRecoveryFixture.self,
             Install.self,
             OverlayPreview.self,
         ],
         defaultSubcommand: Run.self
     )
+}
+
+struct CaptureRecoveryFixture: ParsableCommand {
+    static let configuration = CommandConfiguration(
+        commandName: "capture-recovery-fixture",
+        abstract: "Internal microphone-free crash-recovery fixture.",
+        shouldDisplay: false
+    )
+
+    @Argument(help: "write or inspect")
+    var action: String
+
+    @Option(name: .long)
+    var dataDirectory: String
+
+    @Option(name: .long)
+    var id: String = "00000000-0000-0000-0000-000000000001"
+
+    func run() throws {
+        let directory = URL(fileURLWithPath: dataDirectory, isDirectory: true)
+        let journal = CrashSafeCaptureJournal(directoryURL: directory)
+        let samples: [Float] = [
+            Float(bitPattern: 0x8000_0000),
+            0.1,
+            -0.2,
+            42.5,
+            -1,
+            0,
+            Float(bitPattern: 0x3f7f_ffff),
+        ]
+        switch action {
+        case "write":
+            guard let captureID = UUID(uuidString: id) else {
+                throw ValidationError("invalid fixture id")
+            }
+            try journal.beginCapture(
+                id: captureID,
+                createdAt: Date(timeIntervalSince1970: 1_700_000_000),
+                sampleRate: 16_000
+            )
+            try journal.append(Array(samples.prefix(3)))
+            try journal.append(Array(samples.dropFirst(3)))
+            print(Self.receipt(samples))
+            fflush(stdout)
+            while true {
+                Thread.sleep(forTimeInterval: 60)
+            }
+        case "inspect":
+            guard let recovered = try journal.recoverableCaptures().first else {
+                throw ValidationError("no recovered fixture")
+            }
+            print(Self.receipt(recovered.samples))
+        default:
+            throw ValidationError("action must be write or inspect")
+        }
+    }
+
+    private static func receipt(_ samples: [Float]) -> String {
+        let checksum = samples.reduce(UInt64(0xcbf2_9ce4_8422_2325)) {
+            ($0 ^ UInt64($1.bitPattern)) &* 0x0000_0100_0000_01b3
+        }
+        return [
+            "samples=\(samples.count)",
+            "first=\(samples.first?.bitPattern ?? 0)",
+            "last=\(samples.last?.bitPattern ?? 0)",
+            "checksum=\(checksum)",
+        ].joined(separator: " ")
+    }
 }
 
 struct Run: ParsableCommand {
@@ -138,6 +207,9 @@ struct Run: ParsableCommand {
         let qualityAudioURL = customDataDirectory?
             .appendingPathComponent("Quality Recordings", isDirectory: true)
             ?? LocalQualityAudioArchive.defaultDirectoryURL()
+        let pendingCapturesURL = customDataDirectory?
+            .appendingPathComponent("Pending Captures", isDirectory: true)
+            ?? CrashSafeCaptureJournal.defaultDirectoryURL()
         let diagnosticsURL = customDataDirectory?
             .appendingPathComponent("Diagnostics", isDirectory: true)
             ?? OperationalDiagnosticsStore.defaultDirectoryURL()
@@ -230,7 +302,10 @@ struct Run: ParsableCommand {
             vocabulary: dictionary.vocabulary
         )
         let monitor = HotkeyMonitor(bindings: settings.hotkeys, debug: debugHotkey)
-        let capture = AudioCapture()
+        let recoveryJournal = CrashSafeCaptureJournal(
+            directoryURL: pendingCapturesURL
+        )
+        let capture = AudioCapture(recoveryJournal: recoveryJournal)
         let processor = AppAwareTranscriptProcessor(
             dictionaryProcessor: dictionary.processor,
             profile: settings.formattingProfile,
@@ -686,6 +761,21 @@ struct Run: ParsableCommand {
             let warmupStarted = ProcessInfo.processInfo.systemUptime
             do {
                 try await transcriber.warmUp()
+                if let quarantineCutoff = Calendar.current.date(
+                    byAdding: .day,
+                    value: -30,
+                    to: Date()
+                ) {
+                    try recoveryJournal.pruneQuarantine(
+                        olderThan: quarantineCutoff
+                    )
+                }
+                let pendingCaptures = try recoveryJournal.recoverableCaptures()
+                for pendingCapture in pendingCaptures {
+                    let recovered = await coordinator.recover(pendingCapture)
+                    guard recovered else { break }
+                    try recoveryJournal.discard(id: pendingCapture.id)
+                }
                 if settingsController.settings.performanceMode == .maximum {
                     await processor.prepare(target: currentTranscriptTarget())
                 }
