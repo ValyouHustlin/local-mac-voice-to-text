@@ -5,6 +5,12 @@ public enum TranscriptionIntegrityIssue: Hashable, Sendable {
     case activeAudioAfterDecodedEnding
 }
 
+public enum TailRecoveryDecision: Equatable, Sendable {
+    case covered
+    case merged(String)
+    case requiresFullRetry
+}
+
 public enum TranscriptionIntegrityGuard {
     public static func issues(
         in text: String,
@@ -43,11 +49,35 @@ public enum TranscriptionIntegrityGuard {
         return result
     }
 
+    /// Long-form Whisper decodes can omit late speech while still reporting a
+    /// final segment boundary at the end of the audio. Require an independent
+    /// tail decode whenever a recording is long enough and contains sustained
+    /// activity in its final window, regardless of the decoder timestamps.
+    public static func needsIndependentTailAudit(
+        audio: [Float],
+        sampleRate: Int
+    ) -> Bool {
+        guard sampleRate > 0,
+              audio.count >= sampleRate * minimumTailAuditDurationSeconds
+        else {
+            return false
+        }
+        let tailCount = min(
+            audio.count,
+            sampleRate * tailAuditWindowSeconds
+        )
+        return hasSustainedActivity(
+            audio.suffix(tailCount),
+            windowSize: max(1, Int(0.05 * Double(sampleRate)))
+        )
+    }
+
     public static func select(
         primary: String,
         retry: String,
         issues: Set<TranscriptionIntegrityIssue>,
-        conditionedTerms: [String]
+        conditionedTerms: [String],
+        requireMateriallyLongerTail: Bool = false
     ) -> String {
         let primaryWordCount = wordCount(primary)
         let retryWordCount = wordCount(retry)
@@ -71,7 +101,10 @@ public enum TranscriptionIntegrityGuard {
             let equallyComplete =
                 hasTerminalPunctuation(retry)
                 && retryWordCount >= primaryWordCount
-            if (materiallyLonger || equallyComplete),
+            let acceptablyComplete =
+                materiallyLonger
+                || (!requireMateriallyLongerTail && equallyComplete)
+            if acceptablyComplete,
                lexicallyAligned(reference: primary, candidate: retry)
             {
                 return retry
@@ -89,11 +122,33 @@ public enum TranscriptionIntegrityGuard {
         recovery: String,
         minimumOverlapWords: Int = 4
     ) -> String? {
-        guard minimumOverlapWords > 0 else { return nil }
+        guard case .merged(let merged) = reconcileTail(
+            primary: primary,
+            recovery: recovery,
+            minimumOverlapWords: minimumOverlapWords
+        ) else {
+            return nil
+        }
+        return merged
+    }
+
+    /// Determines whether an independently decoded tail is already represented,
+    /// can be appended safely, or proves that the complete recording needs a
+    /// prompt-free retry.
+    public static func reconcileTail(
+        primary: String,
+        recovery: String,
+        minimumOverlapWords: Int = 4
+    ) -> TailRecoveryDecision {
+        guard minimumOverlapWords > 0 else {
+            return .requiresFullRetry
+        }
         let primaryWords = rangedWords(primary)
         let recoveryWords = rangedWords(recovery)
-        let maximumOverlap = min(primaryWords.count, recoveryWords.count - 1)
-        guard maximumOverlap >= minimumOverlapWords else { return nil }
+        let maximumOverlap = min(primaryWords.count, recoveryWords.count)
+        guard maximumOverlap >= minimumOverlapWords else {
+            return .requiresFullRetry
+        }
 
         for overlapCount in stride(
             from: maximumOverlap,
@@ -101,7 +156,7 @@ public enum TranscriptionIntegrityGuard {
             by: -1
         ) {
             let primaryStart = primaryWords.count - overlapCount
-            let maximumRecoveryStart = recoveryWords.count - overlapCount - 1
+            let maximumRecoveryStart = recoveryWords.count - overlapCount
             guard maximumRecoveryStart >= 0 else { continue }
 
             let matchingStarts = (0...maximumRecoveryStart).filter {
@@ -115,11 +170,15 @@ public enum TranscriptionIntegrityGuard {
             guard matchingStarts.count == 1,
                   let recoveryStart = matchingStarts.first
             else {
-                return nil
+                return .requiresFullRetry
             }
 
+            let recoveryEnd = recoveryStart + overlapCount
+            if recoveryEnd == recoveryWords.count {
+                return recoveryStart == 0 ? .covered : .requiresFullRetry
+            }
             let matchedWord = recoveryWords[
-                recoveryStart + overlapCount - 1
+                recoveryEnd - 1
             ]
             var remainder = String(
                 recovery[matchedWord.range.upperBound...]
@@ -129,7 +188,7 @@ public enum TranscriptionIntegrityGuard {
             let prefix = primary.trimmingCharacters(
                 in: .whitespacesAndNewlines
             )
-            guard !prefix.isEmpty else { return recovery }
+            guard !prefix.isEmpty else { return .merged(recovery) }
 
             if let prefixLast = prefix.last,
                let remainderFirst = remainder.first,
@@ -141,16 +200,16 @@ public enum TranscriptionIntegrityGuard {
                 remainder = remainder.trimmingCharacters(
                     in: .whitespacesAndNewlines
                 )
-                guard !remainder.isEmpty else { return prefix }
-                return prefix + " " + remainder
+                guard !remainder.isEmpty else { return .covered }
+                return .merged(prefix + " " + remainder)
             }
 
             let separator = remainder.first.map {
                 isPunctuation($0) ? "" : " "
             } ?? ""
-            return prefix + separator + remainder
+            return .merged(prefix + separator + remainder)
         }
-        return nil
+        return .requiresFullRetry
     }
 
     private static func hasLeadingConditioningArtifact(
@@ -261,6 +320,40 @@ public enum TranscriptionIntegrityGuard {
         return false
     }
 
+    private static func hasSustainedActivity<Audio: Collection>(
+        _ audio: Audio,
+        windowSize: Int
+    ) -> Bool where Audio.Element == Float {
+        guard windowSize > 0 else { return false }
+        guard audio.count >= windowSize * 2 else { return false }
+
+        var consecutiveActiveWindows = 0
+        var window: [Float] = []
+        window.reserveCapacity(windowSize)
+        for sample in audio {
+            window.append(sample)
+            guard window.count == windowSize else { continue }
+
+            var sumOfSquares: Double = 0
+            var peak: Float = 0
+            for value in window {
+                sumOfSquares += Double(value * value)
+                peak = max(peak, abs(value))
+            }
+            let rms = sqrt(sumOfSquares / Double(window.count))
+            if rms >= 0.004 && peak >= 0.02 {
+                consecutiveActiveWindows += 1
+                if consecutiveActiveWindows >= 2 {
+                    return true
+                }
+            } else {
+                consecutiveActiveWindows = 0
+            }
+            window.removeAll(keepingCapacity: true)
+        }
+        return false
+    }
+
     private static func wordCount(_ text: String) -> Int {
         text.split(whereSeparator: \.isWhitespace).count
     }
@@ -346,4 +439,7 @@ public enum TranscriptionIntegrityGuard {
             .map(String.init)
             .joined()
     }
+
+    private static let minimumTailAuditDurationSeconds = 30
+    private static let tailAuditWindowSeconds = 20
 }

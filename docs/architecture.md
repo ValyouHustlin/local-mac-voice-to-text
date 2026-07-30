@@ -407,31 +407,39 @@ stop-to-final time moved from 2.167 seconds to 1.556 seconds. This measurement
 describes the isolated rolling benchmark; daily runtime remains on the
 authoritative full-buffer path.
 
-The authoritative decode has two local integrity checks. First, the coordinator
+The authoritative decode has layered local integrity checks. First, the coordinator
 compares the monotonic recording-session duration with the number of captured
 16 kHz samples. If the audio buffer is more than 750 ms shorter than the
 recording session, Wordhand refuses to transcribe or insert a partial buffer and
 shows a recoverable capture failure. Second, a result is flagged when it begins
 with a truncated vocabulary prompt term followed by a transcript delimiter,
 ends without punctuation while the final two seconds of audio remain active,
-or reports a decoded segment ending before sustained later speech.
+or reports a decoded segment ending before sustained later speech. Third, every
+recording of at least 30 seconds with sustained speech in its final 20-second
+window receives an independent prompt-free tail audit even when Whisper reports
+an end-aligned segment and terminal punctuation.
 
 A leading prompt artifact still receives one prompt-free full-buffer decode.
-A tail-only issue first decodes only the final 15 seconds without the vocabulary
-prompt. Wordhand keeps the primary text and appends recovered text only after a
-unique exact normalized overlap of at least four words; an absent or ambiguous
-overlap falls back to the full-buffer recovery. Segment timing adds detection
-for plausible punctuation followed by missed speech, but never suppresses the
-unpunctuated-tail safeguard because a real replay proved Whisper can report an
-end-aligned segment while still omitting words. Any failed or non-improving
-recovery preserves the primary decode.
+A tail issue first decodes only the final 20 seconds without the vocabulary
+prompt. Wordhand keeps the primary text when that tail is already covered and
+appends recovered text only after a unique exact normalized overlap of at least
+four words. An absent or ambiguous overlap, or unrepresented words before an
+apparently covered suffix, falls back to a prompt-free full-buffer recovery.
+For the independent long-form audit, that full recovery must be materially
+longer and lexically aligned; an equal-length unconditioned result cannot replace
+better dictionary spelling. Segment timing remains a useful signal but never
+suppresses the independent audit because a retained 65.09-second recording
+proved Whisper can report an end-aligned segment while omitting multiple late
+sentences. Any failed or non-improving recovery preserves the primary decode.
 
-This avoids deleting legitimate names post hoc, keeps ordinary dictation on the
-single-decode path, and reduces recovery work without trusting a partial merge.
+This avoids deleting legitimate names post hoc, keeps recordings under 30
+seconds on the ordinary single-decode path, and bounds long-form recovery work
+without trusting a partial merge.
 Both passes use the same local WhisperKit model; no audio, vocabulary, or
 transcript content leaves the Mac. See
 `docs/verification/2026-07-29-transcription-integrity-regressions.md` and
-`docs/verification/2026-07-29-tail-recovery-speed.md`.
+`docs/verification/2026-07-29-tail-recovery-speed.md` and
+`docs/verification/2026-07-29-independent-tail-audit.md`.
 
 The runtime now holds a per-data-directory process lock so a duplicate launch
 cannot create two competing microphone, hotkey, or insertion owners. Toggle

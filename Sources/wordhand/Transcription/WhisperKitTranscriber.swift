@@ -116,22 +116,31 @@ actor WhisperKitTranscriber: Transcribing, StreamingTranscribing {
         let conditionedTerms = isVocabularyConditioned
             ? vocabulary.terms()
             : []
-        let integrityIssues = TranscriptionIntegrityGuard.issues(
+        var integrityIssues = TranscriptionIntegrityGuard.issues(
             in: primary.text,
             conditionedTerms: conditionedTerms,
             audio: audio,
             sampleRate: Int(WhisperKit.sampleRate),
             lastDecodedSecond: primary.lastSegmentEnd
         )
+        let requiresIndependentTailAudit =
+            TranscriptionIntegrityGuard.needsIndependentTailAudit(
+                audio: audio,
+                sampleRate: Int(WhisperKit.sampleRate)
+            )
+        if requiresIndependentTailAudit {
+            integrityIssues.insert(.activeAudioAfterDecodedEnding)
+        }
         guard !integrityIssues.isEmpty else {
             return primary.text
         }
 
-        if integrityIssues == [.activeAudioAfterDecodedEnding],
+        var tailRequiresFullRetry = false
+        if integrityIssues.contains(.activeAudioAfterDecodedEnding),
            audio.count > Self.tailRecoverySampleCount
         {
             FileHandle.standardError.write(Data(
-                "transcript integrity tail retry: decoding final 15 seconds "
+                "transcript integrity tail audit: decoding final 20 seconds "
                     .appending("without vocabulary prompt\n").utf8
             ))
             do {
@@ -141,10 +150,11 @@ actor WhisperKitTranscriber: Transcribing, StreamingTranscribing {
                     options: Self.makeDecodingOptions(promptTokens: nil),
                     token: token
                 )
-                if let merged = TranscriptionIntegrityGuard.mergeTail(
+                switch TranscriptionIntegrityGuard.reconcileTail(
                     primary: primary.text,
                     recovery: tailRetry.text
                 ) {
+                case .merged(let merged):
                     let selected = TranscriptionIntegrityGuard.select(
                         primary: primary.text,
                         retry: merged,
@@ -154,22 +164,32 @@ actor WhisperKitTranscriber: Transcribing, StreamingTranscribing {
                     if selected != primary.text {
                         return selected
                     }
+                    tailRequiresFullRetry = true
+                case .covered:
+                    if integrityIssues == [.activeAudioAfterDecodedEnding] {
+                        return primary.text
+                    }
+                case .requiresFullRetry:
+                    tailRequiresFullRetry = true
                 }
-                FileHandle.standardError.write(Data(
-                    "tail retry could not prove a safe overlap; "
-                        .appending("falling back to full recovery\n").utf8
-                ))
             } catch {
                 if token.isCancelled {
                     throw error
                 }
                 FileHandle.standardError.write(Data(
-                    "tail retry failed; falling back to full recovery\n".utf8
+                    "tail audit failed; falling back to full recovery\n".utf8
+                ))
+                tailRequiresFullRetry = true
+            }
+            if tailRequiresFullRetry {
+                FileHandle.standardError.write(Data(
+                    "tail audit did not prove complete coverage; "
+                        .appending("falling back to full recovery\n").utf8
                 ))
             }
         }
 
-        guard isVocabularyConditioned else {
+        guard isVocabularyConditioned || tailRequiresFullRetry else {
             return primary.text
         }
 
@@ -197,7 +217,9 @@ actor WhisperKitTranscriber: Transcribing, StreamingTranscribing {
             primary: primary.text,
             retry: retry.text,
             issues: integrityIssues,
-            conditionedTerms: conditionedTerms
+            conditionedTerms: conditionedTerms,
+            requireMateriallyLongerTail:
+                requiresIndependentTailAudit && tailRequiresFullRetry
         )
     }
 
@@ -417,7 +439,7 @@ actor WhisperKitTranscriber: Transcribing, StreamingTranscribing {
     }
 
     private static let tailRecoverySampleCount = Int(
-        15 * WhisperKit.sampleRate
+        20 * WhisperKit.sampleRate
     )
 
     private struct DecodedTranscript {

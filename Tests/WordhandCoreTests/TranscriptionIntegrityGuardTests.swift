@@ -125,6 +125,77 @@ struct TranscriptionIntegrityGuardTests {
     }
 
     @Test
+    func longRecordingGetsATailAuditEvenWhenDecoderClaimsFullCoverage() {
+        let earlySpeech = energeticAudio(seconds: 12)
+        let middleSilence = Array(repeating: Float.zero, count: 16_000 * 12)
+        let lateSpeech = energeticAudio(seconds: 8)
+        let releaseSilence = Array(repeating: Float.zero, count: 16_000 * 4)
+
+        #expect(
+            TranscriptionIntegrityGuard.needsIndependentTailAudit(
+                audio: earlySpeech + middleSilence + lateSpeech + releaseSilence,
+                sampleRate: 16_000
+            )
+        )
+    }
+
+    @Test
+    func longRecordingWithoutLateSpeechSkipsTheTailAudit() {
+        let speech = energeticAudio(seconds: 10)
+        let silence = Array(repeating: Float.zero, count: 16_000 * 25)
+
+        #expect(
+            !TranscriptionIntegrityGuard.needsIndependentTailAudit(
+                audio: speech + silence,
+                sampleRate: 16_000
+            )
+        )
+    }
+
+    @Test
+    func divergentTailRequiresAFullRetryInsteadOfTrustingSegmentTimestamps() {
+        let decision = TranscriptionIntegrityGuard.reconcileTail(
+            primary: """
+            I put it in the downloads folder. You'll see the PIA.
+            """,
+            recovery: """
+            I want to make sure the documentation is good so other agents can \
+            find it. The offer letter is in Income Lab in the downloads folder.
+            """
+        )
+
+        #expect(decision == .requiresFullRetry)
+    }
+
+    @Test
+    func fullyRepresentedTailDoesNotForceASecondFullDecode() {
+        let decision = TranscriptionIntegrityGuard.reconcileTail(
+            primary: """
+            Keep all of the documentation local. The offer letter is in the \
+            Income Lab folder in Downloads.
+            """,
+            recovery: """
+            The offer letter is in the Income Lab folder in Downloads.
+            """
+        )
+
+        #expect(decision == .covered)
+    }
+
+    @Test
+    func unrepresentedWordsBeforeACoveredSuffixRequireAFullRetry() {
+        let decision = TranscriptionIntegrityGuard.reconcileTail(
+            primary: "I put the file in the Income Lab folder in Downloads.",
+            recovery: """
+            Make sure the documentation is good. The file is in the Income Lab \
+            folder in Downloads.
+            """
+        )
+
+        #expect(decision == .requiresFullRetry)
+    }
+
+    @Test
     func cleanRetryReplacesAConditioningArtifact() {
         let primary = "Aaron Browne- Yeah, so at this point I want to finish."
         let retry = "Yeah, so at this point I want to finish."
@@ -167,6 +238,22 @@ struct TranscriptionIntegrityGuardTests {
         )
 
         #expect(selected == retry)
+    }
+
+    @Test
+    func independentTailAuditDoesNotPreferAnEqualLengthUnconditionedRetry() {
+        let primary = "Ship the update to Valyou and document Wordhand."
+        let retry = "Ship the update to Value and document Word Hand."
+
+        let selected = TranscriptionIntegrityGuard.select(
+            primary: primary,
+            retry: retry,
+            issues: [.activeAudioAfterDecodedEnding],
+            conditionedTerms: ["Valyou", "Wordhand"],
+            requireMateriallyLongerTail: true
+        )
+
+        #expect(selected == primary)
     }
 
     @Test

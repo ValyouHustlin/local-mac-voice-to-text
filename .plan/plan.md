@@ -382,8 +382,9 @@ Receipts: `docs/verification/2026-07-28-decode-vocabulary.md` and
 
 ### Transcript integrity regression checkpoint
 
-Status: complete for the reported Ghostty regressions. Development build 16 is
-installed; broader target-specific compatibility gates remain in their phases.
+Status: complete for the reported Ghostty and retained long-form regressions.
+Development build 18 is installed; broader target-specific compatibility gates
+remain in their phases.
 
 - [x] Detect a truncated vocabulary term leaking at the beginning of a
   conditioned transcript without globally stripping legitimate names.
@@ -392,11 +393,17 @@ installed; broader target-specific compatibility gates remain in their phases.
 - [x] Use decoded segment timing as an additional signal for punctuation that
   appears complete before sustained later speech, without letting timing
   suppress the proven unpunctuated-tail safeguard.
-- [x] For a tail-only issue longer than 15 seconds, decode only the final
-  15 seconds first and append recovered text only after one unique normalized
+- [x] For a tail issue longer than 20 seconds, decode only the final
+  20 seconds first and append recovered text only after one unique normalized
   overlap of at least four words.
+- [x] Independently audit the final 20 seconds of every 30-second-or-longer
+  recording with late speech, even when Whisper reports complete segment timing
+  and terminal punctuation.
 - [x] Fall back to the prompt-free full-buffer recovery when the short tail
-  decode fails, has no safe overlap, or has an ambiguous repeated overlap.
+  decode fails, has no safe overlap, has an ambiguous repeated overlap, or
+  exposes unrepresented words before an apparently covered suffix.
+- [x] Require a long-form full recovery to be materially longer and lexically
+  aligned so an equal-length unconditioned retry cannot damage dictionary terms.
 - [x] Keep tail recovery available when no vocabulary prompt was applied; a
   full prompt-free retry remains limited to suspicious conditioned results.
 - [x] Select the clean retry only when it removes the prompt artifact without
@@ -423,9 +430,13 @@ installed; broader target-specific compatibility gates remain in their phases.
 - [x] Install development build 16 with the stable local signing identity,
   confirm all three privacy permissions plus Control-Space remain ready, and
   relaunch the installed app without exercising microphone or insertion paths.
+- [x] Reproduce a 65.09-second end truncation from its retained WAV, recover the
+  missing ending through the independent tail audit, and install build 18 with
+  permissions plus Control-Space still ready.
 
-Receipts: `docs/verification/2026-07-29-transcription-integrity-regressions.md`
-and `docs/verification/2026-07-29-tail-recovery-speed.md`.
+Receipts: `docs/verification/2026-07-29-transcription-integrity-regressions.md`,
+`docs/verification/2026-07-29-tail-recovery-speed.md`, and
+`docs/verification/2026-07-29-independent-tail-audit.md`.
 
 ### Application hardening checkpoint
 
