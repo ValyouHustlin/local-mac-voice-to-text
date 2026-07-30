@@ -18,14 +18,17 @@ final class SettingsController: NSObject, ObservableObject, NSWindowDelegate {
     private let store: SettingsStore
     private let launchAtLoginManager: any LaunchAtLoginManaging
     private let permissionManager: any PermissionManaging
+    private let frameAutosaveName: String
     private var windowController: NSWindowController?
     private var localKeyMonitor: Any?
+    private static let defaultWindowContentSize = NSSize(width: 760, height: 620)
 
     init(
         store: SettingsStore,
         settings: AppSettings,
         launchAtLoginManager: any LaunchAtLoginManaging = SystemLaunchAtLoginManager(),
-        permissionManager: any PermissionManaging = SystemPermissionManager()
+        permissionManager: any PermissionManaging = SystemPermissionManager(),
+        frameAutosaveName: String = "Wordhand.Settings"
     ) {
         self.store = store
         self.settings = settings
@@ -33,6 +36,7 @@ final class SettingsController: NSObject, ObservableObject, NSWindowDelegate {
         self.launchAtLoginState = launchAtLoginManager.state()
         self.permissionManager = permissionManager
         self.permissionStatus = permissionManager.status()
+        self.frameAutosaveName = frameAutosaveName
         super.init()
     }
 
@@ -273,8 +277,9 @@ final class SettingsController: NSObject, ObservableObject, NSWindowDelegate {
         window.title = "Settings"
         window.subtitle = "Wordhand"
         window.minSize = NSSize(width: 620, height: 440)
-        window.setFrameAutosaveName("Wordhand.Settings")
         window.contentViewController = hostingController
+        window.setContentSize(Self.defaultWindowContentSize)
+        window.setFrameAutosaveName(frameAutosaveName)
         window.isReleasedWhenClosed = false
         window.delegate = self
         window.center()
@@ -284,11 +289,21 @@ final class SettingsController: NSObject, ObservableObject, NSWindowDelegate {
     }
 
     func windowWillClose(_ notification: Notification) {
+        saveWindowFrame(from: notification)
         cancelShortcutCapture()
+    }
+
+    func windowDidEndLiveResize(_ notification: Notification) {
+        saveWindowFrame(from: notification)
     }
 
     func windowDidResignKey(_ notification: Notification) {
         cancelShortcutCapture()
+    }
+
+    private func saveWindowFrame(from notification: Notification) {
+        guard let window = notification.object as? NSWindow else { return }
+        window.saveFrame(usingName: frameAutosaveName)
     }
 
     private static let modifierOnlyKeyCodes: Set<UInt16> = [

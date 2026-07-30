@@ -50,8 +50,11 @@ with the binary.
   in Keychain before saving its display name with owner-only permissions. It
   never stores or exports the private key.
 
-No signing identity or certificate was selected in this change. That remains an
-explicit owner decision.
+After Aaron explicitly authorized the certificate action, a
+`Wordhand Local Signing` identity was created in the login Keychain and selected
+through `scripts/configure-local-signing.sh`. Keychain reports one valid code
+signing identity. The persisted identity-name file is owner-only `0600`; the
+private key remains in Keychain.
 
 ## Verification
 
@@ -66,8 +69,11 @@ nonexistent identity, without writing a configuration.
 
 The real AppKit window constructor was exercised by
 `settingsWindowIsResizableAndCanShowMoreContent`. It observed the resizable
-style, the 620 by 440 minimum, and successfully changed the content area to 900
-by 700 points.
+style, the 760 by 620 default, the 620 by 440 minimum, and successfully changed
+the content area to 900 by 700 points. Closing and rebuilding the controller
+restored the exact 900 by 700 content size from an isolated per-test autosave
+key. The complete suite also observed that Aaron's real Settings frame was
+unchanged before and after the run.
 
 ```sh
 /usr/bin/swift test
@@ -97,10 +103,62 @@ Warning: macOS permissions may reset when this build replaces a previous ad-hoc 
 Configure one stable Keychain identity with scripts/configure-local-signing.sh.
 ```
 
-## Residual verification
+## Installed update receipt
 
-The candidate was intentionally not installed because doing so with another
-ad-hoc identity would cause the exact permission churn this change is meant to
-stop. After Aaron authorizes one local certificate choice, install the candidate
-with that identity, resize and reopen Settings, then rebuild and confirm
-Microphone, Input Monitoring, and Accessibility remain granted.
+The app was then installed repeatedly with different build numbers so the test
+used genuinely different signed bundles. The first signed build reported:
+
+```text
+Authority=Wordhand Local Signing
+CDHash=accb20ef16dca17b8af8fc94247beeadf0ccf859
+```
+
+Build 2 reported:
+
+```text
+Authority=Wordhand Local Signing
+CDHash=680e6f6f98eb17329dfe3abf61616759e8513e44
+```
+
+Build 5, the final installed product build, reported:
+
+```text
+Authority=Wordhand Local Signing
+CDHash=d05e286719361cd88444ffe3cb5e611a3043a740
+```
+
+Despite the changed code hashes, every post-install doctor run observed:
+
+```text
+✓ microphone: ok
+✓ accessibility: ok
+✓ input monitoring: ok
+✓ Control-Space: ok
+```
+
+The designated requirement is now stable:
+
+```text
+identifier "com.valyou.wordhand" and certificate root =
+H"2bdc70941494fdbfb7453585b23ae93c67baaa5e"
+```
+
+No audio or dictation test was performed.
+
+## Live Settings receipt
+
+The installed Settings window was resized through macOS Accessibility from 620
+by 440 to 900 by 700 points, then closed. The app stored:
+
+```text
+410 1307 900 700 0 0 1440 2530
+```
+
+After terminating and reopening Wordhand, the real window reported:
+
+```text
+270, 488, 900, 700
+```
+
+The changed position is macOS keeping the larger frame on-screen; the requested
+900 by 700 size survived the complete process restart.

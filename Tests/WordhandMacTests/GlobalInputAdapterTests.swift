@@ -90,24 +90,44 @@ struct GlobalInputAdapterTests {
     @MainActor
     func settingsWindowIsResizableAndCanShowMoreContent() throws {
         _ = NSApplication.shared
+        let autosaveName = "Wordhand.Settings.Tests.\(UUID().uuidString)"
+        let autosaveKey = "NSWindow Frame \(autosaveName)"
+        defer { UserDefaults.standard.removeObject(forKey: autosaveKey) }
         let fixture = try TemporarySettingsFixture()
         defer { fixture.remove() }
-        let controller = SettingsController(
+        var controller: SettingsController? = SettingsController(
             store: fixture.store,
             settings: AppSettings(),
             launchAtLoginManager: FakeLaunchAtLoginManager(state: .disabled),
-            permissionManager: FakePermissionManager()
+            permissionManager: FakePermissionManager(),
+            frameAutosaveName: autosaveName
         )
 
-        let window = try #require(controller.ensureWindowController().window)
-        defer { window.close() }
+        let window = try #require(controller?.ensureWindowController().window)
 
         #expect(window.title == "Settings")
         #expect(window.styleMask.contains(.resizable))
         #expect(window.minSize == NSSize(width: 620, height: 440))
+        #expect(window.contentView?.frame.size == NSSize(width: 760, height: 620))
 
         window.setContentSize(NSSize(width: 900, height: 700))
         #expect(window.contentView?.frame.size == NSSize(width: 900, height: 700))
+
+        let expectedSavedFrame = window.frameDescriptor
+        window.close()
+        #expect(UserDefaults.standard.string(forKey: autosaveKey) == expectedSavedFrame)
+        controller = nil
+
+        let restoredController = SettingsController(
+            store: fixture.store,
+            settings: AppSettings(),
+            launchAtLoginManager: FakeLaunchAtLoginManager(state: .disabled),
+            permissionManager: FakePermissionManager(),
+            frameAutosaveName: autosaveName
+        )
+        let restoredWindow = try #require(restoredController.ensureWindowController().window)
+        defer { restoredWindow.close() }
+        #expect(restoredWindow.contentView?.frame.size == NSSize(width: 900, height: 700))
     }
 
     @Test

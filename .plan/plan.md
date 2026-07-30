@@ -412,8 +412,8 @@ Goal: install and update like a normal trusted Mac app.
 - [x] Support a persistent local Keychain signing identity and warn explicitly
   when an ad-hoc rebuild can invalidate macOS privacy grants.
 - [x] Restrict local settings, vocabulary, and history data to the owner.
-- Select Aaron's local signing identity and verify privacy grants survive an
-  installed rebuild.
+- [x] Select Aaron's local signing identity and verify privacy grants survive
+  multiple installed rebuilds with different bundle hashes.
 - Sign with hardened runtime.
 - Notarize and staple.
 - Package without stripping quarantine.
