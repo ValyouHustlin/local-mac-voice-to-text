@@ -40,6 +40,14 @@ actor WhisperKitTranscriber:
     /// Call once at startup so the first hotkey press isn't blocked on model
     /// download/load.
     func warmUp() async throws {
+        try await warmUp(requireCachedModel: false)
+    }
+
+    func warmUpRequiringCachedModel() async throws {
+        try await warmUp(requireCachedModel: true)
+    }
+
+    private func warmUp(requireCachedModel: Bool) async throws {
         if pipeline != nil { return }
         if let warmupTask {
             try await warmupTask.value
@@ -72,6 +80,9 @@ actor WhisperKitTranscriber:
                     download: false
                 )
             } else {
+                if requireCachedModel {
+                    throw TranscriberError.modelNotCached
+                }
                 config = WhisperKitConfig(
                     model: whisperKitID,
                     downloadBase: downloadBase,
@@ -573,6 +584,7 @@ actor WhisperKitTranscriber:
 
 enum TranscriberError: Error {
     case missingEngineID
+    case modelNotCached
     case notLoaded
 }
 

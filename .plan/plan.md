@@ -20,7 +20,8 @@ contract and target boundaries.
 
 Status: crash-safe rolling capture is implemented and isolated-verification
 complete. An attended installed-app dictation receipt remains before this source
-checkpoint can be called daily-runtime verified.
+checkpoint can be called daily-runtime verified. The next slice now has a
+checked-in retained-audio authority oracle; no live partial path is enabled.
 
 Measured daily-use impact keeps the remaining English-first macOS work in this
 order:
@@ -48,6 +49,19 @@ journal only after the History commit succeeds. Explicit cancellation deletes
 its journal immediately.
 
 Receipt: `docs/verification/2026-07-30-crash-safe-capture.md`.
+
+The safe work-during-speech entry gate is now executable with `models
+authority-compare`. It verifies the retained audio identity, hashes the fixture
+definition, alternates paired full-buffer/rolling-final run order, reports
+median and p95 stop-to-final latency, and rejects a comparison if any run loses
+a protected span or regresses word or character error rate. The first
+checked-in English fixture covers both boundaries, a decimal, a negation,
+technical terms, and a dictionary-conditioned name. Its four balanced paired
+Large v3 runs produced identical transcripts and passed the control-equivalence
+gate. Their median times were equal within 0.1 ms, so this is not a latency win
+and does not authorize an incremental candidate. Runtime remains unchanged.
+
+Receipt: `docs/verification/2026-07-30-completeness-latency-oracle.md`.
 
 ## Public checkpoint cadence
 
@@ -561,6 +575,12 @@ speech. Its attended microphone latency receipt remains open.
   mode release; never insert the rolling window composite.
 - [x] Add a no-microphone `models benchmark --streaming` replay path that
   exercises rolling decode plus release finalization against a local file.
+- [x] Add a checked-in retained English fixture and paired completeness oracle
+  that binds expected audio/fixture hashes, validates all six protected
+  categories plus boundary placement/reference truth, alternates balanced run
+  order, reports median/p95
+  stop-to-final latency, and rejects protected-content or aggregate-accuracy
+  regressions.
 - [x] Cancel stale in-flight partial work at release before the authoritative
   full-buffer decode and cache dictionary prompt tokenization until vocabulary
   changes.
@@ -571,7 +591,8 @@ speech. Its attended microphone latency receipt remains open.
   discarding them for an authoritative full decode only increased release
   latency.
 - [ ] Re-enable live partial decoding only after it produces visible partial
-  value and passes a boundary-safe finalization oracle.
+  value, passes the checked-in authority oracle across a broader retained
+  corpus, and survives attended short/long natural dictation.
 - [x] Enable WhisperKit silence-aware chunking for recordings longer than one
   model window so long batch and streaming-fallback decodes split at pauses and
   use the Mac's concurrent decode workers.
@@ -583,7 +604,8 @@ speech. Its attended microphone latency receipt remains open.
 Receipts: `docs/verification/2026-07-28-accuracy-paste.md`,
 `docs/verification/2026-07-29-corrections-streaming.md`,
 `docs/verification/2026-07-29-long-dictation-vad.md`, and
-`docs/verification/2026-07-29-streaming-tail-overlay.md`.
+`docs/verification/2026-07-29-streaming-tail-overlay.md`, and
+`docs/verification/2026-07-30-completeness-latency-oracle.md`.
 
 ### Spoken corrections and Maximum Performance checkpoint
 

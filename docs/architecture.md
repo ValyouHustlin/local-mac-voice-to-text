@@ -415,6 +415,35 @@ stop-to-final time moved from 2.167 seconds to 1.556 seconds. This measurement
 describes the isolated rolling benchmark; daily runtime remains on the
 authoritative full-buffer path.
 
+`wordhand models authority-compare` is the first promotion gate for any future
+incremental candidate. It loads one identity-bound retained local audio file
+once, applies only the fixture's explicit vocabulary, requires an already
+cached model, runs one unmeasured inference pair, and alternates an even number
+of paired full-buffer/rolling-final measurements. The JSON report binds the
+model, baseline/candidate implementation IDs, decoder configuration ID, audio
+SHA-256, fixture SHA-256, vocabulary SHA-256, sample count, and sample rate.
+Fixtures missing any required category or exact audio identity fail closed.
+Category placement is fixed (`beginning` is a prefix and `ending` is a suffix),
+and the fixture reference must itself contain every exact expected occurrence.
+Every candidate run must contain exact expected occurrences of protected spans
+for the beginning, ending, numbers, negations, technical terms, and dictionary
+spellings, and its word and character error rates must be no worse than its
+paired full-buffer result. Median and p95 stop-to-final times are reported only
+after that comparison; speed cannot override missing or degraded text. A
+rejected comparison exits nonzero. The command is offline: it does not download
+a model, record, play audio, install an event tap, inspect the clipboard, inject
+text, or enable a runtime path.
+
+The initial public synthetic fixture is deliberately small and deterministic.
+It proves that the gate catches boundary, duplicate, and protected-content loss
+and that the current rolling-final control remains equivalent because it still
+finishes with a complete-buffer decode. The report explicitly identifies that
+control implementation; its PASS cannot authorize an actual incremental
+candidate. It does not prove a useful latency improvement or natural-voice
+completeness. Runtime promotion additionally requires a broader retained corpus
+and attended short/long natural dictation.
+See `docs/verification/2026-07-30-completeness-latency-oracle.md`.
+
 The authoritative decode has layered local integrity checks. First, the coordinator
 compares the monotonic recording-session duration with the number of captured
 16 kHz samples. If the audio buffer is more than 750 ms shorter than the

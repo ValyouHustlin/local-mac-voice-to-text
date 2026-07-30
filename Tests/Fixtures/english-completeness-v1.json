@@ -1,0 +1,63 @@
+{
+  "id": "english-completeness-v1",
+  "reference": "Boundary alpha begins this test. The value is fourteen point five. Do not deploy on Friday. WhisperKit and GitHub support Aaron Browne-Moore. Boundary omega ends this test.",
+  "audioSHA256": "eec8f372804827a461958e8d5c1f329063c0b40e2b63858bfcfa3c1d38bfbbf1",
+  "sampleCount": 201154,
+  "sampleRate": 16000,
+  "vocabularyTerms": [
+    "WhisperKit",
+    "GitHub",
+    "Aaron Browne-Moore"
+  ],
+  "protectedSpans": [
+    {
+      "id": "opening",
+      "category": "beginning",
+      "acceptedForms": ["Boundary alpha begins"],
+      "placement": "prefix",
+      "expectedOccurrences": 1
+    },
+    {
+      "id": "closing",
+      "category": "ending",
+      "acceptedForms": ["Boundary omega ends this test"],
+      "placement": "suffix",
+      "expectedOccurrences": 1
+    },
+    {
+      "id": "decimal",
+      "category": "number",
+      "acceptedForms": ["fourteen point five", "14.5"],
+      "placement": "anywhere",
+      "expectedOccurrences": 1
+    },
+    {
+      "id": "negation",
+      "category": "negation",
+      "acceptedForms": ["do not deploy on Friday"],
+      "placement": "anywhere",
+      "expectedOccurrences": 1
+    },
+    {
+      "id": "whisperkit",
+      "category": "technicalTerm",
+      "acceptedForms": ["WhisperKit"],
+      "placement": "anywhere",
+      "expectedOccurrences": 1
+    },
+    {
+      "id": "github",
+      "category": "technicalTerm",
+      "acceptedForms": ["GitHub"],
+      "placement": "anywhere",
+      "expectedOccurrences": 1
+    },
+    {
+      "id": "name",
+      "category": "dictionarySpelling",
+      "acceptedForms": ["Aaron Browne-Moore"],
+      "placement": "anywhere",
+      "expectedOccurrences": 1
+    }
+  ]
+}
