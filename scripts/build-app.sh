@@ -5,9 +5,9 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(/usr/bin/dirname "$0")" && /bin/pwd)"
 REPO_DIR="$(cd "${SCRIPT_DIR}/.." && /bin/pwd)"
-APP_PATH="${WORDHAND_APP_OUTPUT:-${REPO_DIR}/dist/Wordhand.app}"
 APP_VERSION="${WORDHAND_VERSION:-0.1.0}"
 APP_BUILD="${WORDHAND_BUILD_NUMBER:-1}"
+BUILD_CHANNEL="${WORDHAND_BUILD_CHANNEL:-development}"
 SIGNING_CONFIG="${WORDHAND_SIGNING_CONFIG:-${HOME}/Library/Application Support/Wordhand/signing-identity}"
 SIGNING_IDENTITY="${WORDHAND_CODESIGN_IDENTITY:-}"
 
@@ -16,10 +16,37 @@ if [ -z "${SIGNING_IDENTITY}" ] && [ -f "${SIGNING_CONFIG}" ]; then
 fi
 SIGNING_IDENTITY="${SIGNING_IDENTITY:--}"
 
-case "${APP_PATH}" in
-    */Wordhand.app) ;;
+case "${BUILD_CHANNEL}" in
+    development)
+        DEFAULT_APP_PATH="${REPO_DIR}/dist/Wordhand Dev.app"
+        BUNDLE_IDENTIFIER="com.valyou.wordhand.dev"
+        BUNDLE_DISPLAY_NAME="Wordhand Dev"
+        ;;
+    release)
+        DEFAULT_APP_PATH="${REPO_DIR}/dist/Wordhand.app"
+        BUNDLE_IDENTIFIER="com.valyou.wordhand"
+        BUNDLE_DISPLAY_NAME="Wordhand"
+        case "${SIGNING_IDENTITY}" in
+            "Developer ID Application:"*) ;;
+            *)
+                /bin/echo "release builds require an explicit Developer ID Application identity" >&2
+                /bin/echo "development builds must use the default development channel" >&2
+                exit 78
+                ;;
+        esac
+        ;;
     *)
-        /bin/echo "WORDHAND_APP_OUTPUT must end in Wordhand.app" >&2
+        /bin/echo "WORDHAND_BUILD_CHANNEL must be development or release" >&2
+        exit 64
+        ;;
+esac
+
+APP_PATH="${WORDHAND_APP_OUTPUT:-${DEFAULT_APP_PATH}}"
+
+case "${APP_PATH}" in
+    *.app) ;;
+    *)
+        /bin/echo "WORDHAND_APP_OUTPUT must end in .app" >&2
         exit 64
         ;;
 esac
@@ -50,6 +77,12 @@ fi
 /usr/bin/plutil -replace CFBundleShortVersionString -string "${APP_VERSION}" \
     "${APP_PATH}/Contents/Info.plist"
 /usr/bin/plutil -replace CFBundleVersion -string "${APP_BUILD}" \
+    "${APP_PATH}/Contents/Info.plist"
+/usr/bin/plutil -replace CFBundleIdentifier -string "${BUNDLE_IDENTIFIER}" \
+    "${APP_PATH}/Contents/Info.plist"
+/usr/bin/plutil -replace CFBundleDisplayName -string "${BUNDLE_DISPLAY_NAME}" \
+    "${APP_PATH}/Contents/Info.plist"
+/usr/bin/plutil -replace CFBundleName -string "${BUNDLE_DISPLAY_NAME}" \
     "${APP_PATH}/Contents/Info.plist"
 
 /usr/bin/ditto \
@@ -88,9 +121,11 @@ SIZES
 
 /bin/echo "Built ${APP_PATH}"
 /bin/echo "Version ${APP_VERSION} (${APP_BUILD})"
+/bin/echo "Channel: ${BUILD_CHANNEL}"
+/bin/echo "Bundle identifier: ${BUNDLE_IDENTIFIER}"
 if [ "${SIGNING_IDENTITY}" = "-" ]; then
     /bin/echo "Signature: local ad hoc"
-    /bin/echo "Warning: macOS permissions may reset when this build replaces a previous ad-hoc build." >&2
+    /bin/echo "Warning: macOS permissions may reset between ad-hoc development builds." >&2
     /bin/echo "Configure one stable Keychain identity with scripts/configure-local-signing.sh." >&2
 else
     /bin/echo "Signature: ${SIGNING_IDENTITY}"

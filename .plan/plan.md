@@ -494,8 +494,10 @@ Status: in progress; certificate and public-release actions are Aaron-gated.
 
 Goal: install and update like a normal trusted Mac app.
 
-- [x] Produce a stable `.app` bundle and bundle identifier.
-- [x] Add a rollback-preserving local installer and native launch at login.
+- [x] Produce separate development (`com.valyou.wordhand.dev`) and reserved
+  release (`com.valyou.wordhand`) app identities.
+- [x] Add a rollback-preserving development installer that cannot register a
+  LaunchAgent, login item, or background item.
 - [x] Show an inline one-click relaunch action only after a setting that needs
   restart changes; model selection is the current restart-required setting.
 - [x] Prefer the standard `/Applications` location, register/import the active
@@ -515,14 +517,18 @@ Goal: install and update like a normal trusted Mac app.
 - [x] Restrict local settings, vocabulary, and history data to the owner.
 - [x] Add opt-in, automatically expired, owner-only local Quality Lab audio
   retention while keeping the public default off.
-- [x] Select Aaron's local signing identity and verify privacy grants survive
-  multiple installed rebuilds with different bundle hashes.
+- [x] Select Aaron's stable local development signing identity.
+- [ ] Verify two updates of the same installed development identity do not
+  produce Background Items or privacy approval prompts.
 - Sign with hardened runtime.
 - Notarize and staple.
 - Package without stripping quarantine.
 - Add release CI, checksums, changelog, and rollback instructions.
 - Resolve upstream license provenance and publish a compatible project license.
 - Add an update mechanism whose metadata contains no transcript content.
+- Keep release login-item registration intact across update without calling
+  unregister/register; fail release if Background Items or privacy prompts
+  recur.
 - Test a fresh install, first-run permissions, model failure/retry, login start,
   update, rollback, and uninstall.
 

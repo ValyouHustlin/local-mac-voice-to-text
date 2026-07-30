@@ -1,6 +1,11 @@
 import Foundation
 import ServiceManagement
 
+enum WordhandBundleIdentity {
+    static let development = "com.valyou.wordhand.dev"
+    static let release = "com.valyou.wordhand"
+}
+
 enum LaunchAtLoginState: Equatable {
     case unavailable
     case disabled
@@ -18,7 +23,7 @@ enum LaunchAtLoginState: Equatable {
     var detail: String {
         switch self {
         case .unavailable:
-            return "Install Wordhand.app to manage login launch."
+            return "Launch at login is available in the signed release."
         case .disabled:
             return "Keep Wordhand ready without opening it manually."
         case .enabled:
@@ -38,8 +43,18 @@ protocol LaunchAtLoginManaging {
 
 struct SystemLaunchAtLoginManager: LaunchAtLoginManaging {
     var isAvailable: Bool {
-        Bundle.main.bundleURL.pathExtension == "app"
-            && Bundle.main.bundleIdentifier == "com.valyou.wordhand"
+        Self.supportsRegistration(
+            bundleIdentifier: Bundle.main.bundleIdentifier,
+            bundlePathExtension: Bundle.main.bundleURL.pathExtension
+        )
+    }
+
+    static func supportsRegistration(
+        bundleIdentifier: String?,
+        bundlePathExtension: String
+    ) -> Bool {
+        bundlePathExtension == "app"
+            && bundleIdentifier == WordhandBundleIdentity.release
     }
 
     func state() -> LaunchAtLoginState {
@@ -60,7 +75,7 @@ struct SystemLaunchAtLoginManager: LaunchAtLoginManaging {
 
     func setEnabled(_ enabled: Bool) throws {
         guard isAvailable else {
-            throw LaunchAtLoginError.requiresApplicationBundle
+            throw LaunchAtLoginError.requiresReleaseApplicationBundle
         }
 
         let service = SMAppService.mainApp
@@ -81,12 +96,12 @@ struct SystemLaunchAtLoginManager: LaunchAtLoginManaging {
 }
 
 enum LaunchAtLoginError: LocalizedError {
-    case requiresApplicationBundle
+    case requiresReleaseApplicationBundle
 
     var errorDescription: String? {
         switch self {
-        case .requiresApplicationBundle:
-            return "Launch at login is available after installing Wordhand.app."
+        case .requiresReleaseApplicationBundle:
+            return "Launch at login is available only in a signed Wordhand release."
         }
     }
 }

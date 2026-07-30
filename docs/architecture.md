@@ -64,6 +64,15 @@ shared development Mac, agent lanes must never leave `wordhand run` or another
 interactive global-input path unattended. `--skip-doctor` is not isolation and
 does not make an unattended run safe.
 
+Development builds must also never create persistence. They use
+`com.valyou.wordhand.dev`, cannot register a LaunchAgent, login item, or
+background item, and must never invoke an installer with `--launch-at-login`.
+The canonical `com.valyou.wordhand` identity and `SMAppService.mainApp` are
+reserved for a deliberately built, Developer-ID-signed release. Release updates
+must keep the same identifier, installed path, and signing identity without
+unregistering and re-registering the login item. Any update that causes
+Background Items or privacy permission re-approval fails the shipping bar.
+
 Development verification uses `HotkeyMonitoring` and `TextInserting` protocols
 with injected fake tap controllers and fake event posters. Offline model
 benchmarks, builds, and tests are allowed because they do not install global
@@ -143,16 +152,17 @@ Verified by source inspection and dated receipts through 2026-07-29:
   Microphone, Input Monitoring, and Accessibility instead of reporting a
   false-ready state;
 - a stable native application bundle with configurable persistent local code
-  signing, native login-item registration, standard Applications-folder and
-  Spotlight registration, rollback copies stored outside searchable application
-  folders, and a legacy LaunchAgent fallback for command-line-only builds;
+  signing, isolated development and release identities, release-only native
+  login-item registration, standard Applications-folder and Spotlight
+  registration, and rollback copies stored outside searchable application
+  folders;
 - immediate menu, Dock, and shortcut readiness while the selected model warms
   asynchronously from a complete local cache without network validation;
 - macOS continuous integration for tests and release builds.
 
 Developer ID signing, hardened runtime, notarization, public packaging, a
-fresh-account onboarding pass, and updates remain planned. Only measured
-receipts may promote latency or compatibility claims.
+fresh-account onboarding pass, and a permission-stable updater remain planned.
+Only measured receipts may promote latency or compatibility claims.
 
 ## Current delivery state
 
@@ -163,18 +173,32 @@ current exact count belongs in the latest verification receipt rather than this
 long-lived architecture document.
 
 The daily-driver bundle is built by `scripts/build-app.sh` and installed by
-`scripts/install-app.sh`. The installer prefers `/Applications`, falls back to
-`~/Applications` when needed, explicitly registers/imports the bundle, and keeps
-rollback bundles under Application Support with a non-launchable
-`.app-backup` suffix so Spotlight and LaunchServices see one active Wordhand.
-The build-output directory carries a `.metadata_never_index` marker and is
-explicitly unregistered after installation. Installed builds use
-`SMAppService.mainApp` for native
-launch at login. Ad-hoc signing is the public source-build fallback, but it
-changes the app's code identity on each rebuild and can invalidate macOS privacy
-grants. A local identity selected once through
-`scripts/configure-local-signing.sh` is reused automatically by future builds;
-the file stores only its display name while the private key stays in Keychain.
+`scripts/install-app.sh`. Development is the default channel and produces
+`Wordhand Dev.app` with `com.valyou.wordhand.dev`; the release identity
+`com.valyou.wordhand` is reserved for a deliberately selected release channel
+signed by a Developer ID Application certificate. The development installer
+prefers `/Applications`, falls back to `~/Applications` when needed, and never
+touches the release app or registers a LaunchAgent, login item, or background
+item. It rejects `--launch-at-login`. Only the signed release can expose
+`SMAppService.mainApp`, and registration is a user action in Settings rather
+than part of the update loop.
+
+This boundary is a shipping requirement. Re-registering a replaced app through
+macOS Background Task Management can produce repeated `sfltool` approval
+prompts. A release update must preserve the canonical bundle identifier,
+installed path, and Developer ID signing identity without unregistering and
+re-registering the login item. Any update that causes a Background Items,
+Microphone, Input Monitoring, or Accessibility re-approval fails the release
+gate. Ad-hoc signing remains the source-build fallback and can change the code
+identity on rebuild. A local identity selected once through
+`scripts/configure-local-signing.sh` is reused automatically by future
+development builds; the file stores only its display name while the private key
+stays in Keychain.
+
+The installer keeps rollback bundles under Application Support with a
+non-launchable `.app-backup` suffix. The build-output directory carries a
+`.metadata_never_index` marker and is explicitly unregistered after
+installation.
 The UI starts before model warmup; a complete local WhisperKit
 cache is opened with downloading disabled, while a missing cache falls back to
 the explicit download path. Settings, dictionary, history, and the data
@@ -677,9 +701,11 @@ On the first branded launch, Wordhand copies an existing
 staged migration. It never overwrites an existing Wordhand directory and
 preserves the legacy directory for rollback.
 
-The final app bundle and bundle identifier will determine the stable TCC
-identity. Development builds must not pretend their permission grants prove the
-signed release identity works.
+`com.valyou.wordhand.dev` owns development privacy grants;
+`com.valyou.wordhand` owns release grants. Neither channel may replace the
+other. Development permission receipts do not prove the signed release identity
+works, and the release update gate requires observing that existing grants
+survive a real notarized update.
 
 `--data-directory` redirects settings, dictionary, and history persistence to
 an explicit local directory. It does not isolate global input; development runs

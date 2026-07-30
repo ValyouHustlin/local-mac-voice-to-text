@@ -47,10 +47,11 @@ and inserts the result into ordinary Mac apps.
 
 ## Install from source
 
-Wordhand builds into a normal app bundle with a stable bundle identifier, Dock
-icon, menu bar control, and native launch-at-login support. A Developer ID
-signature and notarized public download are still in development, so the honest
-public path currently requires the Xcode command line tools.
+Wordhand builds into a normal development app bundle with a Dock icon and menu
+bar control. A Developer ID signature and notarized public download are still
+in development, so the honest public path currently requires the Xcode command
+line tools. Source installs deliberately use the separate
+`com.valyou.wordhand.dev` identity and cannot register a login item.
 
 **Requirements:** macOS 14 or newer, an Apple silicon Mac, and approximately
 1 GB of free space for the first model.
@@ -58,29 +59,35 @@ public path currently requires the Xcode command line tools.
 ```sh
 git clone https://github.com/ValyouHustlin/wordhand.git
 cd wordhand
-./scripts/install-app.sh --launch-at-login
+./scripts/install-app.sh
 ```
 
-This installs `Wordhand.app` in `/Applications` when that directory is writable
-(otherwise `~/Applications`), moves rollback copies outside the searchable
-Applications folders with a non-launchable backup suffix, keeps build output
-out of Spotlight, registers the installed app, enables launch at login, and
-opens it. Local source builds are ad-hoc signed; they are not a substitute for
-the planned notarized public release, and macOS may require permissions again
-after replacing an ad-hoc-signed build.
+This installs `Wordhand Dev.app` in `/Applications` when that directory is
+writable (otherwise `~/Applications`), moves rollback copies outside the
+searchable Applications folders with a non-launchable backup suffix, keeps
+build output out of Spotlight, registers the installed app, and opens it. It
+does not create a LaunchAgent, login item, or background item. Local source
+builds are ad-hoc signed by default; they are not a substitute for the planned
+notarized public release, and macOS may require permissions again after
+replacing an ad-hoc-signed build.
 
 For repeated local development installs, use one persistent Keychain
 code-signing identity so macOS sees each rebuild as the same app:
 
 ```sh
 ./scripts/configure-local-signing.sh "Your Code Signing Identity"
-./scripts/install-app.sh --launch-at-login
+./scripts/install-app.sh
 ```
 
 The configuration stores only the identity's display name at
 `~/Library/Application Support/Wordhand/signing-identity`; the private key
 remains in Keychain. The public release path still requires Developer ID
 signing and notarization.
+
+Launch at login is intentionally release-only. The signed release will keep the
+canonical `com.valyou.wordhand` identity across updates and expose the toggle in
+Settings. Development installers reject `--launch-at-login` so rebuilding
+cannot repeatedly trigger macOS Background Items approval.
 
 On first launch, macOS asks for Microphone, Input Monitoring, and Accessibility
 access. Wordhand keeps Settings open with a separate, truthful status and repair
@@ -149,8 +156,8 @@ wordhand quality status
 wordhand quality enable --retention-days 7
 wordhand quality disable
 wordhand quality clear --confirm
-wordhand install --launch-at-login       # register Wordhand at login
-wordhand install --uninstall             # remove launch-at-login registration
+wordhand install --launch-at-login       # signed release app only
+wordhand install --uninstall             # remove release/legacy registration
 wordhand --model whisper-large-v3-turbo  # use a larger multilingual model
 wordhand --no-overlay                    # hide the recording overlay
 ```

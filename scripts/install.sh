@@ -82,5 +82,5 @@ green "✓ wordhand ${TAG} installed at ${INSTALL_DIR}/${BIN_NAME}"
 echo
 echo "next:"
 echo "  wordhand setup                       # grant mic + accessibility"
-echo "  wordhand install --launch-at-login   # (optional) start at login"
-echo "  wordhand                             # run the daemon"
+echo "  wordhand                             # run from this terminal"
+echo "  install Wordhand.app for menu bar, Dock, and release-only login launch"

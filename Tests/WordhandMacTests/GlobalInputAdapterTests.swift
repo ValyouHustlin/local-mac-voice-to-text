@@ -166,6 +166,22 @@ struct GlobalInputAdapterTests {
     }
 
     @Test
+    func developmentBundleCannotRegisterLaunchAtLogin() {
+        #expect(!SystemLaunchAtLoginManager.supportsRegistration(
+            bundleIdentifier: WordhandBundleIdentity.development,
+            bundlePathExtension: "app"
+        ))
+        #expect(!SystemLaunchAtLoginManager.supportsRegistration(
+            bundleIdentifier: WordhandBundleIdentity.release,
+            bundlePathExtension: ""
+        ))
+        #expect(SystemLaunchAtLoginManager.supportsRegistration(
+            bundleIdentifier: WordhandBundleIdentity.release,
+            bundlePathExtension: "app"
+        ))
+    }
+
+    @Test
     @MainActor
     func settingsLaunchAtLoginOpensApprovalPanelWhenRequired() throws {
         let manager = FakeLaunchAtLoginManager(state: .disabled)
