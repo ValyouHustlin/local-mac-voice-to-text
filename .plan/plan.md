@@ -291,13 +291,20 @@ remains off.
   corrected-reference action in History, persisted in the matching history row.
 - [x] Migrate existing version-one history databases in place without losing
   records.
-- [ ] Build a local-only export/evaluation harness before using the labeled
-  corpus for model comparison or fine-tuning.
+- [x] Build a local-only evaluator that pairs corrected history references with
+  their retained WAVs, compares cached models by normalized word/spelling error,
+  exact matches, transcription latency, and real-time factor, and never prints
+  transcript content.
+- [x] Run each compared model in a bounded isolated process so Core ML resources
+  are released between models and a stalled warmup cannot run indefinitely.
+- [x] Refuse implicit model downloads and report missing labels or paired audio
+  with the exact corrective action.
 - [ ] Observe one opted-in natural dictation produce a paired WAV after Aaron is
   available for attended audio verification.
 
 Receipts: `docs/verification/2026-07-29-quality-lab-insertion.md` and
-`docs/verification/2026-07-29-quality-corrections-storage.md`.
+`docs/verification/2026-07-29-quality-corrections-storage.md` and
+`docs/verification/2026-07-29-quality-evaluator.md`.
 
 ### Flow feedback and app-aware formatting checkpoint
 

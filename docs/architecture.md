@@ -146,8 +146,9 @@ Verified by source inspection and dated receipts through 2026-07-29:
 - searchable SQLite transcript history with copy, reinsert, dictionary
   correction, corrected-reference labeling, and deletion actions;
 - opt-in local Quality Lab audio retention with automatic expiry, a selectable
-  aggregate storage ceiling, and owner-only storage; public installs keep it
-  disabled by default;
+  aggregate storage ceiling, owner-only storage, corrected-reference labeling,
+  and a local cached-model evaluator; public installs keep retention disabled by
+  default;
 - versioned settings and automatic migration from the legacy product name;
 - permission doctor and visible in-app recovery that independently checks
   Microphone, Input Monitoring, and Accessibility instead of reporting a
@@ -639,15 +640,27 @@ and aggregate recording-storage ceiling:
   using Delete All removes retained recordings;
 - the menu-bar `Improve Last Transcript Accuracy…` action and History detail
   action save corrected reference text in the matching local history row;
+- `wordhand quality evaluate` scores one or more completely cached local models
+  against paired corrected recordings using normalized word and spelling error
+  rates, exact-match count, transcription latency, and real-time factor;
+- model comparisons run in isolated child processes so each Core ML model is
+  released before the next one, with a bounded 30–900 second per-model timeout;
+- evaluation never downloads a missing model implicitly, never prints
+  transcript or reference text, and can disable dictionary conditioning for a
+  controlled recognizer-only comparison;
 - no upload, sync, analytics, or background training path exists.
 
 The files inherit the Mac's volume-at-rest protection when FileVault is enabled;
 Wordhand does not claim independent application-level encryption. Corrected
 reference text now makes retained audio useful for controlled local evaluation.
-A later fine-tuning workflow must keep all processing local and receive a
-separate design and verification pass; Wordhand does not automatically train on
-the corpus. See
-`docs/verification/2026-07-29-quality-corrections-storage.md`.
+The evaluator applies the selected model, optional local dictionary
+conditioning, and deterministic transcript cleanup; it deliberately excludes
+the generative writing-profile formatter so model comparisons do not measure
+paraphrasing. A later fine-tuning workflow must keep all processing local and
+receive a separate design and verification pass; Wordhand does not automatically
+train on the corpus. See
+`docs/verification/2026-07-29-quality-corrections-storage.md` and
+`docs/verification/2026-07-29-quality-evaluator.md`.
 
 ## Insertion and clipboard behavior
 

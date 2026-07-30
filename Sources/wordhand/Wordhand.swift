@@ -591,7 +591,13 @@ struct Quality: ParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "quality",
         abstract: "Manage the private, local transcription Quality Lab.",
-        subcommands: [Status.self, Enable.self, Disable.self, Clear.self]
+        subcommands: [
+            Status.self,
+            Enable.self,
+            Disable.self,
+            Clear.self,
+            QualityEvaluate.self,
+        ]
     )
 
     struct Status: ParsableCommand {
