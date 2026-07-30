@@ -104,3 +104,29 @@ Build complete!
 
 Measure stop-to-insertion latency and completeness on Aaron's natural
 four-minute dictation when he explicitly wants an attended microphone run.
+
+## Installed build receipt
+
+Commit `213d084` was installed as bundle build 6 with the stable
+`Wordhand Local Signing` identity. The installed executable reported:
+
+```text
+✓ microphone: ok
+✓ accessibility: ok
+✓ input monitoring: ok
+✓ Control-Space: ok
+CDHash=58bca49dd1d032a6497fe3621c7ea6de138dcbb8
+Authority=Wordhand Local Signing
+```
+
+The same long fixture was then decoded through the installed executable:
+
+```text
+audio: 61.72s
+transcription: 4.773s
+real-time factor: 0.077x
+ending: Finally, remind Aaron Brown more that Valyou LLC and Valyou Solutions use different names in formal documents.
+```
+
+This confirms the installed artifact contains the new path. No microphone or
+global-input flow was exercised.
