@@ -31,6 +31,7 @@ public struct TranscriptRecord: Equatable, Identifiable, Sendable {
     public let target: TranscriptTarget
     public let status: TranscriptInsertionStatus
     public let referenceText: String?
+    public let tailRecoveryOutcome: TailRecoveryOutcome
 
     public init(
         id: UUID = UUID(),
@@ -44,7 +45,8 @@ public struct TranscriptRecord: Equatable, Identifiable, Sendable {
         insertionMode: InsertionMode,
         target: TranscriptTarget = .unknown,
         status: TranscriptInsertionStatus = .pendingInsertion,
-        referenceText: String? = nil
+        referenceText: String? = nil,
+        tailRecoveryOutcome: TailRecoveryOutcome = .notAudited
     ) {
         self.id = id
         self.createdAt = createdAt
@@ -58,6 +60,7 @@ public struct TranscriptRecord: Equatable, Identifiable, Sendable {
         self.target = target
         self.status = status
         self.referenceText = referenceText
+        self.tailRecoveryOutcome = tailRecoveryOutcome
     }
 }
 

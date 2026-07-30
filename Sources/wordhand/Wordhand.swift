@@ -17,6 +17,7 @@ struct Wordhand: ParsableCommand {
             Models.self,
             DictionaryCommands.self,
             Quality.self,
+            DiagnosticsCommands.self,
             Install.self,
             OverlayPreview.self,
         ],
@@ -137,15 +138,49 @@ struct Run: ParsableCommand {
         let qualityAudioURL = customDataDirectory?
             .appendingPathComponent("Quality Recordings", isDirectory: true)
             ?? LocalQualityAudioArchive.defaultDirectoryURL()
+        let diagnosticsURL = customDataDirectory?
+            .appendingPathComponent("Diagnostics", isDirectory: true)
+            ?? OperationalDiagnosticsStore.defaultDirectoryURL()
         let runtimeLockURL = settingsURL.deletingLastPathComponent()
             .appendingPathComponent("wordhand.lock")
         let instanceLock = try SingleInstanceLock(fileURL: runtimeLockURL)
         let settingsStore = SettingsStore(fileURL: settingsURL)
+        let diagnosticsStore = try OperationalDiagnosticsStore(
+            directoryURL: diagnosticsURL
+        )
+        let appSessionID = UUID()
+        let appStartedAt = ProcessInfo.processInfo.systemUptime
+        let recordDiagnostic:
+            @Sendable (OperationalDiagnosticEvent) -> Void = { event in
+            do {
+                try diagnosticsStore.append(event)
+            } catch {
+                FileHandle.standardError.write(Data(
+                    "diagnostics write failed: \(error)\n".utf8
+                ))
+            }
+        }
+        recordDiagnostic(OperationalDiagnosticEvent(
+            severity: .info,
+            name: "app.starting",
+            sessionID: appSessionID,
+            attributes: [
+                "build": Bundle.main.object(
+                    forInfoDictionaryKey: "CFBundleVersion"
+                ) as? String ?? "cli",
+            ]
+        ))
         let settings: AppSettings
         do {
             settings = try settingsStore.load()
         } catch {
             settings = AppSettings()
+            recordDiagnostic(OperationalDiagnosticEvent(
+                severity: .warning,
+                name: "settings.load_failed",
+                sessionID: appSessionID,
+                attributes: ["reason": String(describing: error)]
+            ))
             FileHandle.standardError.write(Data(
                 "settings load failed; using defaults without overwriting the file: \(error)\n".utf8
             ))
@@ -154,11 +189,34 @@ struct Run: ParsableCommand {
         let chosenModel: TranscriptionModel
         let chosenModelID = model ?? settings.modelID
         guard let selectedModel = ModelRegistry.find(chosenModelID) else {
+            recordDiagnostic(OperationalDiagnosticEvent(
+                severity: .error,
+                name: "startup.failed",
+                sessionID: appSessionID,
+                attributes: [
+                    "stage": "model_selection",
+                    "model_id": chosenModelID,
+                ]
+            ))
             FileHandle.standardError.write(Data("unknown model: \(chosenModelID)\n".utf8))
             FileHandle.standardError.write(Data("run `wordhand models list` to see options.\n".utf8))
             throw ExitCode(1)
         }
         chosenModel = selectedModel
+        recordDiagnostic(OperationalDiagnosticEvent(
+            severity: .info,
+            name: "app.launched",
+            sessionID: appSessionID,
+            attributes: [
+                "model_id": chosenModel.id,
+                "formatting_profile": settings.formattingProfile.rawValue,
+                "performance_mode": settings.performanceMode.rawValue,
+                "insertion_mode": settings.insertionMode.rawValue,
+                "build": Bundle.main.object(
+                    forInfoDictionaryKey: "CFBundleVersion"
+                ) as? String ?? "cli",
+            ]
+        ))
 
         let app = NSApplication.shared
         MainActor.assumeIsolated {
@@ -226,6 +284,25 @@ struct Run: ParsableCommand {
                 activeModelID: chosenModel.id
             )
         }
+        let startupPermissions = MainActor.assumeIsolated {
+            settingsController.permissionStatus
+        }
+        recordDiagnostic(OperationalDiagnosticEvent(
+            severity: startupPermissions.globalInputReady ? .info : .warning,
+            name: "permissions.snapshot",
+            sessionID: appSessionID,
+            attributes: [
+                "accessibility": String(
+                    startupPermissions.accessibilityGranted
+                ),
+                "input_monitoring": String(
+                    startupPermissions.inputMonitoringGranted
+                ),
+                "microphone": String(
+                    startupPermissions.microphone == .granted
+                ),
+            ]
+        ))
         let menuBar = MainActor.assumeIsolated {
             var controller: MenuBarController!
             controller = MenuBarController(
@@ -255,11 +332,18 @@ struct Run: ParsableCommand {
             RuntimeReadiness()
         }
         var modelWarmupTask: Task<Void, Never>?
+        var diagnosticsHeartbeatTask: Task<Void, Never>?
         let appDelegate = MainActor.assumeIsolated {
             WordhandAppDelegate(
                 onOpenPrimaryWindow: { settingsController.showSettings() },
                 onTerminate: {
+                    recordDiagnostic(OperationalDiagnosticEvent(
+                        severity: .info,
+                        name: "app.terminated",
+                        sessionID: appSessionID
+                    ))
                     modelWarmupTask?.cancel()
+                    diagnosticsHeartbeatTask?.cancel()
                     monitor.stop()
                 }
             )
@@ -275,7 +359,8 @@ struct Run: ParsableCommand {
                 streamingEnabled: settings.performanceMode.enablesRollingTranscription,
                 language: chosenModel.languages.first,
                 audioSampleRate: AudioCapture.targetSampleRate,
-                currentTarget: currentTranscriptTarget
+                currentTarget: currentTranscriptTarget,
+                diagnosticSessionID: appSessionID
             )
         }
         let startHotkeyMonitor = {
@@ -287,6 +372,7 @@ struct Run: ParsableCommand {
         }
         MainActor.assumeIsolated {
             app.delegate = appDelegate
+            coordinator.onDiagnosticEvent = recordDiagnostic
             overlay?.onCancel = {
                 audioCues.play(.cancel)
                 monitor.cancelActiveRecording()
@@ -295,6 +381,21 @@ struct Run: ParsableCommand {
                 }
             }
             settingsController.onSettingsChange = { updated in
+                recordDiagnostic(OperationalDiagnosticEvent(
+                    severity: .info,
+                    name: "settings.changed",
+                    sessionID: appSessionID,
+                    attributes: [
+                        "model_id": updated.modelID,
+                        "formatting_profile": updated.formattingProfile.rawValue,
+                        "performance_mode": updated.performanceMode.rawValue,
+                        "insertion_mode": updated.insertionMode.rawValue,
+                        "hotkey_count": String(updated.hotkeys.count),
+                        "quality_audio_enabled": String(
+                            updated.qualityAudioRetentionEnabled
+                        ),
+                    ]
+                ))
                 monitor.updateBindings(updated.hotkeys)
                 coordinator.updateInsertionMode(updated.insertionMode)
                 coordinator.updateStreamingEnabled(
@@ -348,7 +449,34 @@ struct Run: ParsableCommand {
             settingsController.onDeleteQualityAudio = {
                 try qualityAudioArchive.deleteAll()
             }
+            settingsController.onRevealDiagnostics = {
+                NSWorkspace.shared.open(diagnosticsStore.directoryURL)
+            }
+            settingsController.onDiagnosticsReport = {
+                try await Task.detached {
+                    DiagnosticsCommands.Report.format(
+                        try diagnosticsStore.report(),
+                        retentionDays: diagnosticsStore.retentionDays
+                    )
+                }.value
+            }
             settingsController.onPermissionsRefresh = { permissions in
+                recordDiagnostic(OperationalDiagnosticEvent(
+                    severity: permissions.globalInputReady ? .info : .warning,
+                    name: "permissions.snapshot",
+                    sessionID: appSessionID,
+                    attributes: [
+                        "accessibility": String(
+                            permissions.accessibilityGranted
+                        ),
+                        "input_monitoring": String(
+                            permissions.inputMonitoringGranted
+                        ),
+                        "microphone": String(
+                            permissions.microphone == .granted
+                        ),
+                    ]
+                ))
                 guard permissions.globalInputReady else {
                     if readiness.hotkeyReady {
                         monitor.stop()
@@ -441,7 +569,11 @@ struct Run: ParsableCommand {
             }
             coordinator.onTranscript = { text, elapsed in
                 FileHandle.standardError.write(Data(
-                    String(format: "→ %.2fs · %@\n", elapsed, text).utf8
+                    String(
+                        format: "→ %.2fs · %d characters\n",
+                        elapsed,
+                        text.count
+                    ).utf8
                 ))
                 dictionary.rememberLatestTranscript(text)
                 menuBar.setHasLatestTranscript(true)
@@ -455,6 +587,15 @@ struct Run: ParsableCommand {
                 Task.detached {
                     do {
                         _ = try qualityAudioArchive.store(sample)
+                        recordDiagnostic(OperationalDiagnosticEvent(
+                            severity: .info,
+                            name: "quality_audio.stored",
+                            sessionID: appSessionID,
+                            attributes: [
+                                "transcript_id":
+                                    sample.transcriptID.uuidString.lowercased()
+                            ]
+                        ))
                         if let cutoff = Calendar.current.date(
                             byAdding: .day,
                             value: -retentionDays,
@@ -466,6 +607,16 @@ struct Run: ParsableCommand {
                             maximumBytes
                         )
                     } catch {
+                        recordDiagnostic(OperationalDiagnosticEvent(
+                            severity: .error,
+                            name: "quality_audio.failed",
+                            sessionID: appSessionID,
+                            attributes: [
+                                "transcript_id":
+                                    sample.transcriptID.uuidString.lowercased(),
+                                "reason": String(describing: error),
+                            ]
+                        ))
                         FileHandle.standardError.write(Data(
                             "quality audio archive failed: \(error)\n".utf8
                         ))
@@ -483,6 +634,11 @@ struct Run: ParsableCommand {
                 ))
             }
             coordinator.onRecordingLimitReached = {
+                recordDiagnostic(OperationalDiagnosticEvent(
+                    severity: .warning,
+                    name: "recording.limit_reached",
+                    sessionID: appSessionID
+                ))
                 FileHandle.standardError.write(Data(
                     "recording reached the 10-minute safety limit; processing captured audio\n".utf8
                 ))
@@ -501,7 +657,19 @@ struct Run: ParsableCommand {
             MainActor.assumeIsolated {
                 readiness.hotkeyReady = true
             }
+            recordDiagnostic(OperationalDiagnosticEvent(
+                severity: .info,
+                name: "hotkey.ready",
+                sessionID: appSessionID,
+                attributes: ["binding_count": String(settings.hotkeys.count)]
+            ))
         } catch {
+            recordDiagnostic(OperationalDiagnosticEvent(
+                severity: .error,
+                name: "hotkey.failed",
+                sessionID: appSessionID,
+                attributes: ["reason": String(describing: error)]
+            ))
             FileHandle.standardError.write(Data("failed to register hotkey tap: \(error)\n".utf8))
             FileHandle.standardError.write(Data("run `wordhand setup` to configure permissions.\n".utf8))
             if isBundledApplication {
@@ -515,6 +683,7 @@ struct Run: ParsableCommand {
         }
 
         modelWarmupTask = Task { @MainActor in
+            let warmupStarted = ProcessInfo.processInfo.systemUptime
             do {
                 try await transcriber.warmUp()
                 if settingsController.settings.performanceMode == .maximum {
@@ -524,11 +693,64 @@ struct Run: ParsableCommand {
                 if readiness.hotkeyReady, coordinator.state == .idle {
                     menuBar.setReady()
                 }
+                recordDiagnostic(OperationalDiagnosticEvent(
+                    severity: .info,
+                    name: "model.warmup_completed",
+                    sessionID: appSessionID,
+                    metrics: [
+                        "warmup_seconds":
+                            ProcessInfo.processInfo.systemUptime - warmupStarted
+                    ],
+                    attributes: ["model_id": chosenModel.id]
+                ))
             } catch {
+                recordDiagnostic(OperationalDiagnosticEvent(
+                    severity: .error,
+                    name: "model.warmup_failed",
+                    sessionID: appSessionID,
+                    metrics: [
+                        "warmup_seconds":
+                            ProcessInfo.processInfo.systemUptime - warmupStarted
+                    ],
+                    attributes: [
+                        "model_id": chosenModel.id,
+                        "reason": String(describing: error),
+                    ]
+                ))
                 FileHandle.standardError.write(Data("warmup failed: \(error)\n".utf8))
                 if coordinator.state == .idle {
                     menuBar.setFailure("model unavailable · open Settings")
                 }
+            }
+        }
+        diagnosticsHeartbeatTask = Task { @MainActor in
+            while !Task.isCancelled {
+                do {
+                    try await Task.sleep(nanoseconds: 3_600_000_000_000)
+                } catch {
+                    return
+                }
+                guard !Task.isCancelled else { return }
+                let processInfo = ProcessInfo.processInfo
+                recordDiagnostic(OperationalDiagnosticEvent(
+                    severity: .info,
+                    name: "app.heartbeat",
+                    sessionID: appSessionID,
+                    metrics: [
+                        "app_uptime_seconds":
+                            processInfo.systemUptime - appStartedAt
+                    ],
+                    attributes: [
+                        "hotkey_ready": String(readiness.hotkeyReady),
+                        "model_ready": String(readiness.modelReady),
+                        "low_power_mode": String(
+                            processInfo.isLowPowerModeEnabled
+                        ),
+                        "thermal_state": String(
+                            describing: processInfo.thermalState
+                        ),
+                    ]
+                ))
             }
         }
 
@@ -563,6 +785,14 @@ struct Run: ParsableCommand {
         sigint.resume()
         signal(SIGINT, SIG_IGN)
 
+        let sigterm = DispatchSource.makeSignalSource(signal: SIGTERM, queue: .main)
+        sigterm.setEventHandler {
+            monitor.stop()
+            NSApp.terminate(nil)
+        }
+        sigterm.resume()
+        signal(SIGTERM, SIG_IGN)
+
         let shortcuts = settings.hotkeys.map {
             let behavior = $0.action == .toggleRecording ? "tap" : "hold"
             return "\($0.displayName) \(behavior)"
@@ -580,7 +810,10 @@ struct Run: ParsableCommand {
             instanceLock,
             globalInputTestTimer,
             modelWarmupTask,
-            appDelegate
+            diagnosticsHeartbeatTask,
+            sigterm,
+            appDelegate,
+            diagnosticsStore
         )) {
             app.run()
         }

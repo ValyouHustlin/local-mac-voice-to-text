@@ -71,6 +71,10 @@ struct GlobalInputAdapterTests {
 
         #expect(poster.pasteShortcutCount == 2)
         #expect(inserter.canUndoLastInsertion)
+        let diagnostics = await inserter.lastInsertionDiagnostics()
+        #expect(diagnostics.verification == .verifiedAfterRetry)
+        #expect(diagnostics.retryCount == 1)
+        #expect(diagnostics.checkpointAvailable)
         try inserter.undoLastInsertion()
         #expect(observer.undoTokens == [token])
         #expect(!inserter.canUndoLastInsertion)

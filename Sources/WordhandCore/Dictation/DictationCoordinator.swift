@@ -65,6 +65,7 @@ public final class DictationCoordinator {
     public var onStreamingFinalizationDuration: ((TimeInterval) -> Void)?
     public var onHistoryChange: (() -> Void)?
     public var onRecordingLimitReached: (() -> Void)?
+    public var onDiagnosticEvent: ((OperationalDiagnosticEvent) -> Void)?
 
     private let capture: AudioCapturing
     private let transcriber: Transcribing
@@ -89,6 +90,8 @@ public final class DictationCoordinator {
     private var streamingAudioContinuation: AsyncStream<[Float]>.Continuation?
     private var streamingForwardingTask: Task<Void, Never>?
     private var recordingStartedAt: TimeInterval?
+    private var activeOperationStartedAt: TimeInterval?
+    private let diagnosticSessionID: UUID
 
     public init(
         capture: AudioCapturing,
@@ -105,6 +108,7 @@ public final class DictationCoordinator {
         now: @escaping () -> TimeInterval = { ProcessInfo.processInfo.systemUptime },
         maximumCaptureGapSeconds: TimeInterval = 0.75,
         maximumRecordingNanoseconds: UInt64? = 600_000_000_000,
+        diagnosticSessionID: UUID = UUID(),
         sleep: @escaping @Sendable (UInt64) async throws -> Void = {
             try await Task.sleep(nanoseconds: $0)
         }
@@ -123,6 +127,7 @@ public final class DictationCoordinator {
         self.now = now
         self.maximumCaptureGapSeconds = maximumCaptureGapSeconds
         self.maximumRecordingNanoseconds = maximumRecordingNanoseconds
+        self.diagnosticSessionID = diagnosticSessionID
         self.sleep = sleep
     }
 
@@ -158,12 +163,32 @@ public final class DictationCoordinator {
                 }
                 try capture.start()
                 recordingStartedAt = now()
-                activeOperationID = UUID()
+                activeOperationStartedAt = recordingStartedAt
+                let operationID = UUID()
+                activeOperationID = operationID
                 state = .recording
+                let target = currentTarget()
+                recordDiagnostic(
+                    name: "dictation.started",
+                    dictationID: operationID,
+                    attributes: [
+                        "model_id": transcriber.modelID,
+                        "insertion_mode": insertionMode.rawValue,
+                        "streaming_enabled": String(streamingEnabled),
+                        "target_bundle_id": target.bundleIdentifier ?? "unknown",
+                        "target_app": target.applicationName ?? "unknown",
+                    ]
+                )
                 scheduleRecordingLimit()
             } catch {
                 recordingStartedAt = nil
+                activeOperationStartedAt = nil
                 await stopActiveStreaming()
+                recordDiagnostic(
+                    severity: .error,
+                    name: "capture.failed",
+                    attributes: ["reason": String(describing: error)]
+                )
                 state = .failed(.capture(String(describing: error)))
             }
 
@@ -172,6 +197,7 @@ public final class DictationCoordinator {
             guard let operationID = activeOperationID else { return }
             let recordingEndedAt = now()
             let recordingStartedAt = self.recordingStartedAt
+            let operationStartedAt = activeOperationStartedAt
             self.recordingStartedAt = nil
             cancelRecordingLimit()
             state = .transcribing
@@ -186,6 +212,27 @@ public final class DictationCoordinator {
                 return
             }
             onCapture?(samples)
+            let audioDuration = Double(samples.count) / audioSampleRate
+            let signal = AudioSignalMetrics.measure(
+                samples,
+                sampleRate: Int(audioSampleRate.rounded())
+            )
+            let wallDuration = recordingStartedAt.map {
+                max(0, recordingEndedAt - $0)
+            } ?? audioDuration
+            recordDiagnostic(
+                name: "capture.completed",
+                dictationID: operationID,
+                metrics: [
+                    "audio_seconds": audioDuration,
+                    "recording_wall_seconds": wallDuration,
+                    "sample_count": Double(samples.count),
+                    "rms": signal.rms,
+                    "peak": signal.peak,
+                    "clipped_sample_fraction": signal.clippedSampleFraction,
+                    "active_window_fraction": signal.activeWindowFraction,
+                ]
+            )
             if let recordingStartedAt,
                hasCaptureGap(
                    samples: samples,
@@ -196,6 +243,17 @@ public final class DictationCoordinator {
                 await activeStreamingTranscriber?.cancelStreaming()
                 activeStreamingTranscriber = nil
                 activeOperationID = nil
+                activeOperationStartedAt = nil
+                recordDiagnostic(
+                    severity: .error,
+                    name: "capture.failed",
+                    dictationID: operationID,
+                    metrics: [
+                        "audio_seconds": audioDuration,
+                        "recording_wall_seconds": wallDuration,
+                    ],
+                    attributes: ["reason": "captured_buffer_shorter_than_session"]
+                )
                 state = .failed(.capture(
                     "Audio input stopped before recording ended. "
                         + "Wordhand did not insert a partial transcript."
@@ -206,6 +264,12 @@ public final class DictationCoordinator {
                 await activeStreamingTranscriber?.cancelStreaming()
                 activeStreamingTranscriber = nil
                 activeOperationID = nil
+                activeOperationStartedAt = nil
+                recordDiagnostic(
+                    severity: .warning,
+                    name: "capture.empty",
+                    dictationID: operationID
+                )
                 state = .idle
                 return
             }
@@ -235,19 +299,81 @@ public final class DictationCoordinator {
                 guard activeOperationID == operationID else { return }
                 await stopActiveStreaming()
                 activeOperationID = nil
+                activeOperationStartedAt = nil
+                recordDiagnostic(
+                    severity: .error,
+                    name: "transcription.failed",
+                    dictationID: operationID,
+                    metrics: ["audio_seconds": audioDuration],
+                    attributes: [
+                        "model_id": transcriber.modelID,
+                        "reason": String(describing: error),
+                    ]
+                )
                 state = .failed(.transcription(String(describing: error)))
                 return
             }
             guard activeOperationID == operationID else { return }
+            let transcriptionDiagnostics: TranscriptionRunDiagnostics
+            if let provider = transcriber as? any TranscriptionDiagnosticsProviding {
+                transcriptionDiagnostics = await provider.lastRunDiagnostics()
+            } else {
+                transcriptionDiagnostics = .none
+            }
+            recordDiagnostic(
+                name: "transcription.completed",
+                dictationID: operationID,
+                metrics: [
+                    "audio_seconds": audioDuration,
+                    "transcription_seconds": transcriptionElapsed,
+                    "raw_character_count": Double(raw.count),
+                    "primary_word_count": Double(
+                        transcriptionDiagnostics.primaryWordCount
+                    ),
+                    "final_word_count": Double(
+                        transcriptionDiagnostics.finalWordCount
+                    ),
+                ],
+                attributes: [
+                    "model_id": transcriber.modelID,
+                    "tail_outcome":
+                        transcriptionDiagnostics.tailRecoveryOutcome.rawValue,
+                    "full_retry_performed": String(
+                        transcriptionDiagnostics.fullRetryPerformed
+                    ),
+                    "prompt_artifact_detected": String(
+                        transcriptionDiagnostics.promptArtifactDetected
+                    ),
+                ]
+            )
 
             state = .processing
             let target = currentTarget()
             let processingStarted = now()
             let text = await processor.process(raw, target: target)
-            onProcessingDuration?(now() - processingStarted)
+            let processingElapsed = now() - processingStarted
+            onProcessingDuration?(processingElapsed)
+            recordDiagnostic(
+                name: "processing.completed",
+                dictationID: operationID,
+                metrics: [
+                    "processing_seconds": processingElapsed,
+                    "processed_character_count": Double(text.count),
+                ],
+                attributes: [
+                    "target_bundle_id": target.bundleIdentifier ?? "unknown",
+                    "target_app": target.applicationName ?? "unknown",
+                ]
+            )
             guard activeOperationID == operationID else { return }
             guard !text.isEmpty else {
                 activeOperationID = nil
+                activeOperationStartedAt = nil
+                recordDiagnostic(
+                    severity: .warning,
+                    name: "processing.empty",
+                    dictationID: operationID
+                )
                 state = .idle
                 return
             }
@@ -262,14 +388,30 @@ public final class DictationCoordinator {
                 transcriptionDuration: transcriptionElapsed,
                 insertionMode: insertionMode,
                 target: target,
-                status: .pendingInsertion
+                status: .pendingInsertion,
+                tailRecoveryOutcome:
+                    transcriptionDiagnostics.tailRecoveryOutcome
             )
             if let history {
                 do {
                     try history.save(record)
                     onHistoryChange?()
+                    recordDiagnostic(
+                        name: "history.saved",
+                        dictationID: operationID,
+                        attributes: [
+                            "transcript_id": record.id.uuidString.lowercased()
+                        ]
+                    )
                 } catch {
                     activeOperationID = nil
+                    activeOperationStartedAt = nil
+                    recordDiagnostic(
+                        severity: .error,
+                        name: "history.failed",
+                        dictationID: operationID,
+                        attributes: ["reason": String(describing: error)]
+                    )
                     state = .failed(.history(String(describing: error)))
                     return
                 }
@@ -285,9 +427,12 @@ public final class DictationCoordinator {
             onTranscript?(text, transcriptionElapsed)
 
             state = .inserting
+            let insertionStarted = now()
             do {
                 try await inserter.insert(text, mode: insertionMode)
             } catch {
+                let insertionElapsed = now() - insertionStarted
+                let insertionDiagnostics = await currentInsertionDiagnostics()
                 if let history {
                     try? history.updateStatus(
                         id: record.id,
@@ -296,9 +441,45 @@ public final class DictationCoordinator {
                     onHistoryChange?()
                 }
                 activeOperationID = nil
+                activeOperationStartedAt = nil
+                recordDiagnostic(
+                    severity: .error,
+                    name: "insertion.failed",
+                    dictationID: operationID,
+                    metrics: ["insertion_seconds": insertionElapsed],
+                    attributes: [
+                        "insertion_mode": insertionMode.rawValue,
+                        "reason": String(describing: error),
+                        "verification":
+                            insertionDiagnostics.verification.rawValue,
+                        "secure_input_blocked": String(
+                            insertionDiagnostics.secureInputBlocked
+                        ),
+                    ]
+                )
                 state = .failed(.insertion(String(describing: error)))
                 return
             }
+            let insertionElapsed = now() - insertionStarted
+            let insertionDiagnostics = await currentInsertionDiagnostics()
+            recordDiagnostic(
+                name: "insertion.completed",
+                dictationID: operationID,
+                metrics: [
+                    "insertion_seconds": insertionElapsed,
+                    "retry_count": Double(insertionDiagnostics.retryCount),
+                ],
+                attributes: [
+                    "insertion_mode": insertionMode.rawValue,
+                    "verification": insertionDiagnostics.verification.rawValue,
+                    "checkpoint_available": String(
+                        insertionDiagnostics.checkpointAvailable
+                    ),
+                    "undo_available": String(
+                        insertionDiagnostics.undoAvailable
+                    ),
+                ]
+            )
 
             if let history {
                 do {
@@ -306,11 +487,28 @@ public final class DictationCoordinator {
                     onHistoryChange?()
                 } catch {
                     activeOperationID = nil
+                    activeOperationStartedAt = nil
+                    recordDiagnostic(
+                        severity: .error,
+                        name: "history_status.failed",
+                        dictationID: operationID,
+                        attributes: ["reason": String(describing: error)]
+                    )
                     state = .failed(.historyStatus(String(describing: error)))
                     return
                 }
             }
+            recordDiagnostic(
+                name: "dictation.completed",
+                dictationID: operationID,
+                metrics: [
+                    "total_seconds": operationStartedAt.map {
+                        max(0, now() - $0)
+                    } ?? 0
+                ]
+            )
             activeOperationID = nil
+            activeOperationStartedAt = nil
             state = .idle
         }
     }
@@ -318,19 +516,38 @@ public final class DictationCoordinator {
     public func cancelCurrent() async {
         switch state {
         case .recording:
+            let operationID = activeOperationID
             cancelRecordingLimit()
             recordingStartedAt = nil
             activeOperationID = nil
+            activeOperationStartedAt = nil
             await stopActiveStreaming()
             _ = await capture.stop()
+            recordDiagnostic(
+                severity: .warning,
+                name: "dictation.cancelled",
+                dictationID: operationID,
+                attributes: ["stage": "recording"]
+            )
             state = .idle
         case .transcribing, .processing:
+            let operationID = activeOperationID
+            let cancelledStage = state == .transcribing
+                ? "transcribing"
+                : "processing"
             activeOperationID = nil
+            activeOperationStartedAt = nil
             await stopActiveStreaming()
             if !isCaptureStopping {
                 if state == .transcribing {
                     await transcriber.cancel()
                 }
+                recordDiagnostic(
+                    severity: .warning,
+                    name: "dictation.cancelled",
+                    dictationID: operationID,
+                    attributes: ["stage": cancelledStage]
+                )
                 state = .idle
             }
         case .idle, .inserting, .failed:
@@ -400,5 +617,32 @@ public final class DictationCoordinator {
         let wallDuration = max(0, recordingEndedAt - recordingStartedAt)
         let audioDuration = Double(samples.count) / audioSampleRate
         return wallDuration - audioDuration > maximumCaptureGapSeconds
+    }
+
+    private func recordDiagnostic(
+        severity: DiagnosticSeverity = .info,
+        name: String,
+        dictationID: UUID? = nil,
+        metrics: [String: Double] = [:],
+        attributes: [String: String] = [:]
+    ) {
+        onDiagnosticEvent?(OperationalDiagnosticEvent(
+            occurredAt: date(),
+            severity: severity,
+            name: name,
+            sessionID: diagnosticSessionID,
+            dictationID: dictationID,
+            metrics: metrics,
+            attributes: attributes
+        ))
+    }
+
+    private func currentInsertionDiagnostics() async
+        -> InsertionRunDiagnostics
+    {
+        if let provider = inserter as? any InsertionDiagnosticsProviding {
+            return await provider.lastInsertionDiagnostics()
+        }
+        return InsertionRunDiagnostics(mode: insertionMode)
     }
 }

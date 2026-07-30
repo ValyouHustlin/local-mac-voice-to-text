@@ -29,6 +29,49 @@ struct DictationCoordinatorTests {
     }
 
     @Test
+    func emitsCorrelatedLifecycleDiagnosticsAndSavesTailOutcome() async throws {
+        let history = FakeHistory()
+        let transcriber = DiagnosticFakeTranscriber()
+        let coordinator = DictationCoordinator(
+            capture: FakeCapture(samples: Array(repeating: 0.1, count: 32_000)),
+            transcriber: transcriber,
+            processor: TranscriptProcessor(),
+            inserter: FakeInserter(),
+            history: history,
+            now: makeClock([10, 12, 13, 14, 15, 16])
+        )
+        var events: [OperationalDiagnosticEvent] = []
+        coordinator.onDiagnosticEvent = { events.append($0) }
+
+        await coordinator.handle(.pressed)
+        await coordinator.handle(.released)
+
+        let saved = try #require(history.saved.first)
+        #expect(saved.tailRecoveryOutcome == .fullRetryRecovered)
+        #expect(
+            events.map(\.name) == [
+                "dictation.started",
+                "capture.completed",
+                "transcription.completed",
+                "processing.completed",
+                "history.saved",
+                "insertion.completed",
+                "dictation.completed",
+            ]
+        )
+        let ids = Set(events.compactMap(\.dictationID))
+        #expect(ids.count == 1)
+        #expect(events.allSatisfy { !$0.attributes.keys.contains("text") })
+        let transcription = try #require(
+            events.first(where: { $0.name == "transcription.completed" })
+        )
+        #expect(
+            transcription.attributes["tail_outcome"]
+                == TailRecoveryOutcome.fullRetryRecovered.rawValue
+        )
+    }
+
+    @Test
     func insertionModeCanChangeWithoutRestarting() async {
         let inserter = FakeInserter()
         let coordinator = DictationCoordinator(
@@ -571,6 +614,29 @@ private final class FakeTranscriber: Transcribing, @unchecked Sendable {
         callCount += 1
         wasCancelledDuringTranscription = Task.isCancelled
         return result
+    }
+}
+
+private final class DiagnosticFakeTranscriber:
+    Transcribing,
+    TranscriptionDiagnosticsProviding,
+    @unchecked Sendable
+{
+    let modelID = "diagnostic-fake"
+
+    func warmUp() async throws {}
+
+    func transcribe(_ audio: [Float]) async throws -> String {
+        "The recovered final sentence."
+    }
+
+    func lastRunDiagnostics() async -> TranscriptionRunDiagnostics {
+        TranscriptionRunDiagnostics(
+            tailRecoveryOutcome: .fullRetryRecovered,
+            primaryWordCount: 2,
+            finalWordCount: 4,
+            fullRetryPerformed: true
+        )
     }
 }
 

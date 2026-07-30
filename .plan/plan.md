@@ -306,6 +306,33 @@ Receipts: `docs/verification/2026-07-29-quality-lab-insertion.md` and
 `docs/verification/2026-07-29-quality-corrections-storage.md` and
 `docs/verification/2026-07-29-quality-evaluator.md`.
 
+### Private operational diagnostics checkpoint
+
+Status: implementation, isolated verification, and installed-app startup
+receipt complete. Natural dictation-stage data will accumulate through normal
+use.
+
+- [x] Record structured app, permission, hotkey, model, capture, transcription,
+  processing, history, insertion, cancellation, and failure events.
+- [x] Correlate every dictation stage with a stable local UUID.
+- [x] Summarize audio signal health without writing samples.
+- [x] Record tail-audit and tail-recovery outcomes and surface a `Tail
+  recovered` badge in History.
+- [x] Rotate logs daily, retain 90 days, enforce a strict 250 MB aggregate
+  ceiling, and keep directory/file permissions at `0700`/`0600`.
+- [x] Reject known transcript, prompt, dictionary, and audio payload keys.
+- [x] Tolerate malformed JSONL lines without losing the healthy report.
+- [x] Add an hourly local heartbeat with uptime, readiness, power, and thermal
+  state so long unattended runs leave liveness evidence.
+- [x] Add local status, report, export, and confirmed clear CLI commands.
+- [x] Add Settings actions to reveal diagnostics and copy a report without
+  blocking the UI while a large archive is read.
+- [x] Keep the feature entirely local with no analytics or upload path.
+- [x] Observe the installed app write startup, permission, hotkey, and warmup
+  events without exercising microphone or insertion.
+
+Receipt: `docs/verification/2026-07-30-operational-diagnostics.md`.
+
 ### Flow feedback and app-aware formatting checkpoint
 
 Status: complete for the second vertical slice.

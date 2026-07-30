@@ -12,6 +12,7 @@ final class SettingsController: NSObject, ObservableObject, NSWindowDelegate {
     @Published private(set) var permissionStatus: WordhandPermissionStatus
     @Published private(set) var requiresRelaunch: Bool
     @Published private(set) var relaunchError: String?
+    @Published private(set) var diagnosticsMessage: String?
 
     var onSettingsChange: ((AppSettings) -> Void)?
     var onShortcutCaptureChange: ((Bool) -> Void)?
@@ -19,6 +20,8 @@ final class SettingsController: NSObject, ObservableObject, NSWindowDelegate {
     var onRelaunchRequested: (() throws -> Void)?
     var onRevealQualityAudio: (() -> Void)?
     var onDeleteQualityAudio: (() throws -> Void)?
+    var onRevealDiagnostics: (() -> Void)?
+    var onDiagnosticsReport: (() async throws -> String)?
 
     private let store: SettingsStore
     private let launchAtLoginManager: any LaunchAtLoginManaging
@@ -178,6 +181,30 @@ final class SettingsController: NSObject, ObservableObject, NSWindowDelegate {
         } catch {
             saveError = "Couldn’t delete recordings: \(error.localizedDescription)"
             NSSound.beep()
+        }
+    }
+
+    func revealDiagnostics() {
+        onRevealDiagnostics?()
+    }
+
+    func copyDiagnosticsReport() {
+        guard let onDiagnosticsReport else { return }
+        diagnosticsMessage = "Building health report…"
+        Task {
+            do {
+                let report = try await onDiagnosticsReport()
+                let pasteboard = NSPasteboard.general
+                pasteboard.clearContents()
+                guard pasteboard.setString(report, forType: .string) else {
+                    throw CocoaError(.fileWriteUnknown)
+                }
+                diagnosticsMessage = "Health report copied."
+            } catch {
+                diagnosticsMessage =
+                    "Couldn’t create the health report: \(error.localizedDescription)"
+                NSSound.beep()
+            }
         }
     }
 
@@ -415,6 +442,7 @@ private struct SettingsView: View {
                     shortcutsCard
                     recordingCard
                     qualityLabCard
+                    diagnosticsCard
                     privacyNote
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -459,6 +487,47 @@ private struct SettingsView: View {
                     Label(error, systemImage: "exclamationmark.triangle.fill")
                         .font(.caption)
                         .foregroundStyle(.orange)
+                }
+            }
+        }
+    }
+
+    private var diagnosticsCard: some View {
+        settingsCard {
+            VStack(alignment: .leading, spacing: 12) {
+                HStack(alignment: .firstTextBaseline) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Diagnostics")
+                            .font(.headline)
+                        Text(
+                            "Keeps 90 days of private operational metadata, "
+                                + "rotated daily and capped at 250 MB."
+                        )
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                    }
+                    Spacer(minLength: 18)
+                    Button("Open Folder") {
+                        controller.revealDiagnostics()
+                    }
+                    .buttonStyle(.bordered)
+                    Button("Copy Health Report") {
+                        controller.copyDiagnosticsReport()
+                    }
+                    .buttonStyle(.borderedProminent)
+                }
+
+                Label(
+                    "Transcript text and audio are never written to diagnostic logs.",
+                    systemImage: "lock.fill"
+                )
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+                if let message = controller.diagnosticsMessage {
+                    Text(message)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
             }
         }

@@ -110,7 +110,7 @@ time-bounded, and attended.
 
 ## Current implementation
 
-Verified by source inspection and dated receipts through 2026-07-29:
+Verified by source inspection and dated receipts through 2026-07-30:
 
 - Swift Package Manager library, executable, and test targets for macOS 14+;
 - Argmax OSS/WhisperKit 1.0 transcription with four registered local Whisper
@@ -144,7 +144,11 @@ Verified by source inspection and dated receipts through 2026-07-29:
 - persistent custom dictionary with versioned, non-destructive editable
   defaults and immediate correction flow;
 - searchable SQLite transcript history with copy, reinsert, dictionary
-  correction, corrected-reference labeling, and deletion actions;
+  correction, corrected-reference labeling, tail-recovery labeling, and
+  deletion actions;
+- private structured operational diagnostics with daily rotation, 90-day
+  retention, a strict 250 MB ceiling, hourly liveness snapshots, local
+  report/export commands, and no transcript or audio payload fields;
 - opt-in local Quality Lab audio retention with automatic expiry, a selectable
   aggregate storage ceiling, owner-only storage, corrected-reference labeling,
   and a local cached-model evaluator; public installs keep retention disabled by
@@ -629,6 +633,53 @@ The history window supports:
 
 The transcript is saved before insertion, so an Accessibility or secure-input
 failure never loses the words.
+
+## Operational diagnostics
+
+Wordhand keeps a separate local operational record so months of ordinary use
+can be evaluated from evidence instead of memory. Diagnostics live at
+`~/Library/Application Support/Wordhand/Diagnostics` as owner-only `0600`
+newline-delimited JSON files inside an owner-only `0700` directory.
+
+The operational schema records identifiers, timestamps, severity, bounded
+categorical attributes, and numeric measurements. It has no transcript or audio
+payload field, and the store rejects known transcript, prompt, dictionary, and
+audio payload keys. Transcript text remains in History; opted-in audio remains
+in Quality Lab. Neither is duplicated into diagnostics.
+
+Each dictation receives one correlation ID across:
+
+```text
+dictation started
+  -> capture duration and signal health
+  -> transcription latency and tail-audit outcome
+  -> processing latency
+  -> history persistence
+  -> insertion verification/retry outcome
+  -> completion, cancellation, or exact failed stage
+```
+
+The capture summary includes RMS, peak, clipped-sample fraction, active-window
+fraction, wall time, sample count, and buffered-audio duration without keeping
+samples. Transcription records model, latency, word/character counts, prompt
+artifact detection, full-retry use, and whether a tail audit verified or
+recovered missing text. Insertion records mode, verification strength, retry
+count, Secure Input blocking, checkpoint availability, and guarded-undo
+availability. App lifecycle records startup, permissions, hotkey readiness,
+model warmup, settings changes, normal termination, and an hourly heartbeat
+with app uptime, readiness, Low Power Mode, and thermal state.
+
+Files rotate by UTC day, retain at most 90 days, and enforce a strict aggregate
+250 MB ceiling by removing the oldest files and then the oldest complete lines
+if one day alone exceeds the limit. Malformed lines are counted and skipped so
+one interrupted write cannot hide healthy records.
+
+`wordhand diagnostics status`, `report`, `export`, and confirmed `clear`
+provide local inspection. Settings exposes Open Folder and Copy Health Report;
+report construction runs off the UI thread. The report aggregates successful
+and failed stages, latency percentiles, audio health, tail recovery, models,
+targets, and event/failure breakdowns. No network analytics, telemetry, upload,
+or automatic support submission exists.
 
 ## Private Quality Lab
 

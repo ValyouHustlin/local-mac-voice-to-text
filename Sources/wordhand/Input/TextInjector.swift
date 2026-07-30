@@ -95,13 +95,18 @@ enum TextInjector {
     }
 }
 
-final class MacTextInserter: TextInserting, @unchecked Sendable {
+final class MacTextInserter:
+    TextInserting,
+    InsertionDiagnosticsProviding,
+    @unchecked Sendable
+{
     private let eventPoster: any TextEventPosting
     private let observer: any TextInsertionObserving
     private let secureInputEnabled: @Sendable () -> Bool
     private let lock = NSLock()
     private var undoToken: TextInsertionUndoToken?
     private var hasPostedPaste = false
+    private var latestDiagnostics = InsertionRunDiagnostics(mode: .paste)
     var onUndoAvailabilityChange: (@Sendable (Bool) -> Void)?
 
     init(
@@ -119,49 +124,96 @@ final class MacTextInserter: TextInserting, @unchecked Sendable {
     func insert(_ text: String, mode: InsertionMode) async throws {
         guard !text.isEmpty else { return }
         clearUndo()
+        setDiagnostics(InsertionRunDiagnostics(mode: mode))
 
         switch mode {
         case .unicode:
             guard !secureInputEnabled() else {
+                setDiagnostics(InsertionRunDiagnostics(
+                    mode: mode,
+                    verification: .failed,
+                    secureInputBlocked: true
+                ))
                 throw TextInsertionError.secureInputEnabled
             }
             let checkpoint = observer.captureCheckpoint()
             eventPoster.postUnicode(text)
             try? await Task.sleep(nanoseconds: 200_000_000)
-            try finalizeObservation(
-                checkpoint,
-                insertedUTF16Count: text.utf16.count
-            )
+            do {
+                let verification = try finalizeObservation(
+                    checkpoint,
+                    insertedUTF16Count: text.utf16.count
+                )
+                setDiagnostics(InsertionRunDiagnostics(
+                    mode: mode,
+                    verification: verification,
+                    checkpointAvailable: checkpoint != nil,
+                    undoAvailable: canUndoLastInsertion
+                ))
+            } catch {
+                setDiagnostics(InsertionRunDiagnostics(
+                    mode: mode,
+                    verification: .failed,
+                    checkpointAvailable: checkpoint != nil
+                ))
+                throw error
+            }
 
         case .copyOnly:
-            try await MainActor.run {
-                let pasteboard = NSPasteboard.general
-                let snapshot = PasteboardSnapshot(pasteboard: pasteboard)
-                pasteboard.clearContents()
-                guard pasteboard.setString(text, forType: .string) else {
-                    snapshot.restore(to: pasteboard)
-                    throw TextInsertionError.clipboardWriteFailed
+            do {
+                try await MainActor.run {
+                    let pasteboard = NSPasteboard.general
+                    let snapshot = PasteboardSnapshot(pasteboard: pasteboard)
+                    pasteboard.clearContents()
+                    guard pasteboard.setString(text, forType: .string) else {
+                        snapshot.restore(to: pasteboard)
+                        throw TextInsertionError.clipboardWriteFailed
+                    }
                 }
+            } catch {
+                setDiagnostics(InsertionRunDiagnostics(
+                    mode: mode,
+                    verification: .failed
+                ))
+                throw error
             }
+            setDiagnostics(InsertionRunDiagnostics(
+                mode: mode,
+                verification: .copyOnly
+            ))
 
         case .paste:
             guard !secureInputEnabled() else {
+                setDiagnostics(InsertionRunDiagnostics(
+                    mode: mode,
+                    verification: .failed,
+                    secureInputBlocked: true
+                ))
                 throw TextInsertionError.secureInputEnabled
             }
 
-            let transaction = try await MainActor.run {
-                let pasteboard = NSPasteboard.general
-                let snapshot = PasteboardSnapshot(pasteboard: pasteboard)
-                pasteboard.clearContents()
-                guard pasteboard.setString(text, forType: .string) else {
-                    snapshot.restore(to: pasteboard)
-                    throw TextInsertionError.clipboardWriteFailed
+            let transaction: PasteboardTransaction
+            do {
+                transaction = try await MainActor.run {
+                    let pasteboard = NSPasteboard.general
+                    let snapshot = PasteboardSnapshot(pasteboard: pasteboard)
+                    pasteboard.clearContents()
+                    guard pasteboard.setString(text, forType: .string) else {
+                        snapshot.restore(to: pasteboard)
+                        throw TextInsertionError.clipboardWriteFailed
+                    }
+                    let ownedChangeCount = pasteboard.changeCount
+                    return PasteboardTransaction(
+                        snapshot: snapshot,
+                        ownedChangeCount: ownedChangeCount
+                    )
                 }
-                let ownedChangeCount = pasteboard.changeCount
-                return PasteboardTransaction(
-                    snapshot: snapshot,
-                    ownedChangeCount: ownedChangeCount
-                )
+            } catch {
+                setDiagnostics(InsertionRunDiagnostics(
+                    mode: mode,
+                    verification: .failed
+                ))
+                throw error
             }
             let checkpoint = observer.captureCheckpoint()
 
@@ -186,6 +238,11 @@ final class MacTextInserter: TextInserting, @unchecked Sendable {
                     }
                     transaction.snapshot.restore(to: pasteboard)
                 }
+                setDiagnostics(InsertionRunDiagnostics(
+                    mode: mode,
+                    verification: .failed,
+                    checkpointAvailable: checkpoint != nil
+                ))
                 throw error
             }
             do {
@@ -196,6 +253,11 @@ final class MacTextInserter: TextInserting, @unchecked Sendable {
                 await MainActor.run {
                     transaction.snapshot.restore(to: NSPasteboard.general)
                 }
+                setDiagnostics(InsertionRunDiagnostics(
+                    mode: mode,
+                    verification: .failed,
+                    checkpointAvailable: checkpoint != nil
+                ))
                 throw error
             }
 
@@ -207,6 +269,9 @@ final class MacTextInserter: TextInserting, @unchecked Sendable {
             // the transcript.
             try? await Task.sleep(nanoseconds: 360_000_000)
             var observationError: Error?
+            var verification: InsertionVerificationOutcome =
+                checkpoint == nil ? .unavailable : .notAttempted
+            var retryCount = 0
             if let checkpoint {
                 do {
                     switch observer.verify(
@@ -215,21 +280,28 @@ final class MacTextInserter: TextInserting, @unchecked Sendable {
                     ) {
                     case .unchanged:
                         if checkpoint.allowsAutomaticPasteRetry {
+                            retryCount = 1
                             try await MainActor.run {
                                 try eventPoster.postPasteShortcut()
                             }
                             try? await Task.sleep(nanoseconds: 360_000_000)
-                            try finalizeObservation(
+                            let retryVerification = try finalizeObservation(
                                 checkpoint,
                                 insertedUTF16Count: text.utf16.count
                             )
+                            verification = retryVerification == .verified
+                                ? .verifiedAfterRetry
+                                : retryVerification
+                        } else {
+                            verification = .unchangedWithoutRetry
                         }
                     case .verified(let token):
                         setUndo(token)
+                        verification = .verified
                     case .verifiedWithoutUndo:
-                        break
+                        verification = .verifiedWithoutUndo
                     case .unavailable:
-                        break
+                        verification = .unavailable
                     case .targetChanged:
                         throw TextInsertionError.insertionTargetChanged
                     }
@@ -248,9 +320,26 @@ final class MacTextInserter: TextInserting, @unchecked Sendable {
                 transaction.snapshot.restore(to: pasteboard)
             }
             if let observationError {
+                setDiagnostics(InsertionRunDiagnostics(
+                    mode: mode,
+                    verification: .failed,
+                    retryCount: retryCount,
+                    checkpointAvailable: checkpoint != nil
+                ))
                 throw observationError
             }
+            setDiagnostics(InsertionRunDiagnostics(
+                mode: mode,
+                verification: verification,
+                retryCount: retryCount,
+                checkpointAvailable: checkpoint != nil,
+                undoAvailable: canUndoLastInsertion
+            ))
         }
+    }
+
+    func lastInsertionDiagnostics() async -> InsertionRunDiagnostics {
+        lock.withLock { latestDiagnostics }
     }
 
     var canUndoLastInsertion: Bool {
@@ -268,22 +357,29 @@ final class MacTextInserter: TextInserting, @unchecked Sendable {
     private func finalizeObservation(
         _ checkpoint: TextInsertionCheckpoint?,
         insertedUTF16Count: Int
-    ) throws {
-        guard let checkpoint else { return }
+    ) throws -> InsertionVerificationOutcome {
+        guard let checkpoint else { return .unavailable }
         switch observer.verify(
             checkpoint,
             insertedUTF16Count: insertedUTF16Count
         ) {
         case .verified(let token):
             setUndo(token)
+            return .verified
         case .verifiedWithoutUndo:
-            break
+            return .verifiedWithoutUndo
         case .unavailable:
-            break
+            return .unavailable
         case .unchanged:
             throw TextInsertionError.deliveryNotConfirmed
         case .targetChanged:
             throw TextInsertionError.insertionTargetChanged
+        }
+    }
+
+    private func setDiagnostics(_ diagnostics: InsertionRunDiagnostics) {
+        lock.withLock {
+            latestDiagnostics = diagnostics
         }
     }
 

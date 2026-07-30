@@ -86,6 +86,35 @@ struct TranscriptHistoryStoreTests {
     }
 
     @Test
+    func storesTailRecoveryOutcomeForHistoryReview() throws {
+        let fixture = try HistoryFixture()
+        let record = fixture.record(
+            text: "The independently audited ending was recovered.",
+            tailRecoveryOutcome: .fullRetryRecovered
+        )
+
+        try fixture.store.save(record)
+
+        let loaded = try #require(try fixture.store.records().first)
+        #expect(loaded.tailRecoveryOutcome == .fullRetryRecovered)
+        #expect(loaded.tailRecoveryOutcome.historyBadgeTitle == "Tail recovered")
+        #expect(TailRecoveryOutcome.verifiedCovered.historyBadgeTitle == nil)
+    }
+
+    @Test
+    func coveredTailDoesNotBecomeAFalseRecoveryBadgeAfterAnotherRetry() {
+        let outcome = TailRecoveryOutcome.resolvingFullRetry(
+            tailIssueDetected: true,
+            auditVerifiedCovered: true,
+            auditFailed: false,
+            selectedDifferentTranscript: true
+        )
+
+        #expect(outcome == .verifiedCovered)
+        #expect(outcome.historyBadgeTitle == nil)
+    }
+
+    @Test
     func migratesVersionOneHistoryWithoutLosingRecords() throws {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent(
@@ -135,6 +164,7 @@ struct TranscriptHistoryStoreTests {
         #expect(record.id == recordID)
         #expect(record.text == "Existing transcript")
         #expect(record.referenceText == nil)
+        #expect(record.tailRecoveryOutcome == .notAudited)
         try migrated.updateReferenceText(
             id: recordID,
             referenceText: "Corrected transcript"
@@ -142,6 +172,59 @@ struct TranscriptHistoryStoreTests {
         #expect(
             try migrated.records().first?.referenceText == "Corrected transcript"
         )
+    }
+
+    @Test
+    func migratesLiveVersionTwoHistoryWithANeutralTailOutcome() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(
+                "wordhand-history-v2-\(UUID().uuidString)",
+                isDirectory: true
+            )
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try FileManager.default.createDirectory(
+            at: directory,
+            withIntermediateDirectories: true
+        )
+        let databaseURL = directory.appendingPathComponent("history.sqlite")
+        var database: OpaquePointer?
+        #expect(sqlite3_open(databaseURL.path, &database) == SQLITE_OK)
+        let recordID = UUID()
+        let createVersionTwo = """
+        CREATE TABLE transcripts (
+            id TEXT PRIMARY KEY NOT NULL,
+            created_at REAL NOT NULL,
+            raw_text TEXT NOT NULL,
+            processed_text TEXT NOT NULL,
+            model_id TEXT NOT NULL,
+            language TEXT,
+            audio_duration REAL NOT NULL,
+            transcription_duration REAL NOT NULL,
+            insertion_mode TEXT NOT NULL,
+            target_bundle_id TEXT,
+            target_app_name TEXT,
+            insertion_status TEXT NOT NULL,
+            failure_reason TEXT,
+            reference_text TEXT
+        );
+        INSERT INTO transcripts VALUES (
+            '\(recordID.uuidString)', 100, 'raw', 'Existing transcript',
+            'whisper-large-v3-turbo', 'en', 65, 4, 'paste',
+            'com.apple.TextEdit', 'TextEdit', 'inserted', NULL, 'Corrected'
+        );
+        PRAGMA user_version = 2;
+        """
+        #expect(
+            sqlite3_exec(database, createVersionTwo, nil, nil, nil) == SQLITE_OK
+        )
+        sqlite3_close(database)
+
+        let migrated = try TranscriptHistoryStore(fileURL: databaseURL)
+        let record = try #require(try migrated.records().first)
+
+        #expect(record.id == recordID)
+        #expect(record.referenceText == "Corrected")
+        #expect(record.tailRecoveryOutcome == .notAudited)
     }
 
     @Test
@@ -241,7 +324,8 @@ private final class HistoryFixture {
         id: UUID = UUID(),
         createdAt: Date = Date(timeIntervalSince1970: 1_000),
         rawText: String = "raw transcript",
-        text: String
+        text: String,
+        tailRecoveryOutcome: TailRecoveryOutcome = .notAudited
     ) -> TranscriptRecord {
         TranscriptRecord(
             id: id,
@@ -257,7 +341,8 @@ private final class HistoryFixture {
                 bundleIdentifier: "com.apple.TextEdit",
                 applicationName: "TextEdit"
             ),
-            status: .pendingInsertion
+            status: .pendingInsertion,
+            tailRecoveryOutcome: tailRecoveryOutcome
         )
     }
 }

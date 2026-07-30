@@ -246,6 +246,7 @@ private final class HistoryWindowController: NSWindowController, NSTableViewData
     private let metadataLabel = NSTextField(wrappingLabelWithString: "")
     private let failureLabel = NSTextField(wrappingLabelWithString: "")
     private let qualityLabel = NSTextField(wrappingLabelWithString: "")
+    private let recoveryLabel = NSTextField(wrappingLabelWithString: "")
     private let copyButton = NSButton()
     private let reinsertButton = NSButton()
     private let correctionButton = NSButton()
@@ -510,6 +511,9 @@ private final class HistoryWindowController: NSWindowController, NSTableViewData
         qualityLabel.font = .systemFont(ofSize: 12, weight: .medium)
         qualityLabel.textColor = .systemGreen
         qualityLabel.maximumNumberOfLines = 2
+        recoveryLabel.font = .systemFont(ofSize: 12, weight: .semibold)
+        recoveryLabel.textColor = .systemBlue
+        recoveryLabel.maximumNumberOfLines = 2
 
         configureActionButton(
             reinsertButton,
@@ -548,7 +552,15 @@ private final class HistoryWindowController: NSWindowController, NSTableViewData
         actions.spacing = 8
 
         let stack = NSStackView(
-            views: [header, textScroll, metadataLabel, failureLabel, qualityLabel, actions]
+            views: [
+                header,
+                textScroll,
+                metadataLabel,
+                failureLabel,
+                recoveryLabel,
+                qualityLabel,
+                actions,
+            ]
         )
         stack.orientation = .vertical
         stack.alignment = .leading
@@ -570,6 +582,7 @@ private final class HistoryWindowController: NSWindowController, NSTableViewData
             textScroll.heightAnchor.constraint(greaterThanOrEqualToConstant: 250),
             metadataLabel.widthAnchor.constraint(equalTo: stack.widthAnchor),
             failureLabel.widthAnchor.constraint(equalTo: stack.widthAnchor),
+            recoveryLabel.widthAnchor.constraint(equalTo: stack.widthAnchor),
             qualityLabel.widthAnchor.constraint(equalTo: stack.widthAnchor),
             actions.widthAnchor.constraint(equalTo: stack.widthAnchor),
         ])
@@ -651,6 +664,15 @@ private final class HistoryWindowController: NSWindowController, NSTableViewData
         } else {
             failureLabel.stringValue = ""
             failureLabel.isHidden = true
+        }
+
+        if let badgeTitle = record.tailRecoveryOutcome.historyBadgeTitle {
+            recoveryLabel.stringValue =
+                "\(badgeTitle) · Wordhand restored text missed by the primary decode."
+            recoveryLabel.isHidden = false
+        } else {
+            recoveryLabel.stringValue = ""
+            recoveryLabel.isHidden = true
         }
 
         if record.referenceText != nil {
@@ -749,6 +771,8 @@ private final class HistoryRowView: NSTableCellView {
     private let transcriptLabel = NSTextField(wrappingLabelWithString: "")
     private let metadataLabel = NSTextField(labelWithString: "")
     private let statusImage = NSImageView()
+    private let recoveryBadge = NSTextField(labelWithString: " Tail recovered ")
+    private var recoveryBadgeWidth: NSLayoutConstraint!
 
     init(identifier: NSUserInterfaceItemIdentifier) {
         super.init(frame: .zero)
@@ -761,6 +785,15 @@ private final class HistoryRowView: NSTableCellView {
         metadataLabel.textColor = .secondaryLabelColor
         metadataLabel.lineBreakMode = .byTruncatingTail
         statusImage.imageScaling = .scaleProportionallyDown
+        recoveryBadge.font = .systemFont(ofSize: 10, weight: .semibold)
+        recoveryBadge.textColor = .systemBlue
+        recoveryBadge.alignment = .center
+        recoveryBadge.wantsLayer = true
+        recoveryBadge.layer?.backgroundColor = NSColor.systemBlue
+            .withAlphaComponent(0.11).cgColor
+        recoveryBadge.layer?.cornerRadius = 8
+        recoveryBadge.layer?.cornerCurve = .continuous
+        recoveryBadge.isHidden = true
 
         let textStack = NSStackView(views: [transcriptLabel, metadataLabel])
         textStack.orientation = .vertical
@@ -768,8 +801,13 @@ private final class HistoryRowView: NSTableCellView {
         textStack.spacing = 5
         textStack.translatesAutoresizingMaskIntoConstraints = false
         statusImage.translatesAutoresizingMaskIntoConstraints = false
+        recoveryBadge.translatesAutoresizingMaskIntoConstraints = false
         addSubview(textStack)
         addSubview(statusImage)
+        addSubview(recoveryBadge)
+        recoveryBadgeWidth = recoveryBadge.widthAnchor.constraint(
+            equalToConstant: 0
+        )
 
         NSLayoutConstraint.activate([
             statusImage.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 10),
@@ -777,7 +815,17 @@ private final class HistoryRowView: NSTableCellView {
             statusImage.widthAnchor.constraint(equalToConstant: 12),
             statusImage.heightAnchor.constraint(equalToConstant: 12),
             textStack.leadingAnchor.constraint(equalTo: statusImage.trailingAnchor, constant: 9),
-            textStack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -10),
+            textStack.trailingAnchor.constraint(
+                lessThanOrEqualTo: recoveryBadge.leadingAnchor,
+                constant: -8
+            ),
+            recoveryBadge.trailingAnchor.constraint(
+                equalTo: trailingAnchor,
+                constant: -10
+            ),
+            recoveryBadge.centerYAnchor.constraint(equalTo: centerYAnchor),
+            recoveryBadge.heightAnchor.constraint(equalToConstant: 18),
+            recoveryBadgeWidth,
             textStack.centerYAnchor.constraint(equalTo: centerYAnchor),
         ])
     }
@@ -805,7 +853,14 @@ private final class HistoryRowView: NSTableCellView {
             accessibilityDescription: status.description
         )
         statusImage.contentTintColor = status.color
-        setAccessibilityLabel("\(record.text), \(status.description), \(app)")
+        let recoveryBadgeTitle = record.tailRecoveryOutcome.historyBadgeTitle
+        recoveryBadge.stringValue = " \(recoveryBadgeTitle ?? "") "
+        recoveryBadge.isHidden = recoveryBadgeTitle == nil
+        recoveryBadgeWidth.constant = recoveryBadgeTitle == nil ? 0 : 84
+        setAccessibilityLabel(
+            "\(record.text), \(status.description), \(app)"
+                + (recoveryBadgeTitle.map { ", \($0.lowercased())" } ?? "")
+        )
     }
 }
 

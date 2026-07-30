@@ -9,7 +9,7 @@ public enum TranscriptHistoryError: Error, Equatable {
 }
 
 public final class TranscriptHistoryStore: TranscriptRecording, @unchecked Sendable {
-    public static let currentSchemaVersion = 2
+    public static let currentSchemaVersion = 3
 
     public let fileURL: URL
 
@@ -72,8 +72,8 @@ public final class TranscriptHistoryStore: TranscriptRecording, @unchecked Senda
                     id, created_at, raw_text, processed_text, model_id, language,
                     audio_duration, transcription_duration, insertion_mode,
                     target_bundle_id, target_app_name, insertion_status,
-                    failure_reason, reference_text
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    failure_reason, reference_text, tail_recovery_outcome
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """
             )
             defer { sqlite3_finalize(statement) }
@@ -93,6 +93,7 @@ public final class TranscriptHistoryStore: TranscriptRecording, @unchecked Senda
             bind(encodedStatus.value, to: 12, in: statement)
             bind(encodedStatus.reason, to: 13, in: statement)
             bind(record.referenceText, to: 14, in: statement)
+            bind(record.tailRecoveryOutcome.rawValue, to: 15, in: statement)
 
             let result = sqlite3_step(statement)
             if result == SQLITE_CONSTRAINT {
@@ -168,7 +169,7 @@ public final class TranscriptHistoryStore: TranscriptRecording, @unchecked Senda
                     id, created_at, raw_text, processed_text, model_id, language,
                     audio_duration, transcription_duration, insertion_mode,
                     target_bundle_id, target_app_name, insertion_status,
-                    failure_reason, reference_text
+                    failure_reason, reference_text, tail_recovery_outcome
                 FROM transcripts
                 ORDER BY created_at DESC, rowid DESC
                 LIMIT ?
@@ -243,7 +244,7 @@ public final class TranscriptHistoryStore: TranscriptRecording, @unchecked Senda
             guard sqlite3_step(versionStatement) == SQLITE_ROW else {
                 throw databaseError(sqlite3_errcode(database))
             }
-            let version = Int(sqlite3_column_int(versionStatement, 0))
+            var version = Int(sqlite3_column_int(versionStatement, 0))
             guard version <= Self.currentSchemaVersion else {
                 throw TranscriptHistoryError.unsupportedSchema(version)
             }
@@ -266,7 +267,9 @@ public final class TranscriptHistoryStore: TranscriptRecording, @unchecked Senda
                             target_app_name TEXT,
                             insertion_status TEXT NOT NULL,
                             failure_reason TEXT,
-                            reference_text TEXT
+                            reference_text TEXT,
+                            tail_recovery_outcome TEXT NOT NULL
+                                DEFAULT 'not_audited'
                         )
                         """
                     )
@@ -290,6 +293,25 @@ public final class TranscriptHistoryStore: TranscriptRecording, @unchecked Senda
                         "ALTER TABLE transcripts ADD COLUMN reference_text TEXT"
                     )
                     try execute("PRAGMA user_version = 2")
+                    try execute("COMMIT")
+                    version = 2
+                } catch {
+                    try? execute("ROLLBACK")
+                    throw error
+                }
+            }
+
+            if version == 2 {
+                try execute("BEGIN IMMEDIATE")
+                do {
+                    try execute(
+                        """
+                        ALTER TABLE transcripts
+                        ADD COLUMN tail_recovery_outcome TEXT NOT NULL
+                        DEFAULT 'not_audited'
+                        """
+                    )
+                    try execute("PRAGMA user_version = 3")
                     try execute("COMMIT")
                 } catch {
                     try? execute("ROLLBACK")
@@ -319,7 +341,11 @@ public final class TranscriptHistoryStore: TranscriptRecording, @unchecked Senda
             let modelID = string(at: 4, in: statement),
             let insertionModeValue = string(at: 8, in: statement),
             let insertionMode = InsertionMode(rawValue: insertionModeValue),
-            let statusValue = string(at: 11, in: statement)
+            let statusValue = string(at: 11, in: statement),
+            let tailRecoveryValue = string(at: 14, in: statement),
+            let tailRecoveryOutcome = TailRecoveryOutcome(
+                rawValue: tailRecoveryValue
+            )
         else {
             throw TranscriptHistoryError.database("History contains an invalid record.")
         }
@@ -343,7 +369,8 @@ public final class TranscriptHistoryStore: TranscriptRecording, @unchecked Senda
                 applicationName: string(at: 10, in: statement)
             ),
             status: status,
-            referenceText: string(at: 13, in: statement)
+            referenceText: string(at: 13, in: statement),
+            tailRecoveryOutcome: tailRecoveryOutcome
         )
     }
 

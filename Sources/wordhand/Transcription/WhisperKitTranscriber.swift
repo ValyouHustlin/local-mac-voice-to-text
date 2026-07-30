@@ -2,7 +2,11 @@ import Foundation
 import WordhandCore
 import WhisperKit
 
-actor WhisperKitTranscriber: Transcribing, StreamingTranscribing {
+actor WhisperKitTranscriber:
+    Transcribing,
+    StreamingTranscribing,
+    TranscriptionDiagnosticsProviding
+{
     let modelID: String
     private let model: TranscriptionModel
     private let vocabulary: DictionaryVocabularySource
@@ -21,6 +25,7 @@ actor WhisperKitTranscriber: Transcribing, StreamingTranscribing {
     private var streamingDecodeTask: Task<Void, Never>?
     private var streamingFailure: Error?
     private var streamingIsFinishing = false
+    private var latestRunDiagnostics = TranscriptionRunDiagnostics.none
 
     init(
         model: TranscriptionModel,
@@ -94,6 +99,7 @@ actor WhisperKitTranscriber: Transcribing, StreamingTranscribing {
     }
 
     func transcribe(_ audio: [Float]) async throws -> String {
+        latestRunDiagnostics = .none
         if pipeline == nil { try await warmUp() }
         guard let pipeline else { throw TranscriberError.notLoaded }
 
@@ -131,11 +137,21 @@ actor WhisperKitTranscriber: Transcribing, StreamingTranscribing {
         if requiresIndependentTailAudit {
             integrityIssues.insert(.activeAudioAfterDecodedEnding)
         }
+        let primaryWordCount = Self.wordCount(primary.text)
+        let promptArtifactDetected = integrityIssues.contains(
+            .leadingConditioningArtifact
+        )
         guard !integrityIssues.isEmpty else {
+            latestRunDiagnostics = TranscriptionRunDiagnostics(
+                primaryWordCount: primaryWordCount,
+                finalWordCount: primaryWordCount
+            )
             return primary.text
         }
 
         var tailRequiresFullRetry = false
+        var tailAuditFailed = false
+        var tailAuditVerifiedCovered = false
         if integrityIssues.contains(.activeAudioAfterDecodedEnding),
            audio.count > Self.tailRecoverySampleCount
         {
@@ -162,11 +178,23 @@ actor WhisperKitTranscriber: Transcribing, StreamingTranscribing {
                         conditionedTerms: conditionedTerms
                     )
                     if selected != primary.text {
+                        latestRunDiagnostics = TranscriptionRunDiagnostics(
+                            tailRecoveryOutcome: .merged,
+                            primaryWordCount: primaryWordCount,
+                            finalWordCount: Self.wordCount(selected),
+                            promptArtifactDetected: promptArtifactDetected
+                        )
                         return selected
                     }
                     tailRequiresFullRetry = true
                 case .covered:
+                    tailAuditVerifiedCovered = true
                     if integrityIssues == [.activeAudioAfterDecodedEnding] {
+                        latestRunDiagnostics = TranscriptionRunDiagnostics(
+                            tailRecoveryOutcome: .verifiedCovered,
+                            primaryWordCount: primaryWordCount,
+                            finalWordCount: primaryWordCount
+                        )
                         return primary.text
                     }
                 case .requiresFullRetry:
@@ -180,6 +208,7 @@ actor WhisperKitTranscriber: Transcribing, StreamingTranscribing {
                     "tail audit failed; falling back to full recovery\n".utf8
                 ))
                 tailRequiresFullRetry = true
+                tailAuditFailed = true
             }
             if tailRequiresFullRetry {
                 FileHandle.standardError.write(Data(
@@ -190,6 +219,14 @@ actor WhisperKitTranscriber: Transcribing, StreamingTranscribing {
         }
 
         guard isVocabularyConditioned || tailRequiresFullRetry else {
+            latestRunDiagnostics = TranscriptionRunDiagnostics(
+                tailRecoveryOutcome: integrityIssues.contains(
+                    .activeAudioAfterDecodedEnding
+                ) ? .noImprovement : .notAudited,
+                primaryWordCount: primaryWordCount,
+                finalWordCount: primaryWordCount,
+                promptArtifactDetected: promptArtifactDetected
+            )
             return primary.text
         }
 
@@ -211,9 +248,23 @@ actor WhisperKitTranscriber: Transcribing, StreamingTranscribing {
             FileHandle.standardError.write(Data(
                 "transcript integrity retry failed; preserving primary decode\n".utf8
             ))
+            latestRunDiagnostics = TranscriptionRunDiagnostics(
+                tailRecoveryOutcome: TailRecoveryOutcome.resolvingFullRetry(
+                    tailIssueDetected: integrityIssues.contains(
+                        .activeAudioAfterDecodedEnding
+                    ),
+                    auditVerifiedCovered: tailAuditVerifiedCovered,
+                    auditFailed: tailAuditFailed,
+                    selectedDifferentTranscript: false
+                ),
+                primaryWordCount: primaryWordCount,
+                finalWordCount: primaryWordCount,
+                fullRetryPerformed: true,
+                promptArtifactDetected: promptArtifactDetected
+            )
             return primary.text
         }
-        return TranscriptionIntegrityGuard.select(
+        let selected = TranscriptionIntegrityGuard.select(
             primary: primary.text,
             retry: retry.text,
             issues: integrityIssues,
@@ -221,6 +272,25 @@ actor WhisperKitTranscriber: Transcribing, StreamingTranscribing {
             requireMateriallyLongerTail:
                 requiresIndependentTailAudit && tailRequiresFullRetry
         )
+        latestRunDiagnostics = TranscriptionRunDiagnostics(
+            tailRecoveryOutcome: TailRecoveryOutcome.resolvingFullRetry(
+                tailIssueDetected: integrityIssues.contains(
+                    .activeAudioAfterDecodedEnding
+                ),
+                auditVerifiedCovered: tailAuditVerifiedCovered,
+                auditFailed: tailAuditFailed,
+                selectedDifferentTranscript: selected != primary.text
+            ),
+            primaryWordCount: primaryWordCount,
+            finalWordCount: Self.wordCount(selected),
+            fullRetryPerformed: true,
+            promptArtifactDetected: promptArtifactDetected
+        )
+        return selected
+    }
+
+    func lastRunDiagnostics() -> TranscriptionRunDiagnostics {
+        latestRunDiagnostics
     }
 
     func beginStreaming(
@@ -436,6 +506,10 @@ actor WhisperKitTranscriber: Transcribing, StreamingTranscribing {
             promptTokens: promptTokens,
             chunkingStrategy: .vad
         )
+    }
+
+    private static func wordCount(_ text: String) -> Int {
+        text.split(whereSeparator: \.isWhitespace).count
     }
 
     private static let tailRecoverySampleCount = Int(
