@@ -117,6 +117,28 @@ The release executable also compiled with:
 # Build complete! (8.16s)
 ```
 
+## Installed build
+
+Build 7 was installed with the stable local signing identity and launch at
+login enabled. The installed process was PID 4363. The observed checks were:
+
+```text
+Identifier=com.valyou.wordhand
+Authority=Wordhand Local Signing
+CFBundleVersion=7
+microphone: ok
+accessibility: ok
+input monitoring: ok
+Control-Space: ok
+```
+
+The installed executable decoded the identical fixture through
+`--user-dictionary` in 2.100 seconds and returned:
+
+```text
+Aaron Browne-Moore uses tmux. Aaron Browne-Moore reviews tmux sessions.
+```
+
 ## Residual live gate
 
 The management UI copy is compiled but was not opened over Aaron's active work.
