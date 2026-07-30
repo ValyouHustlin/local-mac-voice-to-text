@@ -105,21 +105,44 @@ struct MacTextInserter: TextInserting, @unchecked Sendable {
                     throw TextInsertionError.clipboardWriteFailed
                 }
                 let ownedChangeCount = pasteboard.changeCount
-                do {
-                    try eventPoster.postPasteShortcut()
-                } catch {
-                    snapshot.restore(to: pasteboard)
-                    throw error
-                }
                 return PasteboardTransaction(
                     snapshot: snapshot,
                     ownedChangeCount: ownedChangeCount
                 )
             }
 
+            // A newly launched app can reach the pasteboard before macOS has
+            // made the first write visible to the target process. Let that
+            // transaction settle before posting a complete Command-V chord.
+            do {
+                try await Task.sleep(nanoseconds: 40_000_000)
+            } catch {
+                await MainActor.run {
+                    let pasteboard = NSPasteboard.general
+                    guard PasteboardRestorationPolicy.shouldRestore(
+                        ownedChangeCount: transaction.ownedChangeCount,
+                        currentChangeCount: pasteboard.changeCount
+                    ) else {
+                        return
+                    }
+                    transaction.snapshot.restore(to: pasteboard)
+                }
+                throw error
+            }
+            do {
+                try await MainActor.run {
+                    try eventPoster.postPasteShortcut()
+                }
+            } catch {
+                await MainActor.run {
+                    transaction.snapshot.restore(to: NSPasteboard.general)
+                }
+                throw error
+            }
+
             // Give browser/Electron targets time to consume the paste before
             // returning the user's rich clipboard contents.
-            try? await Task.sleep(nanoseconds: 180_000_000)
+            try? await Task.sleep(nanoseconds: 320_000_000)
             await MainActor.run {
                 let pasteboard = NSPasteboard.general
                 guard PasteboardRestorationPolicy.shouldRestore(
@@ -184,15 +207,37 @@ private struct PasteboardSnapshot: @unchecked Sendable {
 
 private extension TextInjector {
     static func postPasteShortcut() throws {
+        let source = CGEventSource(stateID: .combinedSessionState)
         guard
-            let down = CGEvent(keyboardEventSource: nil, virtualKey: 9, keyDown: true),
-            let up = CGEvent(keyboardEventSource: nil, virtualKey: 9, keyDown: false)
+            let commandDown = CGEvent(
+                keyboardEventSource: source,
+                virtualKey: 55,
+                keyDown: true
+            ),
+            let pasteDown = CGEvent(
+                keyboardEventSource: source,
+                virtualKey: 9,
+                keyDown: true
+            ),
+            let pasteUp = CGEvent(
+                keyboardEventSource: source,
+                virtualKey: 9,
+                keyDown: false
+            ),
+            let commandUp = CGEvent(
+                keyboardEventSource: source,
+                virtualKey: 55,
+                keyDown: false
+            )
         else {
             throw TextInsertionError.pasteEventCreationFailed
         }
-        down.flags = .maskCommand
-        up.flags = .maskCommand
-        down.post(tap: .cgSessionEventTap)
-        up.post(tap: .cgSessionEventTap)
+        commandDown.flags = .maskCommand
+        pasteDown.flags = .maskCommand
+        pasteUp.flags = .maskCommand
+        commandDown.post(tap: .cgSessionEventTap)
+        pasteDown.post(tap: .cgSessionEventTap)
+        pasteUp.post(tap: .cgSessionEventTap)
+        commandUp.post(tap: .cgSessionEventTap)
     }
 }

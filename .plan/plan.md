@@ -161,6 +161,8 @@ destroying the user's clipboard.
 - [x] Do not overwrite clipboard changes made by another app during insertion.
 - [x] Keep direct Unicode as a fallback and add copy-only mode.
 - [x] Detect Secure Input before clipboard mutation and surface the failure.
+- [x] Harden the first post-launch paste with a 40 ms pasteboard settle,
+  explicit four-event Command-V chord, and 320 ms consumption window.
 - Add an immediate undo/revert action for the last insertion.
 - [x] Test the clipboard ownership/race policy and live rich-content
   restoration.
@@ -183,6 +185,11 @@ focus-race defect: an advertising iframe can take focus during recording,
 causing the intended textarea to remain empty while the paste event is still
 recorded as successful. Receipt:
 `docs/verification/2026-07-29-three-target-checkpoint.md`.
+
+The cold-start hardening is implemented and fake-backed paths remain green, but
+the exact first transcription after a new installed-app launch still needs an
+attended cursor-target receipt. Do not claim that symptom closed from event
+posting alone.
 
 ## P5: configurable hotkeys
 
@@ -248,6 +255,10 @@ Status: complete for the second vertical slice.
 - [x] Add restrained local start, stop, and cancel tones with a Settings toggle.
 - [x] Replace the passive six-bar indicator with an expressive eleven-bar
   waveform and a modern matte treatment.
+- [x] Remove stage text and the double-shadow/tech-border treatment; use a
+  single minimal capsule and clockwise 3×3 rounded-square processing loader.
+- [x] Add a visual-only overlay preview command that uses no microphone,
+  playback, global event tap, or synthetic insertion.
 - [x] Keep the overlay on the display containing the pointer.
 - [x] Add an accessible X that discards capture/transcription before insertion.
 - [x] Reset tap-toggle routing on cancellation so the next tap starts normally.
@@ -369,6 +380,10 @@ microphone latency receipt remains open.
   revisable for corrections.
 - [x] Bound the working decode window at 20 seconds and retain the complete
   capture as a no-data-loss fallback.
+- [x] Make a silence-aware full-buffer decode authoritative on every Maximum
+  mode release; never insert the rolling window composite.
+- [x] Add a no-microphone `models benchmark --streaming` replay path that
+  exercises rolling decode plus release finalization against a local file.
 - [x] Enable WhisperKit silence-aware chunking for recordings longer than one
   model window so long batch and streaming-fallback decodes split at pauses and
   use the Mac's concurrent decode workers.
@@ -377,9 +392,10 @@ microphone latency receipt remains open.
 - [ ] Measure stop-to-insertion latency for short and four-minute natural
   dictation after Aaron is available for attended microphone verification.
 
-Receipts: `docs/verification/2026-07-28-accuracy-paste.md` and
-`docs/verification/2026-07-29-corrections-streaming.md` and
-`docs/verification/2026-07-29-long-dictation-vad.md`.
+Receipts: `docs/verification/2026-07-28-accuracy-paste.md`,
+`docs/verification/2026-07-29-corrections-streaming.md`,
+`docs/verification/2026-07-29-long-dictation-vad.md`, and
+`docs/verification/2026-07-29-streaming-tail-overlay.md`.
 
 ### Spoken corrections and Maximum Performance checkpoint
 
@@ -398,7 +414,8 @@ was intentionally not replaced or restarted while Aaron was working.
   Maximum mode, with a bounded prepared-session cache.
 - [x] Feed captured audio through one ordered stream and prevent release from
   racing another preview decode.
-- [x] Use the complete captured buffer if streaming fails.
+- [x] Use a complete full-buffer decode as the authoritative final result on
+  every release, not only after streaming failure.
 - [x] Exercise the correction path through the real offline CLI formatter and
   pass the complete 107-test suite, release build, and Thread Sanitizer suite.
 - [ ] Install the new bundle, select Maximum, and record attended short and

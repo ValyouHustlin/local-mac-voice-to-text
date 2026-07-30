@@ -61,7 +61,7 @@ final class RecordingOverlay {
     private func ensureWindow() {
         if window != nil { return }
         let panel = NSPanel(
-            contentRect: NSRect(x: 0, y: 0, width: 164, height: 52),
+            contentRect: NSRect(x: 0, y: 0, width: 140, height: 48),
             styleMask: [.borderless, .nonactivatingPanel],
             backing: .buffered,
             defer: false
@@ -71,7 +71,7 @@ final class RecordingOverlay {
         panel.level = .statusBar
         panel.isOpaque = false
         panel.backgroundColor = .clear
-        panel.hasShadow = true
+        panel.hasShadow = false
         panel.ignoresMouseEvents = false
         panel.collectionBehavior = [.canJoinAllSpaces, .ignoresCycle, .fullScreenAuxiliary]
         panel.hidesOnDeactivate = false
@@ -161,49 +161,31 @@ private struct OverlayPill: View {
     let onCancel: () -> Void
 
     var body: some View {
-        HStack(spacing: 10) {
-            statusDot
+        HStack(spacing: 12) {
             content
             if model.state == .recording || model.state == .transcribing {
-                Divider()
-                    .frame(height: 20)
-                    .overlay(Color.white.opacity(0.12))
                 Button(action: onCancel) {
                     Image(systemName: "xmark")
-                        .font(.system(size: 10, weight: .bold))
-                        .frame(width: 24, height: 24)
-                        .background(Circle().fill(Color.white.opacity(0.09)))
+                        .font(.system(size: 10, weight: .semibold))
+                        .frame(width: 20, height: 20)
                 }
                 .buttonStyle(.plain)
-                .foregroundStyle(.white.opacity(0.76))
-                .contentShape(Circle())
+                .foregroundStyle(.white.opacity(0.58))
+                .contentShape(Rectangle())
                 .help("Cancel dictation")
                 .accessibilityLabel("Cancel dictation")
             }
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 9)
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
         .background(
             Capsule()
-                .fill(Color(red: 13/255, green: 15/255, blue: 17/255).opacity(0.97))
+                .fill(Color(red: 16/255, green: 17/255, blue: 19/255).opacity(0.98))
         )
-        .shadow(color: .black.opacity(0.24), radius: 10, y: 4)
+        .shadow(color: .black.opacity(0.18), radius: 6, y: 2)
         .scaleEffect(model.state == .hidden ? 0.78 : 1)
         .opacity(model.state == .hidden ? 0 : 1)
         .animation(.timingCurve(0.16, 1, 0.3, 1, duration: 0.28), value: model.state)
-    }
-
-    private var statusDot: some View {
-        ZStack {
-            Circle()
-                .fill(accent.opacity(0.16))
-                .frame(width: 22, height: 22)
-                .scaleEffect(1 + CGFloat(model.energy) * 0.18)
-            Circle()
-                .fill(accent)
-                .frame(width: 7, height: 7)
-        }
-        .animation(.easeOut(duration: 0.09), value: model.energy)
     }
 
     @ViewBuilder
@@ -213,32 +195,43 @@ private struct OverlayPill: View {
             Waveform(levels: model.levels)
                 .frame(width: 72, height: 25)
         case .transcribing:
-            HStack(spacing: 7) {
-                ProgressView()
-                    .controlSize(.mini)
-                    .scaleEffect(0.72)
-                Text("Formatting")
-                    .font(.system(size: 11, weight: .medium, design: .rounded))
-                    .foregroundStyle(.white.opacity(0.76))
-            }
-            .frame(width: 82, height: 25)
+            OrbitGridLoader()
+                .frame(width: 72, height: 25)
         case .finishing:
-            HStack(spacing: 7) {
-                Image(systemName: "checkmark")
-                    .font(.system(size: 10, weight: .bold))
-                    .foregroundStyle(accent)
-                Text("Inserting")
-                    .font(.system(size: 11, weight: .medium, design: .rounded))
-                    .foregroundStyle(.white.opacity(0.76))
-            }
-            .frame(width: 82, height: 25)
+            OrbitGridLoader()
+                .frame(width: 72, height: 25)
         }
     }
+}
 
-    private var accent: Color {
-        model.state == .transcribing || model.state == .finishing
-            ? Color(red: 0.45, green: 0.68, blue: 1)
-            : Color(red: 0.36, green: 0.92, blue: 0.73)
+private struct OrbitGridLoader: View {
+    private static let perimeterOrder = [0, 1, 2, 5, 8, 7, 6, 3]
+    private let color = Color(red: 0.50, green: 0.72, blue: 1)
+
+    var body: some View {
+        TimelineView(.animation(minimumInterval: 0.105)) { context in
+            let step = Int(context.date.timeIntervalSinceReferenceDate / 0.105)
+                % Self.perimeterOrder.count
+            let activeIndex = Self.perimeterOrder[step]
+
+            Grid(horizontalSpacing: 3, verticalSpacing: 3) {
+                ForEach(0..<3, id: \.self) { row in
+                    GridRow {
+                        ForEach(0..<3, id: \.self) { column in
+                            let index = row * 3 + column
+                            RoundedRectangle(cornerRadius: 1.2)
+                                .fill(
+                                    index == activeIndex
+                                        ? color
+                                        : Color.white.opacity(index == 4 ? 0.10 : 0.22)
+                                )
+                                .frame(width: 4.5, height: 4.5)
+                        }
+                    }
+                }
+            }
+            .animation(.easeOut(duration: 0.08), value: activeIndex)
+        }
     }
 }
 

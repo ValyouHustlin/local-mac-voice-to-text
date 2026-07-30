@@ -101,7 +101,7 @@ time-bounded, and attended.
 
 ## Current implementation
 
-Verified by source inspection and dated receipts on 2026-07-28:
+Verified by source inspection and dated receipts through 2026-07-29:
 
 - Swift Package Manager library, executable, and test targets for macOS 14+;
 - Argmax OSS/WhisperKit 1.0 transcription with four registered local Whisper
@@ -115,8 +115,8 @@ Verified by source inspection and dated receipts on 2026-07-28:
 - native recording overlay, branded menu bar control, Dock presence, and
   Settings window;
 - quiet local start/stop/cancel cues, an expressive eleven-bar waveform, a
-  pointer-display-following overlay, and one-click cancellation that discards
-  work before insertion;
+  pointer-display-following capsule overlay, a text-free rotating 3×3 processing
+  indicator, and one-click cancellation that discards work before insertion;
 - four explicit writing profiles: Casual, Formatted, Professional, and AI
   Communication; richer profiles use Apple's on-device system language model
   and fall back to deterministic cleanup when unavailable;
@@ -254,17 +254,26 @@ seconds and Large v3 in 1.025 seconds; both were correct, with Large producing
 slightly stronger punctuation. Audio longer than one Whisper model window uses
 WhisperKit's local voice-activity chunker to split at silence and decode chunks
 concurrently. This applies to Adaptive long dictation and the authoritative
-full-buffer fallback from Maximum mode; sub-window recordings keep the same
-single-decode path. See
-`docs/verification/2026-07-29-long-dictation-vad.md`.
+full-buffer final decode in Maximum mode; sub-window recordings keep the same
+single-decode path. Maximum's rolling windows are never joined into the final
+text because their window-local segment boundaries can omit speech or leak
+decoder control tokens. The offline benchmark supports `--streaming` to replay
+that exact rolling/finalization path without microphone capture, playback,
+global input, or text injection. See
+`docs/verification/2026-07-29-long-dictation-vad.md` and
+`docs/verification/2026-07-29-streaming-tail-overlay.md`.
 
 Paste is now the live default instead of merely a stored setting. Wordhand
 snapshots every pasteboard item/type, stages the transcript, posts Command-V,
 and restores the original clipboard only if no newer clipboard write won the
-race. Copy-only and direct Unicode remain selectable in Settings and update the
+race. The pasteboard gets a 40 ms cold-start settle interval before Wordhand
+posts a complete Command-down, V-down, V-up, Command-up chord from a combined
+session event source; clipboard restoration waits 320 ms for slower targets.
+Copy-only and direct Unicode remain selectable in Settings and update the
 running coordinator without relaunching. Secure Input is checked before
 mutation. Chrome and VS Code accepted complete live transcripts while an RTF
-plus plain-text clipboard item was restored. See
+plus plain-text clipboard item was restored before this cold-start hardening.
+See
 `docs/verification/2026-07-28-accuracy-paste.md`.
 
 The repaired installed-app checkpoint on 2026-07-29 reconfirmed paste insertion
@@ -274,11 +283,16 @@ the transcript: a browser advertising iframe took focus during one recording,
 the textarea stayed empty, and history still recorded the paste as inserted.
 See `docs/verification/2026-07-29-three-target-checkpoint.md`.
 
-The recording surface is intentionally visually quiet: a matte capsule, an
-eleven-bar mint waveform, and a compact cancel button. It follows the pointer
-between displays, so the state stays visible on the screen being used.
-Cancellation invalidates the current coordinator operation before insertion
-and resets tap-toggle routing so the next shortcut starts immediately.
+The recording surface is intentionally visually quiet: one shadowed matte
+capsule, an eleven-bar mint waveform, and a bare compact cancel glyph. The
+panel's second native shadow, status halo, divider, and outlined cancel control
+are removed. Transcription, local formatting, and insertion use one text-free
+3×3 rounded-square grid whose active perimeter square advances clockwise. The
+overlay follows the pointer between displays, so the state stays visible on the
+screen being used. Cancellation invalidates the current coordinator operation
+before insertion and resets tap-toggle routing so the next shortcut starts
+immediately. `wordhand overlay-preview` provides a safe visual-only inspection
+path that installs no event tap and uses no audio.
 
 Writing style is an explicit user choice rather than inferred from the active
 application. Casual performs fast deterministic cleanup. Formatted preserves
@@ -316,10 +330,14 @@ Foundation Models session at startup and recording start, while bounding the
 prepared-session cache. It also enables ordered rolling Whisper decoding every
 two seconds over a maximum 20-second working window. Two trailing segments
 remain revisable so a phrase such as `Friday—wait, no, Monday` is not committed
-prematurely. The complete audio buffer remains authoritative: release decodes
-the uncommitted tail, and any preview failure falls back to a full batch pass.
+prematurely. The complete audio buffer is always authoritative: after any
+in-flight rolling decode settles, release re-decodes the full captured buffer
+with silence-aware chunking. Rolling composites are never inserted. This adds
+one final full-buffer pass but removes the boundary math that lost the end of a
+48.69-second natural dictation and leaked decoder control tokens in an offline
+replay. Quality takes priority over the lower-latency unsafe merge.
 Adaptive remains the public default and retains the lower-work single batch
-path. See `docs/verification/2026-07-29-corrections-streaming.md`.
+path. See `docs/verification/2026-07-29-streaming-tail-overlay.md`.
 
 The runtime now holds a per-data-directory process lock so a duplicate launch
 cannot create two competing microphone, hotkey, or insertion owners. Toggle
@@ -510,11 +528,12 @@ Paste insertion:
 
 1. snapshot all current pasteboard items and change count;
 2. place transcript text on the pasteboard;
-3. send Command-V;
-4. wait for the target to consume the paste;
-5. restore the previous pasteboard only if no third party changed it in the
+3. wait briefly for the first app-to-pasteboard transaction to settle;
+4. send a complete Command-V key chord;
+5. wait for the target to consume the paste;
+6. restore the previous pasteboard only if no third party changed it in the
    meantime;
-6. report a recoverable failure instead of silently discarding text.
+7. report a recoverable failure instead of silently discarding text.
 
 A posted paste event is not sufficient evidence that the intended field
 received text. Wordhand must capture a target/focus fingerprint before
@@ -554,9 +573,10 @@ control. Its native windows are:
 - transcript history;
 - model download and language state.
 
-The existing overlay remains the immediate recording/transcribing/error
-surface. Menu and window copy must describe recovery actions rather than expose
-internal errors.
+The capsule overlay remains the immediate recording and processing surface:
+waveform plus cancel while recording, then a clockwise 3×3 perimeter loader
+without stage labels while Wordhand transcribes, formats, and inserts. Menu and
+window copy must describe recovery actions rather than expose internal errors.
 
 ## Settings and persistence
 

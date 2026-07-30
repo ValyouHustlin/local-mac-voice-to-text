@@ -17,6 +17,7 @@ struct Wordhand: ParsableCommand {
             Models.self,
             DictionaryCommands.self,
             Install.self,
+            OverlayPreview.self,
         ],
         defaultSubcommand: Run.self
     )
@@ -624,6 +625,12 @@ struct Models: ParsableCommand {
         )
         var vocabularyTerms: String?
 
+        @Flag(
+            name: .long,
+            help: "Exercise the rolling Maximum Performance path without recording or playback."
+        )
+        var streaming: Bool = false
+
         func run() throws {
             let modelID = model ?? ModelRegistry.recommended()?.id
             guard let modelID, let selectedModel = ModelRegistry.find(modelID) else {
@@ -694,13 +701,42 @@ struct Models: ParsableCommand {
                         ProcessInfo.processInfo.systemUptime - warmupStarted
 
                     let transcriptionStarted = ProcessInfo.processInfo.systemUptime
-                    let transcript = try await transcriber.transcribe(audio)
+                    let transcript: String
+                    var finalizationDuration: TimeInterval?
+                    if streaming {
+                        await transcriber.beginStreaming(
+                            configuration: StreamingTranscriptionConfiguration()
+                        )
+                        let chunkSize = Int(AudioCapture.targetSampleRate / 2)
+                        var chunkStart = 0
+                        while chunkStart < audio.count {
+                            let chunkEnd = min(chunkStart + chunkSize, audio.count)
+                            await transcriber.appendStreamingAudio(
+                                Array(audio[chunkStart..<chunkEnd])
+                            )
+                            chunkStart = chunkEnd
+                            if chunkStart < audio.count {
+                                // Feed the local fixture at 4× real time so
+                                // multiple rolling decodes complete without audio
+                                // playback or a minute-long wall-clock wait.
+                                try await Task.sleep(nanoseconds: 125_000_000)
+                            }
+                        }
+                        let streamingResult = try await transcriber.finishStreaming(
+                            finalAudio: audio
+                        )
+                        transcript = streamingResult.text
+                        finalizationDuration = streamingResult.finalizationDuration
+                    } else {
+                        transcript = try await transcriber.transcribe(audio)
+                    }
                     let transcriptionDuration =
                         ProcessInfo.processInfo.systemUptime - transcriptionStarted
                     resultBox.store(.success(ModelBenchmarkResult(
                         transcript: transcript,
                         warmupDuration: warmupDuration,
-                        transcriptionDuration: transcriptionDuration
+                        transcriptionDuration: transcriptionDuration,
+                        finalizationDuration: finalizationDuration
                     )))
                 } catch {
                     resultBox.store(.failure(error))
@@ -713,9 +749,13 @@ struct Models: ParsableCommand {
             let audioDuration = Double(audio.count) / AudioCapture.targetSampleRate
             let realTimeFactor = result.transcriptionDuration / audioDuration
             print("model: \(selectedModel.id)")
+            print("path: \(streaming ? "rolling maximum" : "full buffer")")
             print(String(format: "audio: %.2fs", audioDuration))
             print(String(format: "warmup: %.3fs", result.warmupDuration))
             print(String(format: "transcription: %.3fs", result.transcriptionDuration))
+            if let finalizationDuration = result.finalizationDuration {
+                print(String(format: "stop-to-final: %.3fs", finalizationDuration))
+            }
             print(String(format: "real-time factor: %.3fx", realTimeFactor))
             print(
                 "transcript: "
@@ -729,6 +769,7 @@ private struct ModelBenchmarkResult {
     let transcript: String
     let warmupDuration: TimeInterval
     let transcriptionDuration: TimeInterval
+    let finalizationDuration: TimeInterval?
 }
 
 private final class ModelBenchmarkResultBox: @unchecked Sendable {
@@ -750,4 +791,55 @@ private final class ModelBenchmarkResultBox: @unchecked Sendable {
 
 private enum ModelBenchmarkError: Error {
     case missingResult
+}
+
+struct OverlayPreview: ParsableCommand {
+    static let configuration = CommandConfiguration(
+        commandName: "overlay-preview",
+        abstract: "Show the safe visual overlay preview without audio or global input."
+    )
+
+    @Option(name: .long, help: "recording, processing, or finishing.")
+    var state: String = "processing"
+
+    @Option(name: .long, help: "Preview duration from 1 through 10 seconds.")
+    var seconds: Int = 4
+
+    func validate() throws {
+        guard (1...10).contains(seconds) else {
+            throw ValidationError("--seconds must be from 1 through 10.")
+        }
+        guard ["recording", "processing", "finishing"].contains(state) else {
+            throw ValidationError("--state must be recording, processing, or finishing.")
+        }
+    }
+
+    func run() throws {
+        let overlayState: RecordingOverlay.State
+        switch state {
+        case "recording":
+            overlayState = .recording
+        case "finishing":
+            overlayState = .finishing
+        default:
+            overlayState = .transcribing
+        }
+
+        let app = NSApplication.shared
+        app.setActivationPolicy(.accessory)
+        let overlay = MainActor.assumeIsolated {
+            let overlay = RecordingOverlay()
+            overlay.show(overlayState)
+            return overlay
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + .seconds(seconds)) {
+            MainActor.assumeIsolated {
+                overlay.hide()
+                app.terminate(nil)
+            }
+        }
+        withExtendedLifetime(overlay) {
+            app.run()
+        }
+    }
 }

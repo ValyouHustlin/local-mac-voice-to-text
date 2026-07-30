@@ -140,37 +140,16 @@ actor WhisperKitTranscriber: Transcribing, StreamingTranscribing {
         streamingDecodeTask = nil
         streamingAudio = finalAudio
 
-        let remainingStart = min(streamingStartSample, finalAudio.count)
-        let remaining = Array(finalAudio[remainingStart...])
-        var finalText = ""
-        if streamingFailure == nil, !remaining.isEmpty {
-            let decodeStarted = ProcessInfo.processInfo.systemUptime
-            do {
-                finalText = try await transcribeWindow(remaining).text
-            } catch {
-                streamingFailure = error
-            }
-            streamingInferenceDuration +=
-                ProcessInfo.processInfo.systemUptime - decodeStarted
-        }
-
-        if streamingFailure != nil {
-            let decodeStarted = ProcessInfo.processInfo.systemUptime
-            finalText = try await transcribe(finalAudio)
-            streamingInferenceDuration +=
-                ProcessInfo.processInfo.systemUptime - decodeStarted
-            streamingCommittedText = []
-        }
-
-        let text = (streamingCommittedText + [finalText])
-            .filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
-            .joined(separator: " ")
-            .replacingOccurrences(
-                of: #"\s+"#,
-                with: " ",
-                options: .regularExpression
-            )
+        // Rolling windows reduce perceived latency while the user speaks, but
+        // their segment timestamps are local to each window. Joining committed
+        // windows to a decoded remainder can therefore skip speech at a
+        // boundary or leak decoder control tokens. Treat the complete captured
+        // buffer as the only authoritative final transcript.
+        let decodeStarted = ProcessInfo.processInfo.systemUptime
+        let text = try await transcribe(finalAudio)
             .trimmingCharacters(in: .whitespacesAndNewlines)
+        streamingInferenceDuration +=
+            ProcessInfo.processInfo.systemUptime - decodeStarted
         let result = StreamingTranscriptionResult(
             text: text,
             totalInferenceDuration: streamingInferenceDuration,
