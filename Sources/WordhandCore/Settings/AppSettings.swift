@@ -18,6 +18,106 @@ public enum ProcessingPerformanceMode: String, Codable, CaseIterable, Sendable {
     }
 }
 
+public struct ApplicationFormattingRule: Codable, Equatable, Identifiable, Sendable {
+    public let bundleIdentifier: String
+    public var applicationName: String
+    public var profile: TranscriptFormattingProfile
+
+    public var id: String {
+        Self.normalizedBundleIdentifier(bundleIdentifier)
+    }
+
+    public init(
+        bundleIdentifier: String,
+        applicationName: String,
+        profile: TranscriptFormattingProfile
+    ) {
+        self.bundleIdentifier = bundleIdentifier
+        self.applicationName = applicationName
+        self.profile = profile
+    }
+
+    fileprivate static func normalizedBundleIdentifier(_ value: String) -> String {
+        value.trimmingCharacters(in: .whitespacesAndNewlines).folding(
+            options: [.caseInsensitive],
+            locale: Locale(identifier: "en_US_POSIX")
+        )
+    }
+}
+
+public enum ApplicationFormattingRouteSource: String, Codable, Equatable, Sendable {
+    case globalDefault
+    case applicationOverride
+    case ambiguousRuleFallback
+}
+
+public struct ResolvedApplicationFormattingProfile: Equatable, Sendable {
+    public let profile: TranscriptFormattingProfile
+    public let source: ApplicationFormattingRouteSource
+
+    public init(
+        profile: TranscriptFormattingProfile,
+        source: ApplicationFormattingRouteSource
+    ) {
+        self.profile = profile
+        self.source = source
+    }
+}
+
+public enum ApplicationFormattingProfileRouter {
+    public static func resolve(
+        default defaultProfile: TranscriptFormattingProfile,
+        rules: [ApplicationFormattingRule],
+        target: TranscriptTarget
+    ) -> ResolvedApplicationFormattingProfile {
+        guard let bundleIdentifier = target.bundleIdentifier?
+            .trimmingCharacters(in: .whitespacesAndNewlines),
+              !bundleIdentifier.isEmpty
+        else {
+            return ResolvedApplicationFormattingProfile(
+                profile: defaultProfile,
+                source: .globalDefault
+            )
+        }
+        let key = ApplicationFormattingRule.normalizedBundleIdentifier(
+            bundleIdentifier
+        )
+        let matches = rules.filter {
+            ApplicationFormattingRule.normalizedBundleIdentifier(
+                $0.bundleIdentifier
+            ) == key
+        }
+        guard !matches.isEmpty else {
+            return ResolvedApplicationFormattingProfile(
+                profile: defaultProfile,
+                source: .globalDefault
+            )
+        }
+        guard matches.count == 1, let rule = matches.first else {
+            return ResolvedApplicationFormattingProfile(
+                profile: defaultProfile,
+                source: .ambiguousRuleFallback
+            )
+        }
+        return ResolvedApplicationFormattingProfile(
+            profile: rule.profile,
+            source: .applicationOverride
+        )
+    }
+
+    public static func profile(
+        default defaultProfile: TranscriptFormattingProfile,
+        rules: [ApplicationFormattingRule],
+        target: TranscriptTarget
+    ) -> TranscriptFormattingProfile {
+        resolve(
+            default: defaultProfile,
+            rules: rules,
+            target: target
+        ).profile
+    }
+}
+
 public struct HotkeyBinding: Codable, Equatable, Sendable {
     public enum Action: String, Codable, Sendable {
         case pushToTalk
@@ -116,6 +216,7 @@ public struct HotkeyBinding: Codable, Equatable, Sendable {
 
 public struct AppSettings: Codable, Equatable, Sendable {
     public static let currentSchemaVersion = 1
+    public static let maximumApplicationFormattingRules = 24
 
     public var schemaVersion: Int
     public var modelID: String
@@ -123,6 +224,7 @@ public struct AppSettings: Codable, Equatable, Sendable {
     public var showOverlay: Bool
     public var soundEffectsEnabled: Bool
     public var formattingProfile: TranscriptFormattingProfile
+    public var applicationFormattingRules: [ApplicationFormattingRule]
     public var performanceMode: ProcessingPerformanceMode
     public var historyRetentionDays: Int
     public var qualityAudioRetentionEnabled: Bool
@@ -137,6 +239,7 @@ public struct AppSettings: Codable, Equatable, Sendable {
         showOverlay: Bool = true,
         soundEffectsEnabled: Bool = true,
         formattingProfile: TranscriptFormattingProfile = .formatted,
+        applicationFormattingRules: [ApplicationFormattingRule] = [],
         performanceMode: ProcessingPerformanceMode = .adaptive,
         historyRetentionDays: Int = 30,
         qualityAudioRetentionEnabled: Bool = false,
@@ -152,6 +255,7 @@ public struct AppSettings: Codable, Equatable, Sendable {
         self.showOverlay = showOverlay
         self.soundEffectsEnabled = soundEffectsEnabled
         self.formattingProfile = formattingProfile
+        self.applicationFormattingRules = applicationFormattingRules
         self.performanceMode = performanceMode
         self.historyRetentionDays = historyRetentionDays
         self.qualityAudioRetentionEnabled = qualityAudioRetentionEnabled
@@ -167,6 +271,7 @@ public struct AppSettings: Codable, Equatable, Sendable {
         case showOverlay
         case soundEffectsEnabled
         case formattingProfile
+        case applicationFormattingRules
         case performanceMode
         case historyRetentionDays
         case qualityAudioRetentionEnabled
@@ -189,6 +294,10 @@ public struct AppSettings: Codable, Equatable, Sendable {
             TranscriptFormattingProfile.self,
             forKey: .formattingProfile
         ) ?? .formatted
+        applicationFormattingRules = try container.decodeIfPresent(
+            [ApplicationFormattingRule].self,
+            forKey: .applicationFormattingRules
+        ) ?? []
         performanceMode = try container.decodeIfPresent(
             ProcessingPerformanceMode.self,
             forKey: .performanceMode
@@ -230,6 +339,33 @@ public struct AppSettings: Codable, Equatable, Sendable {
                 qualityAudioMaximumBytes
             )
         }
+        guard applicationFormattingRules.count
+            <= Self.maximumApplicationFormattingRules
+        else {
+            throw SettingsError.tooManyApplicationFormattingRules
+        }
+        var applicationRuleKeys = Set<String>()
+        for rule in applicationFormattingRules {
+            let bundleIdentifier = rule.bundleIdentifier
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            let applicationName = rule.applicationName
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            guard bundleIdentifier == rule.bundleIdentifier,
+                  !bundleIdentifier.isEmpty,
+                  bundleIdentifier.count <= 255,
+                  applicationName == rule.applicationName,
+                  !applicationName.isEmpty,
+                  applicationName.count <= 100
+            else {
+                throw SettingsError.invalidApplicationFormattingRule
+            }
+            let key = ApplicationFormattingRule.normalizedBundleIdentifier(
+                bundleIdentifier
+            )
+            guard applicationRuleKeys.insert(key).inserted else {
+                throw SettingsError.duplicateApplicationFormattingRule
+            }
+        }
         guard !hotkeys.isEmpty, hotkeys.allSatisfy({ !$0.key.isEmpty }) else {
             throw SettingsError.invalidHotkeys
         }
@@ -260,6 +396,9 @@ public enum SettingsError: Error, Equatable {
     case invalidRetentionDays(Int)
     case invalidQualityAudioRetentionDays(Int)
     case invalidQualityAudioMaximumBytes(Int64)
+    case tooManyApplicationFormattingRules
+    case invalidApplicationFormattingRule
+    case duplicateApplicationFormattingRule
     case invalidHotkeys
     case invalidHotkey
     case duplicateHotkey

@@ -1014,6 +1014,17 @@ Settings use a versioned `Codable` schema stored under the app's Application
 Support directory. Writes are atomic. Invalid or newer schemas preserve the
 original file and fall back visibly rather than overwriting user data.
 
+The global writing style remains the understandable default. An optional
+application-specific rule may select one of the same four styles for one exact
+bundle identifier; display names, app categories, and heuristics never route
+formatting. Wordhand captures the target application, resolved style, route
+source, and processing mode once when an accepted dictation begins. That
+immutable context drives prewarming, processing, History target provenance,
+and private lifecycle diagnostics, so an app switch or Settings edit during
+speech cannot split one dictation across configurations. Settings changes take
+effect on the next dictation. Unknown recovery targets and malformed duplicate
+rules fail safe to the global default.
+
 User data stays under:
 
 ```text

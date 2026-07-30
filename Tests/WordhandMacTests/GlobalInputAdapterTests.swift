@@ -250,6 +250,69 @@ struct GlobalInputAdapterTests {
         #expect(restoredWindow.contentView?.frame.size == NSSize(width: 900, height: 700))
     }
 
+    @Test(
+        .enabled(
+            if: ProcessInfo.processInfo.environment[
+                "WORDHAND_SETTINGS_RENDER_RECEIPT"
+            ] == "1"
+        )
+    )
+    @MainActor
+    func rendersAppSpecificWritingStyleWithoutHidingGlobalDefault() throws {
+        _ = NSApplication.shared
+        let outputPath = try #require(
+            ProcessInfo.processInfo.environment[
+                "WORDHAND_SETTINGS_RENDER_OUTPUT"
+            ]
+        )
+        let fixture = try TemporarySettingsFixture()
+        defer { fixture.remove() }
+        var settings = AppSettings()
+        settings.applicationFormattingRules = [
+            ApplicationFormattingRule(
+                bundleIdentifier: "com.apple.Terminal",
+                applicationName: "Terminal",
+                profile: .aiCommunication
+            ),
+        ]
+        let controller = SettingsController(
+            store: fixture.store,
+            settings: settings,
+            launchAtLoginManager: FakeLaunchAtLoginManager(state: .disabled),
+            permissionManager: FakePermissionManager(),
+            currentTarget: {
+                TranscriptTarget(
+                    bundleIdentifier: "com.apple.TextEdit",
+                    applicationName: "TextEdit"
+                )
+            }
+        )
+        controller.refreshAvailableApplication()
+        let window = try #require(controller.ensureWindowController().window)
+        defer { window.close() }
+        window.setContentSize(NSSize(width: 900, height: 1_500))
+        let view = try #require(window.contentView)
+        view.layoutSubtreeIfNeeded()
+        let representation = try #require(NSBitmapImageRep(
+            bitmapDataPlanes: nil,
+            pixelsWide: Int(view.bounds.width),
+            pixelsHigh: Int(view.bounds.height),
+            bitsPerSample: 8,
+            samplesPerPixel: 4,
+            hasAlpha: true,
+            isPlanar: false,
+            colorSpaceName: .deviceRGB,
+            bytesPerRow: 0,
+            bitsPerPixel: 0
+        ))
+        view.cacheDisplay(in: view.bounds, to: representation)
+        let png = try #require(
+            representation.representation(using: .png, properties: [:])
+        )
+        try png.write(to: URL(fileURLWithPath: outputPath), options: [.atomic])
+        #expect(FileManager.default.fileExists(atPath: outputPath))
+    }
+
     @Test
     @MainActor
     func qualityLabStorageLimitSavesImmediately() throws {
@@ -266,6 +329,59 @@ struct GlobalInputAdapterTests {
 
         #expect(controller.settings.qualityAudioMaximumBytes == 5_000_000_000)
         #expect(try fixture.store.load().qualityAudioMaximumBytes == 5_000_000_000)
+    }
+
+    @Test
+    @MainActor
+    func appSpecificStyleCapturesCurrentAppAndSavesImmediately() throws {
+        let fixture = try TemporarySettingsFixture()
+        defer { fixture.remove() }
+        var currentTarget = TranscriptTarget(
+            bundleIdentifier: "com.apple.Terminal",
+            applicationName: "Terminal"
+        )
+        let controller = SettingsController(
+            store: fixture.store,
+            settings: AppSettings(),
+            launchAtLoginManager: FakeLaunchAtLoginManager(state: .disabled),
+            permissionManager: FakePermissionManager(),
+            currentTarget: { currentTarget }
+        )
+
+        controller.refreshAvailableApplication()
+        controller.addAvailableApplicationFormattingRule(
+            profile: .aiCommunication
+        )
+
+        #expect(controller.availableApplication?.applicationName == "Terminal")
+        #expect(controller.settings.applicationFormattingRules == [
+            ApplicationFormattingRule(
+                bundleIdentifier: "com.apple.Terminal",
+                applicationName: "Terminal",
+                profile: .aiCommunication
+            ),
+        ])
+        #expect(
+            try fixture.store.load().applicationFormattingRules
+                == controller.settings.applicationFormattingRules
+        )
+
+        controller.setApplicationFormattingProfile(
+            .professional,
+            bundleIdentifier: "COM.APPLE.TERMINAL"
+        )
+        #expect(controller.settings.applicationFormattingRules.first?.profile
+            == .professional)
+
+        controller.removeApplicationFormattingRule(
+            bundleIdentifier: "com.apple.Terminal"
+        )
+        #expect(controller.settings.applicationFormattingRules.isEmpty)
+        #expect(try fixture.store.load().applicationFormattingRules.isEmpty)
+
+        currentTarget = .unknown
+        controller.refreshAvailableApplication()
+        #expect(controller.availableApplication == nil)
     }
 
     @Test
@@ -446,6 +562,54 @@ struct GlobalInputAdapterTests {
     }
 
     @Test
+    func applicationStyleRuleOverridesOnlyItsExactBundleIDAndUpdatesLive() async {
+        let rewriter = RecordingLocalTranscriptRewriter(
+            responses: [
+                "AI-ready Valyou request with 3 requirements.",
+                "Formatted Valyou request with 3 requirements.",
+                "Professional Valyou request with 3 requirements.",
+            ]
+        )
+        let processor = AppAwareTranscriptProcessor(
+            dictionaryProcessor: MutableTranscriptProcessor(),
+            profile: .formatted,
+            applicationRules: [
+                ApplicationFormattingRule(
+                    bundleIdentifier: "com.apple.Terminal",
+                    applicationName: "Terminal",
+                    profile: .aiCommunication
+                ),
+            ],
+            rewriter: rewriter
+        )
+        let original = "Valyou request with 3 requirements"
+        let terminal = TranscriptTarget(
+            bundleIdentifier: "COM.APPLE.TERMINAL",
+            applicationName: "Terminal"
+        )
+        let ghostty = TranscriptTarget(
+            bundleIdentifier: "com.mitchellh.ghostty",
+            applicationName: "Terminal"
+        )
+
+        let routed = await processor.process(original, target: terminal)
+        let fallback = await processor.process(original, target: ghostty)
+        processor.update(
+            profile: .professional,
+            applicationRules: []
+        )
+        let updated = await processor.process(original, target: terminal)
+        let calls = await rewriter.recordedCalls()
+
+        #expect(routed == "AI-ready Valyou request with 3 requirements.")
+        #expect(fallback == "Formatted Valyou request with 3 requirements.")
+        #expect(updated == "Professional Valyou request with 3 requirements.")
+        #expect(calls[0].instructions.contains("excellent input for an AI agent"))
+        #expect(calls[1].instructions.contains("natural tone"))
+        #expect(calls[2].instructions.contains("professional communication"))
+    }
+
+    @Test
     func aiCommunicationPreservesProseWhenTheSourceIsNotAList() async {
         let prose = """
         The application is working well. I think accuracy should remain the priority. \
@@ -469,10 +633,19 @@ struct GlobalInputAdapterTests {
 
     @Test
     func maximumPerformancePrewarmsTheSelectedStyle() async {
-        let rewriter = RecordingLocalTranscriptRewriter(responses: [])
+        let rewriter = RecordingLocalTranscriptRewriter(
+            responses: ["AI-ready Valyou request with 3 requirements."]
+        )
         let processor = AppAwareTranscriptProcessor(
             dictionaryProcessor: MutableTranscriptProcessor(),
             profile: .professional,
+            applicationRules: [
+                ApplicationFormattingRule(
+                    bundleIdentifier: "com.mitchellh.ghostty",
+                    applicationName: "Ghostty",
+                    profile: .aiCommunication
+                ),
+            ],
             performanceMode: .maximum,
             rewriter: rewriter
         )
@@ -480,13 +653,25 @@ struct GlobalInputAdapterTests {
             bundleIdentifier: "com.mitchellh.ghostty",
             applicationName: "Ghostty"
         )
+        let context = processor.context(for: target)
+        processor.update(
+            profile: .professional,
+            applicationRules: []
+        )
 
-        await processor.prepare(target: target)
+        await processor.prepare(context: context)
+        let output = await processor.process(
+            "Valyou request with 3 requirements",
+            context: context
+        )
 
         let prewarms = await rewriter.recordedPrewarms()
+        let calls = await rewriter.recordedCalls()
         #expect(prewarms.count == 1)
-        #expect(prewarms[0].contains("professional communication"))
+        #expect(prewarms[0].contains("excellent input for an AI agent"))
         #expect(prewarms[0].contains("Ghostty"))
+        #expect(calls[0].instructions.contains("excellent input for an AI agent"))
+        #expect(output == "AI-ready Valyou request with 3 requirements.")
     }
 
     @Test

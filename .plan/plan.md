@@ -40,8 +40,8 @@ order:
    candidate or evidence-backed pronunciation alias without mutating the live
    recommendation; user-facing pronunciation suggestions, persisted replay
    evidence, model, and configuration suggestions remain;
-4. optional application-to-profile routing behind one understandable global
-   default;
+4. [x] optional application-to-profile routing behind one understandable
+   global default;
 5. deeper explicit spoken correction and editing commands;
 6. a native evidence-based diagnostics and quality view;
 7. fresh-Mac onboarding plus the signed, notarized, permission-stable updater.
@@ -167,6 +167,18 @@ Receipt:
 `docs/verification/2026-07-30-canonical-vocabulary-suggestions.md` and
 `docs/verification/2026-07-30-vocabulary-causal-replay.md` and
 `docs/verification/2026-07-30-pronunciation-alias-replay.md`.
+
+Application-specific writing styles are now an optional extension of the one
+global default. Rules match exact bundle identifiers only. The target, resolved
+style, route source, and performance mode are captured once at dictation start
+and remain authoritative through prewarming, formatting, History, and private
+diagnostics; app switches and Settings edits affect only the next dictation.
+Unknown recovery targets and ambiguous persisted rules fail safe to the global
+default. A native AppKit render confirmed the complete control fits the
+existing Writing Style card without hiding the default.
+
+Receipt:
+`docs/verification/2026-07-30-application-style-routing.md`.
 
 ## Public checkpoint cadence
 

@@ -18,31 +18,41 @@ extension LocalTranscriptRewriting {
     func prewarm(instructions: String) async {}
 }
 
-final class AppAwareTranscriptProcessor: TranscriptProcessing, @unchecked Sendable {
+final class AppAwareTranscriptProcessor:
+    ContextualTranscriptProcessing,
+    @unchecked Sendable
+{
     private let dictionaryProcessor: MutableTranscriptProcessor
     private let rewriter: any LocalTranscriptRewriting
     private let lock = NSLock()
     private var profile: TranscriptFormattingProfile
+    private var applicationRules: [ApplicationFormattingRule]
     private var performanceMode: ProcessingPerformanceMode
 
     init(
         dictionaryProcessor: MutableTranscriptProcessor,
         profile: TranscriptFormattingProfile,
+        applicationRules: [ApplicationFormattingRule] = [],
         performanceMode: ProcessingPerformanceMode = .adaptive,
         rewriter: any LocalTranscriptRewriting = FoundationModelTranscriptRewriter()
     ) {
         self.dictionaryProcessor = dictionaryProcessor
         self.profile = profile
+        self.applicationRules = applicationRules
         self.performanceMode = performanceMode
         self.rewriter = rewriter
     }
 
     func update(
         profile: TranscriptFormattingProfile,
+        applicationRules: [ApplicationFormattingRule]? = nil,
         performanceMode: ProcessingPerformanceMode? = nil
     ) {
         lock.withLock {
             self.profile = profile
+            if let applicationRules {
+                self.applicationRules = applicationRules
+            }
             if let performanceMode {
                 self.performanceMode = performanceMode
             }
@@ -50,27 +60,87 @@ final class AppAwareTranscriptProcessor: TranscriptProcessing, @unchecked Sendab
     }
 
     func prepare(target: TranscriptTarget) async {
-        let configuration = lock.withLock { (profile, performanceMode) }
-        guard configuration.1 == .maximum else { return }
-        guard let intent = TranscriptRewriteIntent(profile: configuration.0) else {
+        await prepare(context: context(for: target))
+    }
+
+    func prepare(context: TranscriptProcessingContext) async {
+        let fallback = resolvedConfiguration(for: context.target)
+        let profile = context.formattingProfile ?? fallback.0.profile
+        let performanceMode = context.performanceMode ?? fallback.1
+        guard performanceMode == .maximum else { return }
+        guard let intent = TranscriptRewriteIntent(profile: profile) else {
             return
         }
-        await rewriter.prewarm(instructions: intent.instructions(for: target))
+        await rewriter.prewarm(
+            instructions: intent.instructions(for: context.target)
+        )
     }
 
     func process(_ text: String, target: TranscriptTarget) async -> String {
-        let cleaned = await dictionaryProcessor.process(text, target: target)
-        let selectedProfile = lock.withLock { profile }
+        await process(text, context: context(for: target))
+    }
+
+    func process(
+        _ text: String,
+        context: TranscriptProcessingContext
+    ) async -> String {
+        let cleaned = await dictionaryProcessor.process(
+            text,
+            target: context.target
+        )
+        let selectedProfile = context.formattingProfile
+            ?? resolvedProfile(for: context.target)
 
         switch selectedProfile {
         case .casual:
             return TranscriptProcessor.polish(cleaned)
         case .formatted:
-            return await rewrite(cleaned, intent: .formatted, target: target)
+            return await rewrite(
+                cleaned,
+                intent: .formatted,
+                target: context.target
+            )
         case .professional:
-            return await rewrite(cleaned, intent: .professional, target: target)
+            return await rewrite(
+                cleaned,
+                intent: .professional,
+                target: context.target
+            )
         case .aiCommunication:
-            return await rewrite(cleaned, intent: .aiCommunication, target: target)
+            return await rewrite(
+                cleaned,
+                intent: .aiCommunication,
+                target: context.target
+            )
+        }
+    }
+
+    func context(for target: TranscriptTarget) -> TranscriptProcessingContext {
+        let configuration = resolvedConfiguration(for: target)
+        return TranscriptProcessingContext(
+            target: target,
+            formattingProfile: configuration.0.profile,
+            formattingRouteSource: configuration.0.source,
+            performanceMode: configuration.1
+        )
+    }
+
+    func resolvedProfile(for target: TranscriptTarget) -> TranscriptFormattingProfile {
+        resolvedConfiguration(for: target).0.profile
+    }
+
+    private func resolvedConfiguration(
+        for target: TranscriptTarget
+    ) -> (ResolvedApplicationFormattingProfile, ProcessingPerformanceMode) {
+        lock.withLock {
+            (
+                ApplicationFormattingProfileRouter.resolve(
+                    default: profile,
+                    rules: applicationRules,
+                    target: target
+                ),
+                performanceMode
+            )
         }
     }
 

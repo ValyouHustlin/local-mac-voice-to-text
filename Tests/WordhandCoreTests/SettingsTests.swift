@@ -60,6 +60,57 @@ struct SettingsTests {
                 HotkeyBinding(key: "space", modifiers: ["control"], action: .pushToTalk),
             ]
         )
+        #expect(settings.applicationFormattingRules.isEmpty)
+    }
+
+    @Test
+    func applicationFormattingUsesExactBundleIDAndGlobalFallback() {
+        let rules = [
+            ApplicationFormattingRule(
+                bundleIdentifier: "com.apple.Terminal",
+                applicationName: "Terminal",
+                profile: .aiCommunication
+            ),
+        ]
+
+        #expect(ApplicationFormattingProfileRouter.profile(
+            default: .formatted,
+            rules: rules,
+            target: TranscriptTarget(
+                bundleIdentifier: "COM.APPLE.TERMINAL",
+                applicationName: "Renamed Terminal"
+            )
+        ) == .aiCommunication)
+        #expect(ApplicationFormattingProfileRouter.profile(
+            default: .formatted,
+            rules: rules,
+            target: TranscriptTarget(
+                bundleIdentifier: "com.mitchellh.ghostty",
+                applicationName: "Terminal"
+            )
+        ) == .formatted)
+        #expect(ApplicationFormattingProfileRouter.profile(
+            default: .professional,
+            rules: rules,
+            target: .unknown
+        ) == .professional)
+        #expect(ApplicationFormattingProfileRouter.resolve(
+            default: .formatted,
+            rules: rules + [
+                ApplicationFormattingRule(
+                    bundleIdentifier: " COM.APPLE.TERMINAL ",
+                    applicationName: "Duplicate",
+                    profile: .casual
+                ),
+            ],
+            target: TranscriptTarget(
+                bundleIdentifier: "com.apple.Terminal",
+                applicationName: "Terminal"
+            )
+        ) == ResolvedApplicationFormattingProfile(
+            profile: .formatted,
+            source: .ambiguousRuleFallback
+        ))
     }
 
     @Test
@@ -95,6 +146,13 @@ struct SettingsTests {
         expected.showOverlay = false
         expected.soundEffectsEnabled = false
         expected.formattingProfile = .aiCommunication
+        expected.applicationFormattingRules = [
+            ApplicationFormattingRule(
+                bundleIdentifier: "com.apple.Terminal",
+                applicationName: "Terminal",
+                profile: .aiCommunication
+            ),
+        ]
         expected.performanceMode = .maximum
         expected.insertionMode = .unicode
         expected.qualityAudioRetentionEnabled = true
@@ -125,6 +183,60 @@ struct SettingsTests {
     }
 
     @Test
+    func storeDropsOnlyAmbiguousApplicationRulesAndPreservesOtherSettings() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(
+            at: root,
+            withIntermediateDirectories: true
+        )
+        let store = SettingsStore(
+            fileURL: root.appendingPathComponent("settings.json")
+        )
+        var persisted = AppSettings(
+            insertionMode: .unicode,
+            showOverlay: false,
+            formattingProfile: .professional,
+            applicationFormattingRules: [
+                ApplicationFormattingRule(
+                    bundleIdentifier: "com.apple.Terminal",
+                    applicationName: "Terminal",
+                    profile: .aiCommunication
+                ),
+                ApplicationFormattingRule(
+                    bundleIdentifier: "COM.APPLE.TERMINAL",
+                    applicationName: "Duplicate Terminal",
+                    profile: .casual
+                ),
+            ],
+            performanceMode: .maximum,
+            historyRetentionDays: 90
+        )
+        persisted.hotkeys = [
+            HotkeyBinding(
+                key: "d",
+                keyCode: 2,
+                modifiers: ["command", "shift"],
+                action: .toggleRecording
+            ),
+        ]
+        let persistedData = try JSONEncoder().encode(persisted)
+        try persistedData.write(to: store.fileURL, options: [.atomic])
+
+        let loaded = try store.load()
+
+        #expect(loaded.applicationFormattingRules.isEmpty)
+        #expect(loaded.formattingProfile == .professional)
+        #expect(loaded.performanceMode == .maximum)
+        #expect(loaded.insertionMode == .unicode)
+        #expect(!loaded.showOverlay)
+        #expect(loaded.historyRetentionDays == 90)
+        #expect(loaded.hotkeys == persisted.hotkeys)
+        #expect(try Data(contentsOf: store.fileURL) == persistedData)
+    }
+
+    @Test
     func loadsThePreRecorderHotkeyShape() throws {
         let data = Data(
             """
@@ -149,6 +261,7 @@ struct SettingsTests {
         #expect(settings.hotkeys.first?.displayName == "⌃Space")
         #expect(settings.soundEffectsEnabled)
         #expect(settings.formattingProfile == .formatted)
+        #expect(settings.applicationFormattingRules.isEmpty)
         #expect(settings.performanceMode == .adaptive)
         #expect(!settings.qualityAudioRetentionEnabled)
         #expect(settings.qualityAudioRetentionDays == 7)
@@ -183,6 +296,45 @@ struct SettingsTests {
                     action: .toggleRecording
                 ),
             ]).validated()
+        }
+    }
+
+    @Test
+    func rejectsInvalidDuplicateAndUnboundedApplicationFormattingRules() {
+        let terminal = ApplicationFormattingRule(
+            bundleIdentifier: "com.apple.Terminal",
+            applicationName: "Terminal",
+            profile: .aiCommunication
+        )
+        #expect(throws: SettingsError.duplicateApplicationFormattingRule) {
+            _ = try AppSettings(applicationFormattingRules: [
+                terminal,
+                ApplicationFormattingRule(
+                    bundleIdentifier: "COM.APPLE.TERMINAL",
+                    applicationName: "Terminal",
+                    profile: .casual
+                ),
+            ]).validated()
+        }
+        #expect(throws: SettingsError.invalidApplicationFormattingRule) {
+            _ = try AppSettings(applicationFormattingRules: [
+                ApplicationFormattingRule(
+                    bundleIdentifier: " com.apple.Terminal ",
+                    applicationName: "Terminal",
+                    profile: .casual
+                ),
+            ]).validated()
+        }
+        #expect(throws: SettingsError.tooManyApplicationFormattingRules) {
+            _ = try AppSettings(applicationFormattingRules: (
+                0...AppSettings.maximumApplicationFormattingRules
+            ).map {
+                ApplicationFormattingRule(
+                    bundleIdentifier: "com.example.app\($0)",
+                    applicationName: "App \($0)",
+                    profile: .formatted
+                )
+            }).validated()
         }
     }
 }

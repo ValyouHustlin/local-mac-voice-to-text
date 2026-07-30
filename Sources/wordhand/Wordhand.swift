@@ -282,6 +282,9 @@ struct Run: ParsableCommand {
             attributes: [
                 "model_id": chosenModel.id,
                 "formatting_profile": settings.formattingProfile.rawValue,
+                "app_style_rule_count": String(
+                    settings.applicationFormattingRules.count
+                ),
                 "performance_mode": settings.performanceMode.rawValue,
                 "insertion_mode": settings.insertionMode.rawValue,
                 "build": Bundle.main.object(
@@ -309,6 +312,7 @@ struct Run: ParsableCommand {
         let processor = AppAwareTranscriptProcessor(
             dictionaryProcessor: dictionary.processor,
             profile: settings.formattingProfile,
+            applicationRules: settings.applicationFormattingRules,
             performanceMode: settings.performanceMode
         )
         let inserter = MacTextInserter()
@@ -435,6 +439,9 @@ struct Run: ParsableCommand {
                 language: chosenModel.languages.first,
                 audioSampleRate: AudioCapture.targetSampleRate,
                 currentTarget: currentTranscriptTarget,
+                currentProcessingContext: {
+                    processor.context(for: $0)
+                },
                 diagnosticSessionID: appSessionID
             )
         }
@@ -463,6 +470,9 @@ struct Run: ParsableCommand {
                     attributes: [
                         "model_id": updated.modelID,
                         "formatting_profile": updated.formattingProfile.rawValue,
+                        "app_style_rule_count": String(
+                            updated.applicationFormattingRules.count
+                        ),
                         "performance_mode": updated.performanceMode.rawValue,
                         "insertion_mode": updated.insertionMode.rawValue,
                         "hotkey_count": String(updated.hotkeys.count),
@@ -478,6 +488,7 @@ struct Run: ParsableCommand {
                 )
                 processor.update(
                     profile: updated.formattingProfile,
+                    applicationRules: updated.applicationFormattingRules,
                     performanceMode: updated.performanceMode
                 )
                 if updated.performanceMode == .maximum {
@@ -586,9 +597,10 @@ struct Run: ParsableCommand {
                 case .recording:
                     FileHandle.standardError.write(Data("● recording\n".utf8))
                     audioCues.play(.start)
-                    let target = currentTranscriptTarget()
-                    Task {
-                        await processor.prepare(target: target)
+                    if let context = coordinator.activeProcessingContext {
+                        Task {
+                            await processor.prepare(context: context)
+                        }
                     }
                     if settingsController.settings.showOverlay {
                         overlay?.show(.recording)

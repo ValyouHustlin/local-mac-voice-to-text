@@ -49,8 +49,31 @@ public extension Transcribing {
     func cancel() async {}
 }
 
+public struct TranscriptProcessingContext: Equatable, Sendable {
+    public let target: TranscriptTarget
+    public let formattingProfile: TranscriptFormattingProfile?
+    public let formattingRouteSource: ApplicationFormattingRouteSource?
+    public let performanceMode: ProcessingPerformanceMode?
+
+    public init(
+        target: TranscriptTarget,
+        formattingProfile: TranscriptFormattingProfile? = nil,
+        formattingRouteSource: ApplicationFormattingRouteSource? = nil,
+        performanceMode: ProcessingPerformanceMode? = nil
+    ) {
+        self.target = target
+        self.formattingProfile = formattingProfile
+        self.formattingRouteSource = formattingRouteSource
+        self.performanceMode = performanceMode
+    }
+}
+
 public protocol TranscriptProcessing: Sendable {
     func process(_ text: String, target: TranscriptTarget) async -> String
+}
+
+public protocol ContextualTranscriptProcessing: TranscriptProcessing {
+    func process(_ text: String, context: TranscriptProcessingContext) async -> String
 }
 
 public protocol TextInserting: Sendable {
@@ -72,6 +95,7 @@ public final class DictationCoordinator {
     public var onHistoryChange: (() -> Void)?
     public var onRecordingLimitReached: (() -> Void)?
     public var onDiagnosticEvent: ((OperationalDiagnosticEvent) -> Void)?
+    public private(set) var activeProcessingContext: TranscriptProcessingContext?
 
     private let capture: AudioCapturing
     private let transcriber: Transcribing
@@ -83,6 +107,8 @@ public final class DictationCoordinator {
     private let language: String?
     private let audioSampleRate: Double
     private let currentTarget: () -> TranscriptTarget
+    private let currentProcessingContext:
+        (TranscriptTarget) -> TranscriptProcessingContext
     private let date: () -> Date
     private let now: () -> TimeInterval
     private let maximumCaptureGapSeconds: TimeInterval
@@ -110,6 +136,10 @@ public final class DictationCoordinator {
         language: String? = nil,
         audioSampleRate: Double = 16_000,
         currentTarget: @escaping () -> TranscriptTarget = { .unknown },
+        currentProcessingContext: @escaping (TranscriptTarget)
+            -> TranscriptProcessingContext = {
+                TranscriptProcessingContext(target: $0)
+            },
         date: @escaping () -> Date = Date.init,
         now: @escaping () -> TimeInterval = { ProcessInfo.processInfo.systemUptime },
         maximumCaptureGapSeconds: TimeInterval = 0.75,
@@ -129,6 +159,7 @@ public final class DictationCoordinator {
         self.language = language
         self.audioSampleRate = audioSampleRate
         self.currentTarget = currentTarget
+        self.currentProcessingContext = currentProcessingContext
         self.date = date
         self.now = now
         self.maximumCaptureGapSeconds = maximumCaptureGapSeconds
@@ -177,8 +208,16 @@ public final class DictationCoordinator {
                 recordingStartedAt = now()
                 activeOperationStartedAt = recordingStartedAt
                 activeOperationID = operationID
-                state = .recording
                 let target = currentTarget()
+                let resolvedContext = currentProcessingContext(target)
+                activeProcessingContext = TranscriptProcessingContext(
+                    target: target,
+                    formattingProfile: resolvedContext.formattingProfile,
+                    formattingRouteSource:
+                        resolvedContext.formattingRouteSource,
+                    performanceMode: resolvedContext.performanceMode
+                )
+                state = .recording
                 recordDiagnostic(
                     name: "dictation.started",
                     dictationID: operationID,
@@ -188,6 +227,15 @@ public final class DictationCoordinator {
                         "streaming_enabled": String(streamingEnabled),
                         "target_bundle_id": target.bundleIdentifier ?? "unknown",
                         "target_app": target.applicationName ?? "unknown",
+                        "formatting_profile":
+                            activeProcessingContext?.formattingProfile?.rawValue
+                                ?? "processor_default",
+                        "formatting_route":
+                            activeProcessingContext?.formattingRouteSource?.rawValue
+                                ?? "processor_default",
+                        "performance_mode":
+                            activeProcessingContext?.performanceMode?.rawValue
+                                ?? "processor_default",
                     ]
                 )
                 scheduleRecordingLimit()
@@ -256,6 +304,7 @@ public final class DictationCoordinator {
                 await activeStreamingTranscriber?.cancelStreaming()
                 activeStreamingTranscriber = nil
                 activeOperationID = nil
+                activeProcessingContext = nil
                 activeOperationStartedAt = nil
                 recordDiagnostic(
                     severity: .error,
@@ -277,6 +326,7 @@ public final class DictationCoordinator {
                 await activeStreamingTranscriber?.cancelStreaming()
                 activeStreamingTranscriber = nil
                 activeOperationID = nil
+                activeProcessingContext = nil
                 activeOperationStartedAt = nil
                 recordDiagnostic(
                     severity: .warning,
@@ -312,6 +362,7 @@ public final class DictationCoordinator {
                 guard activeOperationID == operationID else { return }
                 await stopActiveStreaming()
                 activeOperationID = nil
+                activeProcessingContext = nil
                 activeOperationStartedAt = nil
                 recordDiagnostic(
                     severity: .error,
@@ -361,9 +412,11 @@ public final class DictationCoordinator {
             )
 
             state = .processing
-            let target = currentTarget()
+            let processingContext = activeProcessingContext
+                ?? TranscriptProcessingContext(target: .unknown)
+            let target = processingContext.target
             let processingStarted = now()
-            let text = await processor.process(raw, target: target)
+            let text = await process(raw, context: processingContext)
             let processingElapsed = now() - processingStarted
             onProcessingDuration?(processingElapsed)
             recordDiagnostic(
@@ -376,11 +429,21 @@ public final class DictationCoordinator {
                 attributes: [
                     "target_bundle_id": target.bundleIdentifier ?? "unknown",
                     "target_app": target.applicationName ?? "unknown",
+                    "formatting_profile":
+                        processingContext.formattingProfile?.rawValue
+                            ?? "processor_default",
+                    "formatting_route":
+                        processingContext.formattingRouteSource?.rawValue
+                            ?? "processor_default",
+                    "performance_mode":
+                        processingContext.performanceMode?.rawValue
+                            ?? "processor_default",
                 ]
             )
             guard activeOperationID == operationID else { return }
             guard !text.isEmpty else {
                 activeOperationID = nil
+                activeProcessingContext = nil
                 activeOperationStartedAt = nil
                 recordDiagnostic(
                     severity: .warning,
@@ -419,6 +482,7 @@ public final class DictationCoordinator {
                     )
                 } catch {
                     activeOperationID = nil
+                    activeProcessingContext = nil
                     activeOperationStartedAt = nil
                     recordDiagnostic(
                         severity: .error,
@@ -466,6 +530,7 @@ public final class DictationCoordinator {
                     onHistoryChange?()
                 }
                 activeOperationID = nil
+                activeProcessingContext = nil
                 activeOperationStartedAt = nil
                 recordDiagnostic(
                     severity: .error,
@@ -512,6 +577,7 @@ public final class DictationCoordinator {
                     onHistoryChange?()
                 } catch {
                     activeOperationID = nil
+                    activeProcessingContext = nil
                     activeOperationStartedAt = nil
                     recordDiagnostic(
                         severity: .error,
@@ -533,6 +599,7 @@ public final class DictationCoordinator {
                 ]
             )
             activeOperationID = nil
+            activeProcessingContext = nil
             activeOperationStartedAt = nil
             state = .idle
         }
@@ -545,6 +612,7 @@ public final class DictationCoordinator {
             cancelRecordingLimit()
             recordingStartedAt = nil
             activeOperationID = nil
+            activeProcessingContext = nil
             activeOperationStartedAt = nil
             await stopActiveStreaming()
             _ = await capture.stop()
@@ -565,6 +633,7 @@ public final class DictationCoordinator {
                 ? "transcribing"
                 : "processing"
             activeOperationID = nil
+            activeProcessingContext = nil
             activeOperationStartedAt = nil
             await stopActiveStreaming()
             if let operationID {
@@ -590,7 +659,18 @@ public final class DictationCoordinator {
 
     public func resetFailure() {
         guard case .failed = state else { return }
+        activeProcessingContext = nil
         state = .idle
+    }
+
+    private func process(
+        _ text: String,
+        context: TranscriptProcessingContext
+    ) async -> String {
+        if let contextual = processor as? any ContextualTranscriptProcessing {
+            return await contextual.process(text, context: context)
+        }
+        return await processor.process(text, target: context.target)
     }
 
     /// Replays an orphaned audio journal through the same complete-buffer
@@ -618,7 +698,10 @@ public final class DictationCoordinator {
         }
         let transcriptionElapsed = now() - started
         state = .processing
-        let text = await processor.process(raw, target: .unknown)
+        let text = await process(
+            raw,
+            context: TranscriptProcessingContext(target: .unknown)
+        )
         guard !text.isEmpty else {
             recordDiagnostic(
                 severity: .warning,

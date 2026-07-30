@@ -416,6 +416,66 @@ struct DictationCoordinatorTests {
     }
 
     @Test
+    func capturesOneImmutableTargetAndFormattingRoutePerDictation() async throws {
+        let history = FakeHistory()
+        let processor = ContextRecordingProcessor()
+        var targetCallCount = 0
+        var selectedProfile = TranscriptFormattingProfile.aiCommunication
+        let coordinator = DictationCoordinator(
+            capture: FakeCapture(samples: [0.1]),
+            transcriber: FakeTranscriber(result: "hello"),
+            processor: processor,
+            inserter: FakeInserter(),
+            history: history,
+            currentTarget: {
+                targetCallCount += 1
+                return TranscriptTarget(
+                    bundleIdentifier: targetCallCount == 1
+                        ? "com.apple.Terminal"
+                        : "com.apple.TextEdit",
+                    applicationName: targetCallCount == 1
+                        ? "Terminal"
+                        : "TextEdit"
+                )
+            },
+            currentProcessingContext: { target in
+                TranscriptProcessingContext(
+                    target: target,
+                    formattingProfile: selectedProfile,
+                    formattingRouteSource: .applicationOverride,
+                    performanceMode: .maximum
+                )
+            }
+        )
+        var diagnostics: [OperationalDiagnosticEvent] = []
+        coordinator.onDiagnosticEvent = { diagnostics.append($0) }
+
+        await coordinator.handle(.pressed)
+        let captured = try #require(coordinator.activeProcessingContext)
+        selectedProfile = .professional
+        await coordinator.handle(.released)
+
+        #expect(targetCallCount == 1)
+        #expect(captured.target.bundleIdentifier == "com.apple.Terminal")
+        #expect(captured.formattingProfile == .aiCommunication)
+        #expect(processor.contexts == [captured])
+        #expect(history.saved.first?.target.bundleIdentifier == "com.apple.Terminal")
+        let started = try #require(
+            diagnostics.first(where: { $0.name == "dictation.started" })
+        )
+        let processed = try #require(
+            diagnostics.first(where: { $0.name == "processing.completed" })
+        )
+        #expect(started.attributes["formatting_profile"] == "aiCommunication")
+        #expect(started.attributes["formatting_route"] == "applicationOverride")
+        #expect(started.attributes["performance_mode"] == "maximum")
+        #expect(processed.attributes["formatting_profile"] == "aiCommunication")
+        #expect(processed.attributes["formatting_route"] == "applicationOverride")
+        #expect(processed.attributes["performance_mode"] == "maximum")
+        #expect(coordinator.activeProcessingContext == nil)
+    }
+
+    @Test
     func savesProcessedTranscriptBeforeInsertionAndMarksSuccess() async throws {
         let history = FakeHistory()
         let inserter = FakeInserter(onInsert: {
@@ -917,6 +977,25 @@ private final class FakeHistory: TranscriptRecording, @unchecked Sendable {
 
     func updateStatus(id: UUID, status: TranscriptInsertionStatus) throws {
         updates.append((id, status))
+    }
+}
+
+private final class ContextRecordingProcessor:
+    ContextualTranscriptProcessing,
+    @unchecked Sendable
+{
+    private(set) var contexts: [TranscriptProcessingContext] = []
+
+    func process(_ text: String, target: TranscriptTarget) async -> String {
+        text
+    }
+
+    func process(
+        _ text: String,
+        context: TranscriptProcessingContext
+    ) async -> String {
+        contexts.append(context)
+        return text
     }
 }
 

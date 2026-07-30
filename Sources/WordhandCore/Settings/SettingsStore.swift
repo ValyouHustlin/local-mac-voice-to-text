@@ -20,7 +20,16 @@ public struct SettingsStore {
         }
         try hardenPermissions()
         let data = try Data(contentsOf: fileURL)
-        return try JSONDecoder().decode(AppSettings.self, from: data).validated()
+        let decoded = try JSONDecoder().decode(AppSettings.self, from: data)
+        do {
+            return try decoded.validated()
+        } catch SettingsError.tooManyApplicationFormattingRules {
+            return try decoded.withoutApplicationFormattingRules().validated()
+        } catch SettingsError.invalidApplicationFormattingRule {
+            return try decoded.withoutApplicationFormattingRules().validated()
+        } catch SettingsError.duplicateApplicationFormattingRule {
+            return try decoded.withoutApplicationFormattingRules().validated()
+        }
     }
 
     public func save(_ settings: AppSettings) throws {
@@ -47,6 +56,14 @@ public struct SettingsStore {
             [.posixPermissions: 0o600],
             ofItemAtPath: fileURL.path
         )
+    }
+}
+
+private extension AppSettings {
+    func withoutApplicationFormattingRules() -> AppSettings {
+        var recovered = self
+        recovered.applicationFormattingRules = []
+        return recovered
     }
 }
 

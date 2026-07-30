@@ -13,6 +13,7 @@ final class SettingsController: NSObject, ObservableObject, NSWindowDelegate {
     @Published private(set) var requiresRelaunch: Bool
     @Published private(set) var relaunchError: String?
     @Published private(set) var diagnosticsMessage: String?
+    @Published private(set) var availableApplication: TranscriptTarget?
 
     var onSettingsChange: ((AppSettings) -> Void)?
     var onShortcutCaptureChange: ((Bool) -> Void)?
@@ -28,6 +29,7 @@ final class SettingsController: NSObject, ObservableObject, NSWindowDelegate {
     private let permissionManager: any PermissionManaging
     private let frameAutosaveName: String
     private let activeModelID: String
+    private let currentTarget: @MainActor () -> TranscriptTarget
     private var windowController: NSWindowController?
     private var localKeyMonitor: Any?
     private static let defaultWindowContentSize = NSSize(width: 760, height: 620)
@@ -38,7 +40,9 @@ final class SettingsController: NSObject, ObservableObject, NSWindowDelegate {
         launchAtLoginManager: any LaunchAtLoginManaging = SystemLaunchAtLoginManager(),
         permissionManager: any PermissionManaging = SystemPermissionManager(),
         frameAutosaveName: String = "Wordhand.Settings",
-        activeModelID: String? = nil
+        activeModelID: String? = nil,
+        currentTarget: @escaping @MainActor () -> TranscriptTarget =
+            currentTranscriptTarget
     ) {
         self.store = store
         self.settings = settings
@@ -48,6 +52,7 @@ final class SettingsController: NSObject, ObservableObject, NSWindowDelegate {
         self.permissionStatus = permissionManager.status()
         self.frameAutosaveName = frameAutosaveName
         self.activeModelID = activeModelID ?? settings.modelID
+        self.currentTarget = currentTarget
         self.requiresRelaunch = settings.modelID != (activeModelID ?? settings.modelID)
         super.init()
     }
@@ -59,6 +64,7 @@ final class SettingsController: NSObject, ObservableObject, NSWindowDelegate {
     }
 
     func showSettings() {
+        refreshAvailableApplication()
         refreshPermissions()
         let controller = ensureWindowController()
         controller.showWindow(nil)
@@ -122,6 +128,67 @@ final class SettingsController: NSObject, ObservableObject, NSWindowDelegate {
 
     func setFormattingProfile(_ profile: TranscriptFormattingProfile) {
         update { $0.formattingProfile = profile }
+    }
+
+    func addAvailableApplicationFormattingRule(
+        profile: TranscriptFormattingProfile
+    ) {
+        guard let target = availableApplication,
+              let bundleIdentifier = target.bundleIdentifier,
+              let applicationName = target.applicationName
+        else {
+            return
+        }
+        update { settings in
+            if let index = settings.applicationFormattingRules.firstIndex(where: {
+                $0.bundleIdentifier.compare(
+                    bundleIdentifier,
+                    options: [.caseInsensitive]
+                ) == .orderedSame
+            }) {
+                settings.applicationFormattingRules[index].applicationName =
+                    applicationName
+                settings.applicationFormattingRules[index].profile = profile
+            } else if settings.applicationFormattingRules.count
+                < AppSettings.maximumApplicationFormattingRules
+            {
+                settings.applicationFormattingRules.append(
+                    ApplicationFormattingRule(
+                        bundleIdentifier: bundleIdentifier,
+                        applicationName: applicationName,
+                        profile: profile
+                    )
+                )
+            }
+        }
+    }
+
+    func setApplicationFormattingProfile(
+        _ profile: TranscriptFormattingProfile,
+        bundleIdentifier: String
+    ) {
+        update { settings in
+            guard let index = settings.applicationFormattingRules.firstIndex(where: {
+                $0.bundleIdentifier.compare(
+                    bundleIdentifier,
+                    options: [.caseInsensitive]
+                ) == .orderedSame
+            }) else {
+                return
+            }
+            settings.applicationFormattingRules[index].profile = profile
+        }
+    }
+
+    func removeApplicationFormattingRule(bundleIdentifier: String) {
+        update { settings in
+            settings.applicationFormattingRules.removeAll {
+                $0.bundleIdentifier.compare(
+                    bundleIdentifier,
+                    options: [.caseInsensitive]
+                ) == .orderedSame
+            }
+        }
     }
 
     func setPerformanceMode(_ mode: ProcessingPerformanceMode) {
@@ -349,6 +416,24 @@ final class SettingsController: NSObject, ObservableObject, NSWindowDelegate {
             saveError = "Couldn’t save settings: \(error.localizedDescription)"
             NSSound.beep()
         }
+    }
+
+    func refreshAvailableApplication() {
+        let target = currentTarget()
+        availableApplication = nil
+        guard let bundleIdentifier = target.bundleIdentifier?
+            .trimmingCharacters(in: .whitespacesAndNewlines),
+              !bundleIdentifier.isEmpty,
+              let applicationName = target.applicationName?
+                .trimmingCharacters(in: .whitespacesAndNewlines),
+              !applicationName.isEmpty
+        else {
+            return
+        }
+        availableApplication = TranscriptTarget(
+            bundleIdentifier: bundleIdentifier,
+            applicationName: applicationName
+        )
     }
 
     func ensureWindowController() -> NSWindowController {
@@ -763,35 +848,148 @@ private struct SettingsView: View {
 
     private var formattingCard: some View {
         settingsCard {
-            HStack(alignment: .firstTextBaseline) {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Writing style")
-                        .font(.headline)
-                    Text(formattingDescription)
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-                Spacer(minLength: 20)
-                Picker(
-                    "Writing style",
-                    selection: Binding(
-                        get: { controller.settings.formattingProfile },
-                        set: { controller.setFormattingProfile($0) }
+            VStack(alignment: .leading, spacing: 14) {
+                HStack(alignment: .firstTextBaseline) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Writing style")
+                            .font(.headline)
+                        Text(formattingDescription)
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    Spacer(minLength: 20)
+                    formattingPicker(
+                        selection: Binding(
+                            get: { controller.settings.formattingProfile },
+                            set: { controller.setFormattingProfile($0) }
+                        ),
+                        label: "Default writing style"
                     )
-                ) {
-                    Text("Casual")
-                        .tag(TranscriptFormattingProfile.casual)
-                    Text("Formatted · Recommended")
-                        .tag(TranscriptFormattingProfile.formatted)
-                    Text("Professional")
-                        .tag(TranscriptFormattingProfile.professional)
-                    Text("AI Communication")
-                        .tag(TranscriptFormattingProfile.aiCommunication)
                 }
-                .labelsHidden()
-                .frame(width: 220)
+
+                Divider()
+
+                VStack(alignment: .leading, spacing: 10) {
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text("App-specific styles")
+                            .font(.subheadline.weight(.semibold))
+                        Text(
+                            "Optional. Each app uses the default above unless "
+                                + "you add it here."
+                        )
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    }
+
+                    ForEach(controller.settings.applicationFormattingRules) {
+                        rule in
+                        HStack(spacing: 12) {
+                            Image(systemName: "app.fill")
+                                .foregroundStyle(.secondary)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(rule.applicationName)
+                                    .font(.subheadline)
+                                Text(rule.bundleIdentifier)
+                                    .font(.caption2)
+                                    .foregroundStyle(.tertiary)
+                                    .lineLimit(1)
+                            }
+                            Spacer(minLength: 12)
+                            formattingPicker(
+                                selection: Binding(
+                                    get: { rule.profile },
+                                    set: {
+                                        controller.setApplicationFormattingProfile(
+                                            $0,
+                                            bundleIdentifier: rule.bundleIdentifier
+                                        )
+                                    }
+                                ),
+                                label: "\(rule.applicationName) writing style",
+                                width: 170
+                            )
+                            Button {
+                                controller.removeApplicationFormattingRule(
+                                    bundleIdentifier: rule.bundleIdentifier
+                                )
+                            } label: {
+                                Image(systemName: "trash")
+                            }
+                            .buttonStyle(.borderless)
+                            .help("Use the default style in \(rule.applicationName)")
+                        }
+                    }
+
+                    if let application = addableApplication {
+                        Menu {
+                            ForEach(TranscriptFormattingProfile.allCases, id: \.self) {
+                                profile in
+                                Button(styleName(profile)) {
+                                    controller.addAvailableApplicationFormattingRule(
+                                        profile: profile
+                                    )
+                                }
+                            }
+                        } label: {
+                            Label(
+                                "Use a different style in \(application.applicationName ?? "current app")",
+                                systemImage: "plus"
+                            )
+                        }
+                        .menuStyle(.borderlessButton)
+                        .fixedSize()
+                    } else if controller.settings.applicationFormattingRules.isEmpty {
+                        Text(
+                            "Open Settings from the menu bar while working in "
+                                + "another app to add it."
+                        )
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    }
+                }
             }
+        }
+    }
+
+    private func formattingPicker(
+        selection: Binding<TranscriptFormattingProfile>,
+        label: String,
+        width: CGFloat = 220
+    ) -> some View {
+        Picker(label, selection: selection) {
+            Text("Casual").tag(TranscriptFormattingProfile.casual)
+            Text("Formatted · Recommended").tag(TranscriptFormattingProfile.formatted)
+            Text("Professional").tag(TranscriptFormattingProfile.professional)
+            Text("AI Communication").tag(TranscriptFormattingProfile.aiCommunication)
+        }
+        .labelsHidden()
+        .frame(width: width)
+    }
+
+    private var addableApplication: TranscriptTarget? {
+        guard controller.settings.applicationFormattingRules.count
+            < AppSettings.maximumApplicationFormattingRules,
+              let application = controller.availableApplication,
+              let bundleIdentifier = application.bundleIdentifier,
+              !controller.settings.applicationFormattingRules.contains(where: {
+                  $0.bundleIdentifier.compare(
+                      bundleIdentifier,
+                      options: [.caseInsensitive]
+                  ) == .orderedSame
+              })
+        else {
+            return nil
+        }
+        return application
+    }
+
+    private func styleName(_ profile: TranscriptFormattingProfile) -> String {
+        switch profile {
+        case .casual: return "Casual"
+        case .formatted: return "Formatted"
+        case .professional: return "Professional"
+        case .aiCommunication: return "AI Communication"
         }
     }
 
