@@ -16,6 +16,7 @@ TEAM_IDENTIFIER="${WORDHAND_RELEASE_TEAM_ID:-}"
 SIGNING_IDENTITY="${WORDHAND_CODESIGN_IDENTITY:-}"
 NOTARY_PROFILE="${WORDHAND_NOTARYTOOL_PROFILE:-}"
 EXPECTED_COMMIT="${WORDHAND_RELEASE_COMMIT:-}"
+MANIFEST_PRIVATE_KEY="${WORDHAND_RELEASE_MANIFEST_PRIVATE_KEY:-}"
 OUTPUT_PARENT="${WORDHAND_RELEASE_OUTPUT_DIRECTORY:-${REPO_DIR}/dist/releases}"
 
 reject() {
@@ -45,10 +46,30 @@ if [ -n "$(
     reject "release source checkout must be completely clean"
 fi
 
+if [ -z "${MANIFEST_PRIVATE_KEY}" ]; then
+    reject "WORDHAND_RELEASE_MANIFEST_PRIVATE_KEY must name the signing key file"
+fi
+/usr/bin/swift build \
+    --package-path "${REPO_DIR}" \
+    -c release \
+    --product wordhand-release-auth >/dev/null
+RELEASE_AUTH_BIN_DIRECTORY="$(
+    /usr/bin/swift build \
+        --package-path "${REPO_DIR}" \
+        -c release \
+        --show-bin-path
+)"
+RELEASE_AUTH_TOOL="${RELEASE_AUTH_BIN_DIRECTORY}/wordhand-release-auth"
+"${RELEASE_AUTH_TOOL}" production-key-status
+"${RELEASE_AUTH_TOOL}" \
+    preflight-private-key \
+    "${MANIFEST_PRIVATE_KEY}"
+
 RELEASE_NAME="Wordhand-${VERSION}-${BUILD_NUMBER}"
 FINAL_DIRECTORY="${OUTPUT_PARENT}/${RELEASE_NAME}"
 ASSET_NAME="Wordhand-${VERSION}-macOS-arm64.dmg"
 MANIFEST_NAME="${ASSET_NAME}.manifest.json"
+SIGNATURE_NAME="${MANIFEST_NAME}.signature.json"
 
 if [ -e "${FINAL_DIRECTORY}" ] || [ -L "${FINAL_DIRECTORY}" ]; then
     reject "release output already exists"
@@ -196,10 +217,22 @@ DESIGNATED_REQUIREMENT_SHA256="$(
     "${TEAM_IDENTIFIER}" \
     "${DESIGNATED_REQUIREMENT_SHA256}"
 
+"${RELEASE_AUTH_TOOL}" \
+    sign \
+    "${FINAL_STAGING_DIRECTORY}/${MANIFEST_NAME}" \
+    "${MANIFEST_PRIVATE_KEY}" \
+    "${FINAL_STAGING_DIRECTORY}/${SIGNATURE_NAME}"
+"${RELEASE_AUTH_TOOL}" \
+    verify \
+    "${FINAL_STAGING_DIRECTORY}/${MANIFEST_NAME}" \
+    "${FINAL_STAGING_DIRECTORY}/${SIGNATURE_NAME}"
+
 /bin/mv "${FINAL_STAGING_DIRECTORY}" "${FINAL_DIRECTORY}"
 
 /bin/echo "Built notarized release artifact:"
 /bin/echo "  ${FINAL_DIRECTORY}/${ASSET_NAME}"
 /bin/echo "Integrity manifest:"
 /bin/echo "  ${FINAL_DIRECTORY}/${MANIFEST_NAME}"
+/bin/echo "Authenticated manifest signature:"
+/bin/echo "  ${FINAL_DIRECTORY}/${SIGNATURE_NAME}"
 /bin/echo "No release was published or installed."

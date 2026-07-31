@@ -210,6 +210,45 @@ expect_exit_78 \
     1.2.3 \
     42
 
+/usr/bin/swift build \
+    --package-path "${REPO_DIR}" \
+    -c release \
+    --product wordhand-release-auth >/dev/null
+RELEASE_AUTH_TOOL="$(
+    /usr/bin/swift build \
+        --package-path "${REPO_DIR}" \
+        -c release \
+        --show-bin-path
+)/wordhand-release-auth"
+expect_exit_78 \
+    "production manifest trust is deliberately unavailable" \
+    "${RELEASE_AUTH_TOOL}" \
+    production-key-status
+
+PRIVATE_KEY_FIXTURE="${WORK_DIRECTORY}/private-key"
+/usr/bin/printf '12345678901234567890123456789012' >"${PRIVATE_KEY_FIXTURE}"
+/bin/chmod 600 "${PRIVATE_KEY_FIXTURE}"
+expect_exit_78 \
+    "fixture private key cannot activate production trust" \
+    "${RELEASE_AUTH_TOOL}" \
+    preflight-private-key \
+    "${PRIVATE_KEY_FIXTURE}"
+
+/bin/chmod +a "everyone allow read" "${PRIVATE_KEY_FIXTURE}"
+set +e
+ACL_REJECTION="$(
+    "${RELEASE_AUTH_TOOL}" \
+        preflight-private-key \
+        "${PRIVATE_KEY_FIXTURE}" 2>&1
+)"
+ACL_STATUS=$?
+set -e
+if [ "${ACL_STATUS}" -ne 78 ] ||
+    ! /usr/bin/grep -q 'insecurePrivateKeyFile' <<<"${ACL_REJECTION}"; then
+    /bin/echo "mode-0600 private key with an extended ACL was accepted" >&2
+    exit 1
+fi
+
 expect_exit_78 \
     "release builder requires an exact source commit before building" \
     /usr/bin/env \
@@ -224,6 +263,12 @@ if /usr/bin/grep -Eq \
     'curl|releases/download|api\.github\.com/repos/.*/releases' \
     "${SCRIPT_DIR}/install.sh"; then
     /bin/echo "legacy installer still contains an unauthenticated download path" >&2
+    exit 1
+fi
+if /usr/bin/grep -Eq \
+    '(--public-key|--key-id|--algorithm|fixture)' \
+    "${REPO_DIR}/Sources/wordhand-release-auth/main.swift"; then
+    /bin/echo "release authentication CLI exposes a trust-injection surface" >&2
     exit 1
 fi
 
@@ -272,9 +317,17 @@ IMAGE_STAPLE_LINE="$(source_line 'stapler staple "${DISK_IMAGE}"')"
 IMAGE_VERIFY_LINE="$(source_line '"${SCRIPT_DIR}/verify-release-disk-image.sh" \')"
 FINAL_HASH_LINE="$(source_line 'ASSET_SHA256="$(')"
 MANIFEST_VERIFY_LINE="$(source_line '"${SCRIPT_DIR}/verify-release-manifest.sh" \')"
+TRUST_STATUS_LINE="$(source_line '"${RELEASE_AUTH_TOOL}" production-key-status')"
+PRIVATE_KEY_PREFLIGHT_LINE="$(source_line 'preflight-private-key \')"
+APP_BUILD_LINE="$(source_line '"${SCRIPT_DIR}/build-app.sh"')"
+MANIFEST_SIGN_LINE="$(source_line '    sign \')"
+SIGNATURE_VERIFY_LINE="$(source_line '    verify \')"
 FINAL_MOVE_LINE="$(source_line '/bin/mv "${FINAL_STAGING_DIRECTORY}" "${FINAL_DIRECTORY}"')"
 
-if [ -z "${SIGNED_VERIFY_LINE}" ] ||
+if [ -z "${TRUST_STATUS_LINE}" ] ||
+    [ -z "${PRIVATE_KEY_PREFLIGHT_LINE}" ] ||
+    [ -z "${APP_BUILD_LINE}" ] ||
+    [ -z "${SIGNED_VERIFY_LINE}" ] ||
     [ -z "${APP_NOTARY_LINE}" ] ||
     [ -z "${APP_STAPLE_LINE}" ] ||
     [ -z "${APP_NOTARIZED_VERIFY_LINE}" ] ||
@@ -284,7 +337,11 @@ if [ -z "${SIGNED_VERIFY_LINE}" ] ||
     [ -z "${IMAGE_VERIFY_LINE}" ] ||
     [ -z "${FINAL_HASH_LINE}" ] ||
     [ -z "${MANIFEST_VERIFY_LINE}" ] ||
+    [ -z "${MANIFEST_SIGN_LINE}" ] ||
+    [ -z "${SIGNATURE_VERIFY_LINE}" ] ||
     [ -z "${FINAL_MOVE_LINE}" ] ||
+    [ "${TRUST_STATUS_LINE}" -ge "${PRIVATE_KEY_PREFLIGHT_LINE}" ] ||
+    [ "${PRIVATE_KEY_PREFLIGHT_LINE}" -ge "${APP_BUILD_LINE}" ] ||
     [ "${SIGNED_VERIFY_LINE}" -ge "${APP_NOTARY_LINE}" ] ||
     [ "${APP_NOTARY_LINE}" -ge "${APP_STAPLE_LINE}" ] ||
     [ "${APP_STAPLE_LINE}" -ge "${APP_NOTARIZED_VERIFY_LINE}" ] ||
@@ -294,7 +351,9 @@ if [ -z "${SIGNED_VERIFY_LINE}" ] ||
     [ "${IMAGE_STAPLE_LINE}" -ge "${IMAGE_VERIFY_LINE}" ] ||
     [ "${IMAGE_VERIFY_LINE}" -ge "${FINAL_HASH_LINE}" ] ||
     [ "${FINAL_HASH_LINE}" -ge "${MANIFEST_VERIFY_LINE}" ] ||
-    [ "${MANIFEST_VERIFY_LINE}" -ge "${FINAL_MOVE_LINE}" ]; then
+    [ "${MANIFEST_VERIFY_LINE}" -ge "${MANIFEST_SIGN_LINE}" ] ||
+    [ "${MANIFEST_SIGN_LINE}" -ge "${SIGNATURE_VERIFY_LINE}" ] ||
+    [ "${SIGNATURE_VERIFY_LINE}" -ge "${FINAL_MOVE_LINE}" ]; then
     /bin/echo "release artifact operations are not in the fail-closed order" >&2
     exit 1
 fi

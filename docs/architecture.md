@@ -1203,14 +1203,33 @@ identity are required for reliable TCC permissions. The release path must not
 strip quarantine attributes.
 
 The source-only artifact builder accepts an explicit version, build, exact
-source commit, Developer ID identity, expected Team ID, and existing notary
-profile. It requires a completely clean checkout, builds an arm64
+source commit, Developer ID identity, expected Team ID, existing notary
+profile, and owner-only Ed25519 private-key file. It requires a completely
+clean checkout and a production trust anchor compiled into the signed verifier
+whose key fingerprint matches that private key before it compiles the app or
+contacts Apple. The production verifier accepts only manifest and signature
+bytes; public keys, algorithms, fixture modes, and alternate anchors are not
+runtime inputs. The pinned anchor cannot disappear with a separately copied
+SwiftPM resource bundle.
+
+The signing envelope binds the exact manifest bytes, their SHA-256 digest, the
+Ed25519 algorithm, and an `ed25519:` key ID derived from the SHA-256 of the raw
+32-byte public key under a Wordhand-specific domain separator. Canonical JSON,
+exact-field, size, schema, algorithm, key-fingerprint, digest, signature, and
+pinned-anchor checks all fail closed. Fixture keys exist only inside Swift
+tests. The compiled-in production anchor is intentionally null, so no release
+artifact can currently pass the preflight; choosing and protecting the real
+key remains an Aaron-gated shipping decision.
+
+After that preflight the builder builds an arm64
 `com.valyou.wordhand` app with hardened runtime, secure timestamp, and only the
 microphone entitlement, then verifies the signed identity before submitting
 anything. It notarizes and staples the app, requires Gatekeeper acceptance,
 packages only that app plus an exact `/Applications` convenience link, signs
 and notarizes the disk image, reopens it read-only for complete verification,
-and emits final bytes plus a deterministic integrity manifest. It has no
+and emits final bytes plus a deterministic integrity manifest and detached
+authenticated signature. It verifies that signature against the pinned
+production anchor before atomically exposing the release directory. It has no
 publish, public-artifact download, install, open, or credential-discovery
 operation. SwiftPM may fetch pinned source dependencies when the local cache is
 empty.

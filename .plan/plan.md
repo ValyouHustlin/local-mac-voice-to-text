@@ -53,9 +53,11 @@ order:
 7. [ ] fresh-Mac onboarding plus the signed, notarized, permission-stable
    updater; the compact readiness window and recoverable local-model
    preparation, fail-closed same-identity update preflight, and nonpublishing
-   hardened/notarized artifact builder are source-complete and isolated-
-   verified. A fresh-account pass, resolved source provenance, authenticated
-   public manifest/update feed, selected credentials, and attended
+   hardened/notarized artifact builder with pinned Ed25519 manifest
+   authentication are source-complete and isolated-verified. Production trust
+   remains deliberately unset, so the builder cannot compile or notarize a
+   release until key custody is selected. A fresh-account pass, resolved source
+   provenance, authenticated public update feed, selected credentials, and attended
    install/update-survival receipt remain.
 
 The first slice stores ordered 16 kHz Float32 frames in owner-only `Pending
@@ -918,6 +920,10 @@ Goal: install and update like a normal trusted Mac app.
 - Notarize and staple.
 - Package without stripping quarantine.
 - Add release CI, checksums, changelog, and rollback instructions.
+- [x] Bind exact release-manifest bytes to a canonical Ed25519 signature and a
+  production trust anchor compiled into the signed verifier; keep fixture keys
+  test-only and fail before app compilation/notarization while production
+  trust is unset.
 - Resolve upstream license provenance and publish a compatible project license.
 - Add an update mechanism whose metadata contains no transcript content.
 - Keep release login-item registration intact across update without calling

@@ -30,6 +30,10 @@ let package = Package(
     products: [
         .library(name: "WordhandCore", targets: ["WordhandCore"]),
         .executable(name: "wordhand", targets: ["wordhand"]),
+        .executable(
+            name: "wordhand-release-auth",
+            targets: ["wordhand-release-auth"]
+        ),
     ],
     dependencies: [
         .package(url: "https://github.com/apple/swift-argument-parser.git", from: "1.3.0"),
@@ -59,6 +63,10 @@ let package = Package(
                 .product(name: "ArgumentParser", package: "swift-argument-parser"),
                 .product(name: "WhisperKit", package: "argmax-oss-swift"),
             ]
+        ),
+        .executableTarget(
+            name: "wordhand-release-auth",
+            dependencies: ["WordhandCore"]
         ),
         .testTarget(
             name: "WordhandCoreTests",
