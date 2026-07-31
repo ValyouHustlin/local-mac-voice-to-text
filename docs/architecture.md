@@ -241,13 +241,21 @@ only when Accessibility, Input Monitoring, Microphone, and the local model are
 all ready. Settings, dictionary, history, and the data directory are hardened
 to owner-only permissions.
 
-The updater must fail closed before replacing an installed release unless the
-candidate preserves the canonical bundle identifier, installed path, Team ID,
-and designated signing requirement. The present tagged workflow and legacy
-curl installer do not meet that bar: they distribute a command-line archive
-rather than a notarized app and do not authenticate the downloaded archive.
-That release-path work is a separate shipping slice so first-run UI cannot be
-mistaken for update identity proof.
+The app updater now fails closed before process termination or filesystem
+replacement. It stages the candidate, validates both app signatures, and
+requires the plist identifier, signed identifier, Team ID, and exact designated
+signing requirement to match the expected channel and installed app. Release
+updates are restricted to the canonical `/Applications/Wordhand.app` path. A
+fresh release is rejected because no installed identity exists to anchor the
+comparison; it must arrive through the future authenticated and notarized
+distribution path. Development keeps its distinct bundle identifier and permits
+a first local install, but later updates must retain the same signing
+requirement.
+
+This preflight proves rejection before mutation, not privacy or login-item
+survival. The present tagged workflow and legacy curl installer still
+distribute a command-line archive rather than a notarized app and do not
+authenticate the downloaded archive. They remain shipping blockers.
 
 P2 custom dictionary now drives both transcription stages. Its runtime path is:
 

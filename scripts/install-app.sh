@@ -42,7 +42,56 @@ SOURCE_APP="${WORDHAND_APP_OUTPUT:-${REPO_DIR}/dist/${APP_NAME}.app}"
 TARGET_APP="${INSTALL_DIRECTORY}/${APP_NAME}.app"
 TARGET_BINARY="${TARGET_APP}/Contents/MacOS/wordhand"
 
+canonical_destination() {
+    local path="$1"
+    local parent
+    local name
+    if [ -e "${path}" ] || [ -L "${path}" ]; then
+        /bin/realpath "${path}"
+        return
+    fi
+    parent="$(
+        cd "$(/usr/bin/dirname "${path}")" &&
+            /bin/pwd -P
+    )"
+    name="$(/usr/bin/basename "${path}")"
+    /bin/echo "${parent}/${name}"
+}
+
+if [ ! -d "$(/usr/bin/dirname "${SOURCE_APP}")" ]; then
+    /bin/echo "build output parent directory does not exist" >&2
+    exit 78
+fi
+/bin/mkdir -p "${INSTALL_DIRECTORY}"
+SOURCE_APP_CANONICAL="$(canonical_destination "${SOURCE_APP}")"
+TARGET_APP_CANONICAL="$(canonical_destination "${TARGET_APP}")"
+case "${SOURCE_APP_CANONICAL}" in
+    "${TARGET_APP_CANONICAL}"|"${TARGET_APP_CANONICAL}/"*)
+        /bin/echo "build output must be separate from the installed app" >&2
+        exit 78
+        ;;
+esac
+case "${TARGET_APP_CANONICAL}" in
+    "${SOURCE_APP_CANONICAL}/"*)
+        /bin/echo "installed app must be separate from the build output" >&2
+        exit 78
+        ;;
+esac
+if [ "${BUILD_CHANNEL}" = "release" ] &&
+    [ "${TARGET_APP_CANONICAL}" != "/Applications/Wordhand.app" ]; then
+    /bin/echo "release updates require the canonical /Applications/Wordhand.app path" >&2
+    exit 78
+fi
+
 "${SCRIPT_DIR}/build-app.sh"
+
+STAGING_APP="${INSTALL_DIRECTORY}/.Wordhand.app.staging.$$"
+trap '/bin/rm -rf "${STAGING_APP}"' EXIT
+/usr/bin/ditto "${SOURCE_APP}" "${STAGING_APP}"
+"${SCRIPT_DIR}/verify-app-update.sh" \
+    "${BUILD_CHANNEL}" \
+    "${STAGING_APP}" \
+    "${TARGET_APP}"
 
 RUNNING_PIDS="$(/usr/bin/pgrep -f "^${TARGET_BINARY}( |$)" || true)"
 if [ -n "${RUNNING_PIDS}" ]; then
@@ -75,11 +124,6 @@ for archived_app in "${BACKUP_DIRECTORY}"/*.app; do
     "${LSREGISTER}" -u "${archived_app}" >/dev/null 2>&1 || true
     /bin/mv "${archived_app}" "${archived_app%.app}.app-backup"
 done
-
-STAGING_APP="${INSTALL_DIRECTORY}/.Wordhand.app.staging.$$"
-trap '/bin/rm -rf "${STAGING_APP}"' EXIT
-/usr/bin/ditto "${SOURCE_APP}" "${STAGING_APP}"
-/usr/bin/codesign --verify --deep --strict "${STAGING_APP}"
 
 archive_app() {
     local app_path="$1"

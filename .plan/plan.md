@@ -52,8 +52,10 @@ order:
    accuracy score;
 7. [ ] fresh-Mac onboarding plus the signed, notarized, permission-stable
    updater; the compact readiness window and recoverable local-model
-   preparation are source-complete and isolated-verified, while a fresh-account
-   pass and the authenticated updater remain.
+   preparation plus fail-closed same-identity update preflight are
+   source-complete and isolated-verified, while a fresh-account pass,
+   authenticated notarized distribution, and attended update-survival receipt
+   remain.
 
 The first slice stores ordered 16 kHz Float32 frames in owner-only `Pending
 Captures` files. A torn last frame is ignored while every earlier complete frame
@@ -212,15 +214,24 @@ action, and repeated clicks cannot start concurrent retries. Runtime still
 opens the complete cached model with network fallback only when needed; no
 audio or transcript content is transmitted.
 
-The release path remains deliberately separate. The current tagged workflow
-still publishes an unsigned command-line archive, the legacy curl installer
-does not authenticate the downloaded archive, and the app installer does not
-yet prove candidate/current bundle ID, Team ID, designated requirement, and
-installed path continuity before replacement. These are tracked shipping
-blockers, not part of the onboarding slice.
+The app replacement path now stages and authenticates the candidate before
+stopping Wordhand or moving the installed app. Both plist and signed bundle
+identifiers must match the channel. An update must also preserve the installed
+Team ID and exact designated signing requirement. Release updates are confined
+to `/Applications/Wordhand.app`; a fresh release cannot claim update continuity
+and must arrive through the future notarized distribution path. Development
+keeps its separate identity and allows a first local install, but a later
+ad-hoc rebuild with a changed code requirement fails rather than silently
+resetting privacy grants.
+
+The current tagged workflow still publishes an unsigned command-line archive
+and the legacy curl installer does not authenticate that download. They remain
+tracked shipping blockers; the guarded app updater is not yet a public release
+channel.
 
 Receipt:
-`docs/verification/2026-07-30-first-run-readiness.md`.
+`docs/verification/2026-07-30-first-run-readiness.md` and
+`docs/verification/2026-07-30-update-identity-preflight.md`.
 
 The first deeper spoken-editing slice adds deterministic `command new line` and
 `command new paragraph` without widening into destructive selection or

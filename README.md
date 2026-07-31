@@ -68,8 +68,9 @@ searchable Applications folders with a non-launchable backup suffix, keeps
 build output out of Spotlight, registers the installed app, and opens it. It
 does not create a LaunchAgent, login item, or background item. Local source
 builds are ad-hoc signed by default; they are not a substitute for the planned
-notarized public release, and macOS may require permissions again after
-replacing an ad-hoc-signed build.
+notarized public release. The installer refuses to replace an existing app when
+its signing requirement changes, because doing so could reset macOS privacy
+permissions.
 
 For repeated local development installs, use one persistent Keychain
 code-signing identity so macOS sees each rebuild as the same app:
@@ -81,18 +82,20 @@ code-signing identity so macOS sees each rebuild as the same app:
 
 The configuration stores only the identity's display name at
 `~/Library/Application Support/Wordhand/signing-identity`; the private key
-remains in Keychain. The public release path still requires Developer ID
-signing and notarization.
+remains in Keychain. Updates are staged and must preserve the installed plist
+identifier, signed identifier, Team ID, and designated signing requirement
+before Wordhand is stopped or replaced. The public release path still requires
+Developer ID signing and notarization.
 
 Launch at login is intentionally release-only. The signed release will keep the
 canonical `com.valyou.wordhand` identity across updates and expose the toggle in
 Settings. Development installers reject `--launch-at-login` so rebuilding
 cannot repeatedly trigger macOS Background Items approval.
 
-On first launch, macOS asks for Microphone, Input Monitoring, and Accessibility
-access. Wordhand keeps Settings open with a separate, truthful status and repair
-action for each grant. Input Monitoring detects the global shortcut,
-Accessibility inserts the result, and Microphone captures speech. macOS
+On first launch, Wordhand opens a Welcome window with separate, explicit actions
+for Microphone, Input Monitoring, and Accessibility access; merely presenting
+the window does not trigger a system prompt. Input Monitoring detects the global
+shortcut, Accessibility inserts the result, and Microphone captures speech. macOS
 secure-input fields intentionally block text injection; Wordhand keeps the
 transcript in history instead of treating a password field as a valid target.
 
