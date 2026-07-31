@@ -58,6 +58,7 @@ public struct OperationalDiagnosticsReport: Equatable, Sendable {
     public let warningCount: Int
     public let tailAuditCount: Int
     public let tailRecoveryCount: Int
+    public let fullRetryCount: Int
     public let averageAudioSeconds: Double?
     public let averageCaptureRMS: Double?
     public let p95ClippedSampleFraction: Double?
@@ -65,6 +66,9 @@ public struct OperationalDiagnosticsReport: Equatable, Sendable {
     public let averageTranscriptionSeconds: Double?
     public let medianTranscriptionSeconds: Double?
     public let p95TranscriptionSeconds: Double?
+    public let averagePrimaryDecodeSeconds: Double?
+    public let averageTailAuditDecodeSeconds: Double?
+    public let averageFullRetryDecodeSeconds: Double?
     public let averageProcessingSeconds: Double?
     public let averageInsertionSeconds: Double?
     public let p95TotalSeconds: Double?
@@ -77,6 +81,7 @@ public struct OperationalDiagnosticsReport: Equatable, Sendable {
 
 public enum OperationalDiagnosticsError: Error, Equatable {
     case invalidConfiguration
+    case invalidMetric(String)
     case fileWriteFailed
     case privatePayloadKey(String)
     case exportOverwritesStore
@@ -147,9 +152,16 @@ public final class OperationalDiagnosticsStore: @unchecked Sendable {
     public func append(_ event: OperationalDiagnosticEvent) throws {
         try lock.withLock {
             if let forbiddenKey = event.attributes.keys.first(where: {
-                Self.forbiddenPayloadAttributeKeys.contains($0.lowercased())
+                Self.forbiddenPayloadKeys.contains($0.lowercased())
+            }) ?? event.metrics.keys.first(where: {
+                Self.forbiddenPayloadKeys.contains($0.lowercased())
             }) {
                 throw OperationalDiagnosticsError.privatePayloadKey(forbiddenKey)
+            }
+            if let invalidMetric = event.metrics.first(where: {
+                !$0.value.isFinite
+            }) {
+                throw OperationalDiagnosticsError.invalidMetric(invalidMetric.key)
             }
             try createDirectoryIfNeeded()
             let fileURL = dailyFileURL(for: event.occurredAt)
@@ -214,9 +226,24 @@ public final class OperationalDiagnosticsStore: @unchecked Sendable {
                     $0.attributes["tail_outcome"]
                 )
             }
+            let fullRetries = transcriptions.filter {
+                $0.attributes["full_retry_performed"] == "true"
+            }
             let transcriptionDurations = transcriptions.compactMap {
                 $0.metrics["transcription_seconds"]
             }
+            let primaryDecodeDurations = Self.positiveMetrics(
+                transcriptions,
+                key: "primary_decode_seconds"
+            )
+            let tailAuditDecodeDurations = Self.positiveMetrics(
+                transcriptions,
+                key: "tail_audit_decode_seconds"
+            )
+            let fullRetryDecodeDurations = Self.positiveMetrics(
+                transcriptions,
+                key: "full_retry_decode_seconds"
+            )
             let totalDurations = completedDictations.compactMap {
                 $0.metrics["total_seconds"]
             }
@@ -235,6 +262,7 @@ public final class OperationalDiagnosticsStore: @unchecked Sendable {
                 warningCount: warnings.count,
                 tailAuditCount: tailAudits.count,
                 tailRecoveryCount: tailRecoveries.count,
+                fullRetryCount: fullRetries.count,
                 averageAudioSeconds: Self.average(
                     captures.compactMap { $0.metrics["audio_seconds"] }
                 ),
@@ -262,6 +290,15 @@ public final class OperationalDiagnosticsStore: @unchecked Sendable {
                 p95TranscriptionSeconds: Self.percentile(
                     transcriptionDurations,
                     percentile: 0.95
+                ),
+                averagePrimaryDecodeSeconds: Self.average(
+                    primaryDecodeDurations
+                ),
+                averageTailAuditDecodeSeconds: Self.average(
+                    tailAuditDecodeDurations
+                ),
+                averageFullRetryDecodeSeconds: Self.average(
+                    fullRetryDecodeDurations
                 ),
                 averageProcessingSeconds: Self.average(
                     events.compactMap { $0.metrics["processing_seconds"] }
@@ -468,6 +505,21 @@ public final class OperationalDiagnosticsStore: @unchecked Sendable {
         return values.reduce(0, +) / Double(values.count)
     }
 
+    private static func positiveMetrics(
+        _ events: [OperationalDiagnosticEvent],
+        key: String
+    ) -> [Double] {
+        events.compactMap {
+            guard let value = $0.metrics[key],
+                  value.isFinite,
+                  value > 0
+            else {
+                return nil
+            }
+            return value
+        }
+    }
+
     private static func counts(_ values: [String]) -> [String: Int] {
         Dictionary(values.map { ($0, 1) }, uniquingKeysWith: +)
     }
@@ -515,7 +567,7 @@ public final class OperationalDiagnosticsStore: @unchecked Sendable {
         )
     }
 
-    private static let forbiddenPayloadAttributeKeys: Set<String> = [
+    private static let forbiddenPayloadKeys: Set<String> = [
         "audio",
         "audio_data",
         "audio_samples",

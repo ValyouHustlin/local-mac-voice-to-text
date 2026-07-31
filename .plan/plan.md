@@ -704,9 +704,13 @@ use.
 - [x] Summarize audio signal health without writing samples.
 - [x] Record tail-audit and tail-recovery outcomes and surface a `Tail
   recovered` badge in History.
+- [x] Preserve metadata-only primary, tail-audit, and full-buffer-retry decode
+  durations and report their positive finite averages plus the retry count;
+  legacy events remain readable without false zero timings.
 - [x] Rotate logs daily, retain 90 days, enforce a strict 250 MB aggregate
   ceiling, and keep directory/file permissions at `0700`/`0600`.
-- [x] Reject known transcript, prompt, dictionary, and audio payload keys.
+- [x] Reject known transcript, prompt, dictionary, and audio payload keys in
+  attribute and metric dictionaries, and reject nonfinite metrics before write.
 - [x] Tolerate malformed JSONL lines without losing the healthy report.
 - [x] Add an hourly local heartbeat with uptime, readiness, power, and thermal
   state so long unattended runs leave liveness evidence.
@@ -723,6 +727,16 @@ use.
 - [x] Cancel stale refresh work and gate publication by generation so a slow
   older read cannot replace newer evidence.
 - [x] Render and inspect the loaded card at the minimum Settings content width.
+
+The first 90-day report after this instrumentation decision contained 28
+transcriptions, 18 tail audits, 14 recovered endings, and 14 full-buffer
+retries. Existing build-22 events do not contain per-stage timings, so the new
+averages intentionally remain absent until a later installed build records
+them. This evidence does not authorize a faster path; it establishes the
+runtime cost breakdown required to judge one without weakening full-buffer
+authority.
+
+Receipt: `docs/verification/2026-07-30-runtime-stage-timing.md`.
 - [x] Keep the feature entirely local with no analytics or upload path.
 - [x] Observe the installed app write startup, permission, hotkey, and warmup
   events without exercising microphone or insertion.

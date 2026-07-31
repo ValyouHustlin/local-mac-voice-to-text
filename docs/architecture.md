@@ -1036,10 +1036,11 @@ can be evaluated from evidence instead of memory. Diagnostics live at
 newline-delimited JSON files inside an owner-only `0700` directory.
 
 The operational schema records identifiers, timestamps, severity, bounded
-categorical attributes, and numeric measurements. It has no transcript or audio
-payload field, and the store rejects known transcript, prompt, dictionary, and
-audio payload keys. Transcript text remains in History; opted-in audio remains
-in Quality Lab. Neither is duplicated into diagnostics.
+categorical attributes, and finite numeric measurements. It has no transcript
+or audio payload field, and the store rejects known transcript, prompt,
+dictionary, and audio payload keys in both attribute and metric dictionaries.
+Transcript text remains in History; opted-in audio remains in Quality Lab.
+Neither is duplicated into diagnostics.
 
 Each dictation receives one correlation ID across:
 
@@ -1056,12 +1057,15 @@ dictation started
 The capture summary includes RMS, peak, clipped-sample fraction, active-window
 fraction, wall time, sample count, and buffered-audio duration without keeping
 samples. Transcription records model, latency, word/character counts, prompt
-artifact detection, full-retry use, and whether a tail audit verified or
-recovered missing text. Insertion records mode, verification strength, retry
-count, Secure Input blocking, checkpoint availability, and guarded-undo
-availability. App lifecycle records startup, permissions, hotkey readiness,
-model warmup, settings changes, normal termination, and an hourly heartbeat
-with app uptime, readiness, Low Power Mode, and thermal state.
+artifact detection, full-retry use, whether a tail audit verified or recovered
+missing text, and separate primary-decode, tail-audit-decode, and full-buffer-
+retry-decode durations. Stage averages include only positive finite values, so
+legacy events and stages that did not run cannot dilute the report with zeroes.
+Insertion records mode, verification strength, retry count, Secure Input
+blocking, checkpoint availability, and guarded-undo availability. App lifecycle
+records startup, permissions, hotkey readiness, model warmup, settings changes,
+normal termination, and an hourly heartbeat with app uptime, readiness, Low
+Power Mode, and thermal state.
 
 Files rotate by UTC day, retain at most 90 days, and enforce a strict aggregate
 250 MB ceiling by removing the oldest files and then the oldest complete lines

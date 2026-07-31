@@ -72,6 +72,59 @@ struct OperationalDiagnosticsStoreTests {
     }
 
     @Test
+    func rejectsTranscriptOrAudioPayloadMetricKeys() throws {
+        let fixture = DiagnosticsFixture()
+        defer { fixture.remove() }
+        let store = try OperationalDiagnosticsStore(
+            directoryURL: fixture.directory
+        )
+        let event = OperationalDiagnosticEvent(
+            severity: .info,
+            name: "invalid.test",
+            sessionID: UUID(),
+            metrics: ["audio_samples": 12_345]
+        )
+
+        #expect(
+            throws:
+                OperationalDiagnosticsError.privatePayloadKey("audio_samples")
+        ) {
+            try store.append(event)
+        }
+        #expect(try store.events().isEmpty)
+    }
+
+    @Test
+    func rejectsNonfiniteMetricsWithoutDamagingExistingEvents() throws {
+        let fixture = DiagnosticsFixture()
+        defer { fixture.remove() }
+        let now = Date(timeIntervalSince1970: 1_700_000_000)
+        let store = try OperationalDiagnosticsStore(
+            directoryURL: fixture.directory,
+            now: { now }
+        )
+        let healthy = event(at: now)
+        try store.append(healthy)
+
+        for value in [Double.nan, Double.infinity, -Double.infinity] {
+            let invalid = OperationalDiagnosticEvent(
+                severity: .info,
+                name: "invalid.test",
+                sessionID: UUID(),
+                metrics: ["stage_seconds": value]
+            )
+            #expect(
+                throws:
+                    OperationalDiagnosticsError.invalidMetric("stage_seconds")
+            ) {
+                try store.append(invalid)
+            }
+        }
+
+        #expect(try store.events().map(\.id) == [healthy.id])
+    }
+
+    @Test
     func prunesFilesOutsideNinetyDayRetention() throws {
         let fixture = DiagnosticsFixture()
         defer { fixture.remove() }
@@ -125,8 +178,17 @@ struct OperationalDiagnosticsStoreTests {
                 name: "transcription.completed",
                 sessionID: sessionID,
                 dictationID: dictationID,
-                metrics: ["transcription_seconds": 4, "audio_seconds": 60],
-                attributes: ["tail_outcome": "full_retry_recovered"]
+                metrics: [
+                    "transcription_seconds": 4,
+                    "audio_seconds": 60,
+                    "primary_decode_seconds": 1.5,
+                    "tail_audit_decode_seconds": 0.5,
+                    "full_retry_decode_seconds": 2,
+                ],
+                attributes: [
+                    "tail_outcome": "full_retry_recovered",
+                    "full_retry_performed": "true",
+                ]
             ),
             OperationalDiagnosticEvent(
                 occurredAt: now,
@@ -148,13 +210,61 @@ struct OperationalDiagnosticsStoreTests {
         #expect(report.transcriptionCount == 1)
         #expect(report.failureCount == 1)
         #expect(report.tailRecoveryCount == 1)
+        #expect(report.fullRetryCount == 1)
         #expect(report.averageTranscriptionSeconds == 4)
+        #expect(report.averagePrimaryDecodeSeconds == 1.5)
+        #expect(report.averageTailAuditDecodeSeconds == 0.5)
+        #expect(report.averageFullRetryDecodeSeconds == 2)
         #expect(report.averageAudioSeconds == 60)
         #expect(report.medianTranscriptionSeconds == 4)
         #expect(report.p95TranscriptionSeconds == 4)
         #expect(report.failuresByName["insertion.failed"] == 1)
         #expect(report.tailOutcomes["full_retry_recovered"] == 1)
         #expect(report.models.isEmpty)
+    }
+
+    @Test
+    func reportIgnoresZeroStageTimingsAndReadsLegacyEvents() throws {
+        let fixture = DiagnosticsFixture()
+        defer { fixture.remove() }
+        let now = Date(timeIntervalSince1970: 1_700_000_000)
+        let store = try OperationalDiagnosticsStore(
+            directoryURL: fixture.directory,
+            now: { now }
+        )
+        let sessionID = UUID()
+
+        try store.append(OperationalDiagnosticEvent(
+            occurredAt: now,
+            severity: .info,
+            name: "transcription.completed",
+            sessionID: sessionID,
+            metrics: ["transcription_seconds": 1],
+            attributes: ["tail_outcome": "not_audited"]
+        ))
+        try store.append(OperationalDiagnosticEvent(
+            occurredAt: now,
+            severity: .info,
+            name: "transcription.completed",
+            sessionID: sessionID,
+            metrics: [
+                "transcription_seconds": 3,
+                "primary_decode_seconds": 2,
+                "tail_audit_decode_seconds": 0,
+                "full_retry_decode_seconds": -1,
+            ],
+            attributes: [
+                "tail_outcome": "verified_covered",
+                "full_retry_performed": "false",
+            ]
+        ))
+
+        let report = try store.report()
+        #expect(report.transcriptionCount == 2)
+        #expect(report.fullRetryCount == 0)
+        #expect(report.averagePrimaryDecodeSeconds == 2)
+        #expect(report.averageTailAuditDecodeSeconds == nil)
+        #expect(report.averageFullRetryDecodeSeconds == nil)
     }
 
     @Test

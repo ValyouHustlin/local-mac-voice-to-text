@@ -459,6 +459,12 @@ public final class DictationCoordinator {
                     "final_word_count": Double(
                         transcriptionDiagnostics.finalWordCount
                     ),
+                    "primary_decode_seconds":
+                        transcriptionDiagnostics.primaryDecodeSeconds,
+                    "tail_audit_decode_seconds":
+                        transcriptionDiagnostics.tailAuditDecodeSeconds,
+                    "full_retry_decode_seconds":
+                        transcriptionDiagnostics.fullRetryDecodeSeconds,
                 ],
                 attributes: [
                     "model_id": transcriber.modelID,

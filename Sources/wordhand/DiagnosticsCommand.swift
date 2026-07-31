@@ -57,6 +57,7 @@ struct DiagnosticsCommands: ParsableCommand {
                 "failures: \(report.failureCount)",
                 "tail audits: \(report.tailAuditCount)",
                 "tail recoveries: \(report.tailRecoveryCount)",
+                "full-buffer retries: \(report.fullRetryCount)",
             ]
             if let value = report.averageAudioSeconds {
                 lines.append(String(format: "average audio: %.2fs", value))
@@ -85,6 +86,21 @@ struct DiagnosticsCommands: ParsableCommand {
             }
             if let value = report.p95TranscriptionSeconds {
                 lines.append(String(format: "p95 transcription: %.2fs", value))
+            }
+            if let value = report.averagePrimaryDecodeSeconds {
+                lines.append(String(format: "average primary decode: %.2fs", value))
+            }
+            if let value = report.averageTailAuditDecodeSeconds {
+                lines.append(String(
+                    format: "average tail-audit decode: %.2fs",
+                    value
+                ))
+            }
+            if let value = report.averageFullRetryDecodeSeconds {
+                lines.append(String(
+                    format: "average full-buffer retry decode: %.2fs",
+                    value
+                ))
             }
             if let value = report.averageProcessingSeconds {
                 lines.append(String(format: "average formatting: %.2fs", value))

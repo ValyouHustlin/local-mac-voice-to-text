@@ -159,6 +159,9 @@ struct DictationCoordinatorTests {
             transcription.attributes["tail_outcome"]
                 == TailRecoveryOutcome.fullRetryRecovered.rawValue
         )
+        #expect(transcription.metrics["primary_decode_seconds"] == 1.25)
+        #expect(transcription.metrics["tail_audit_decode_seconds"] == 0.75)
+        #expect(transcription.metrics["full_retry_decode_seconds"] == 2.5)
     }
 
     @Test
@@ -1716,7 +1719,10 @@ private final class DiagnosticFakeTranscriber:
             tailRecoveryOutcome: .fullRetryRecovered,
             primaryWordCount: 2,
             finalWordCount: 4,
-            fullRetryPerformed: true
+            fullRetryPerformed: true,
+            primaryDecodeSeconds: 1.25,
+            tailAuditDecodeSeconds: 0.75,
+            fullRetryDecodeSeconds: 2.5
         )
     }
 }

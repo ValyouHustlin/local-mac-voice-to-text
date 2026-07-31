@@ -273,6 +273,45 @@ struct GlobalInputAdapterTests {
     }
 
     @Test
+    func diagnosticsReportLabelsDecodeStagesWithoutPayloadContent() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(
+                "wordhand-diagnostics-format-\(UUID().uuidString)",
+                isDirectory: true
+            )
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = try OperationalDiagnosticsStore(directoryURL: directory)
+        try store.append(OperationalDiagnosticEvent(
+            severity: .info,
+            name: "transcription.completed",
+            sessionID: UUID(),
+            metrics: [
+                "transcription_seconds": 4.5,
+                "primary_decode_seconds": 1.25,
+                "tail_audit_decode_seconds": 0.75,
+                "full_retry_decode_seconds": 2.5,
+            ],
+            attributes: [
+                "tail_outcome": "full_retry_recovered",
+                "full_retry_performed": "true",
+            ]
+        ))
+
+        let output = DiagnosticsCommands.Report.format(
+            try store.report(),
+            retentionDays: 90
+        )
+
+        #expect(output.contains("full-buffer retries: 1"))
+        #expect(output.contains("average primary decode: 1.25s"))
+        #expect(output.contains("average tail-audit decode: 0.75s"))
+        #expect(output.contains("average full-buffer retry decode: 2.50s"))
+        #expect(output.contains(
+            "privacy: metadata only; no transcript text or audio"
+        ))
+    }
+
+    @Test
     @MainActor
     func overlayCancelControlKeepsSmallGlyphWithLargerHitTarget() {
         #expect(RecordingOverlay.cancelIconSize == 10)
