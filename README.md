@@ -85,7 +85,15 @@ The configuration stores only the identity's display name at
 remains in Keychain. Updates are staged and must preserve the installed plist
 identifier, signed identifier, Team ID, and designated signing requirement
 before Wordhand is stopped or replaced. The public release path still requires
-Developer ID signing and notarization.
+resolved source provenance, selected Developer ID and notarization credentials,
+an authenticated update manifest, and attended install/update evidence.
+
+The inherited tag publisher and remote shell installer are retired. Wordhand
+does not currently publish binary downloads. Its nonpublishing release builder
+can produce and locally verify a hardened, notarized disk image only when an
+explicit signing identity, Team ID, notary profile, version, build number, and
+exact clean source commit are supplied; it never uploads or installs the
+result.
 
 Launch at login is intentionally release-only. The signed release will keep the
 canonical `com.valyou.wordhand` identity across updates and expose the toggle in
@@ -204,8 +212,9 @@ dedicated to the test. The immediate kill command is
 
 ## Roadmap
 
-The next daily-use slices are a local corpus-evaluation harness, fresh-account
-onboarding, an attended natural-voice latency pass, and a signed release path.
+The remaining release work is a fresh-account pass, source-provenance
+resolution, authenticated update metadata, credential selection, and attended
+notarized install/update evidence.
 See
 [the product roadmap](.plan/plan.md) and
 [architecture](docs/architecture.md).

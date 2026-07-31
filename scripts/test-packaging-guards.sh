@@ -205,6 +205,7 @@ if [ ! -f "${NESTED_TARGET_APP}/installed-sentinel" ]; then
 fi
 
 "${SCRIPT_DIR}/test-update-identity.sh"
+"${SCRIPT_DIR}/test-release-distribution-guards.sh"
 
 preflight_line="$(
     /usr/bin/grep -n '"${SCRIPT_DIR}/verify-app-update.sh"' \

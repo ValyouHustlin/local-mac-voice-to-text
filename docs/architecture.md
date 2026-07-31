@@ -191,8 +191,9 @@ Verified by source inspection and dated receipts through 2026-07-30:
   asynchronously from a complete local cache without network validation;
 - macOS continuous integration for tests and release builds.
 
-Developer ID signing, hardened runtime, notarization, public packaging, an
-attended fresh-account onboarding pass, and a permission-stable updater remain
+Credentialed Developer ID signing, Apple notarization acceptance,
+independently authenticated public manifests, publication, an attended
+fresh-account onboarding pass, and permission-stable update evidence remain
 planned. Only measured receipts may promote latency or compatibility claims.
 
 ## Current delivery state
@@ -253,9 +254,13 @@ a first local install, but later updates must retain the same signing
 requirement.
 
 This preflight proves rejection before mutation, not privacy or login-item
-survival. The present tagged workflow and legacy curl installer still
-distribute a command-line archive rather than a notarized app and do not
-authenticate the downloaded archive. They remain shipping blockers.
+survival. The inherited tag-triggered CLI publisher has been removed and its
+network installer is retired: it exits before network or filesystem work. A
+nonpublishing release builder now encodes the hardened signing, notarization,
+stapling, Gatekeeper, disk-image layout, and final-byte integrity contract, but
+cannot publish or install an artifact. Source provenance, credential selection,
+Apple service acceptance, independently authenticated public metadata, and
+attended first-install/update evidence remain shipping blockers.
 
 P2 custom dictionary now drives both transcription stages. Its runtime path is:
 
@@ -1197,9 +1202,26 @@ installable disk image or package. A stable bundle identifier and signing
 identity are required for reliable TCC permissions. The release path must not
 strip quarantine attributes.
 
-Release automation will build, test, sign, notarize, staple, publish checksums,
-and produce an update feed. Publishing, certificate selection, and any paid
-service remain Aaron-gated actions.
+The source-only artifact builder accepts an explicit version, build, exact
+source commit, Developer ID identity, expected Team ID, and existing notary
+profile. It requires a completely clean checkout, builds an arm64
+`com.valyou.wordhand` app with hardened runtime, secure timestamp, and only the
+microphone entitlement, then verifies the signed identity before submitting
+anything. It notarizes and staples the app, requires Gatekeeper acceptance,
+packages only that app plus an exact `/Applications` convenience link, signs
+and notarizes the disk image, reopens it read-only for complete verification,
+and emits final bytes plus a deterministic integrity manifest. It has no
+publish, public-artifact download, install, open, or credential-discovery
+operation. SwiftPM may fetch pinned source dependencies when the local cache is
+empty.
+
+The legacy tag publisher and unauthenticated network installer are disabled.
+There is intentionally no public binary install path until inherited-source
+provenance is resolved, Aaron selects credential custody, an independently
+authenticated manifest/update-feed design is locked, and credentialed Apple
+service plus attended fresh-install/update receipts pass. Publishing,
+certificate selection, key custody, and any paid service remain Aaron-gated
+actions.
 
 The inherited upstream repository currently has no software license. Public
 source visibility is allowed, but an installable project release must not be

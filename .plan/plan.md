@@ -52,10 +52,11 @@ order:
    accuracy score;
 7. [ ] fresh-Mac onboarding plus the signed, notarized, permission-stable
    updater; the compact readiness window and recoverable local-model
-   preparation plus fail-closed same-identity update preflight are
-   source-complete and isolated-verified, while a fresh-account pass,
-   authenticated notarized distribution, and attended update-survival receipt
-   remain.
+   preparation, fail-closed same-identity update preflight, and nonpublishing
+   hardened/notarized artifact builder are source-complete and isolated-
+   verified. A fresh-account pass, resolved source provenance, authenticated
+   public manifest/update feed, selected credentials, and attended
+   install/update-survival receipt remain.
 
 The first slice stores ordered 16 kHz Float32 frames in owner-only `Pending
 Captures` files. A torn last frame is ignored while every earlier complete frame
@@ -224,14 +225,27 @@ keeps its separate identity and allows a first local install, but a later
 ad-hoc rebuild with a changed code requirement fails rather than silently
 resetting privacy grants.
 
-The current tagged workflow still publishes an unsigned command-line archive
-and the legacy curl installer does not authenticate that download. They remain
-tracked shipping blockers; the guarded app updater is not yet a public release
-channel.
+The inherited tag-triggered unsigned command-line publisher is now removed.
+The legacy network installer exits before downloading or mutating anything.
+A separate nonpublishing builder requires one explicit Developer ID identity,
+expected Team ID, notary profile, version, build number, and exact clean source
+commit. It builds only the release app identity with hardened runtime, a secure
+timestamp, and the microphone entitlement; notarizes and staples the app and
+disk image; requires Gatekeeper acceptance; verifies the disk image contains
+only `Wordhand.app` and the `/Applications` convenience link; and emits the
+final bytes with a local integrity manifest. It cannot upload, publish, install,
+open, or discover credentials.
+
+This quarantines the unsafe path without pretending the public channel exists.
+The adjacent manifest is not yet independently authenticated, the inherited
+source provenance remains unresolved, no Developer ID certificate or notary
+profile has been selected, and Apple service acceptance has not been exercised.
+Those remain shipping gates.
 
 Receipt:
 `docs/verification/2026-07-30-first-run-readiness.md` and
-`docs/verification/2026-07-30-update-identity-preflight.md`.
+`docs/verification/2026-07-30-update-identity-preflight.md` and
+`docs/verification/2026-07-30-release-distribution-quarantine.md`.
 
 The first deeper spoken-editing slice adds deterministic `command new line` and
 `command new paragraph` without widening into destructive selection or

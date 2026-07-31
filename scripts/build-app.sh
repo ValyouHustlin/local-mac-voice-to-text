@@ -8,6 +8,7 @@ REPO_DIR="$(cd "${SCRIPT_DIR}/.." && /bin/pwd)"
 APP_VERSION="${WORDHAND_VERSION:-0.1.0}"
 APP_BUILD="${WORDHAND_BUILD_NUMBER:-1}"
 BUILD_CHANNEL="${WORDHAND_BUILD_CHANNEL:-development}"
+BUILD_ARCHITECTURE="${WORDHAND_BUILD_ARCHITECTURE:-}"
 SIGNING_CONFIG="${WORDHAND_SIGNING_CONFIG:-${HOME}/Library/Application Support/Wordhand/signing-identity}"
 SIGNING_IDENTITY="${WORDHAND_CODESIGN_IDENTITY:-}"
 
@@ -43,6 +44,14 @@ esac
 
 APP_PATH="${WORDHAND_APP_OUTPUT:-${DEFAULT_APP_PATH}}"
 
+case "${BUILD_ARCHITECTURE}" in
+    ""|arm64) ;;
+    *)
+        /bin/echo "WORDHAND_BUILD_ARCHITECTURE must be empty or arm64" >&2
+        exit 64
+        ;;
+esac
+
 case "${APP_PATH}" in
     *.app) ;;
     *)
@@ -60,8 +69,18 @@ case "${APP_PATH}" in
 esac
 
 cd "${REPO_DIR}"
-/usr/bin/swift build -c release -Xswiftc -warnings-as-errors
-BIN_DIR="$(/usr/bin/swift build -c release --show-bin-path)"
+SWIFT_BUILD_ARGUMENTS=(-c release)
+if [ -n "${BUILD_ARCHITECTURE}" ]; then
+    SWIFT_BUILD_ARGUMENTS+=(--arch "${BUILD_ARCHITECTURE}")
+fi
+/usr/bin/swift build \
+    "${SWIFT_BUILD_ARGUMENTS[@]}" \
+    -Xswiftc -warnings-as-errors
+BIN_DIR="$(
+    /usr/bin/swift build \
+        "${SWIFT_BUILD_ARGUMENTS[@]}" \
+        --show-bin-path
+)"
 
 if [ -e "${APP_PATH}" ]; then
     /bin/rm -rf "${APP_PATH}"
@@ -116,7 +135,17 @@ SIZES
     -o "${APP_PATH}/Contents/Resources/AppIcon.icns"
 
 /usr/bin/plutil -lint "${APP_PATH}/Contents/Info.plist" >/dev/null
-/usr/bin/codesign --force --deep --sign "${SIGNING_IDENTITY}" "${APP_PATH}"
+if [ "${BUILD_CHANNEL}" = "release" ]; then
+    /usr/bin/codesign \
+        --force \
+        --options runtime \
+        --timestamp \
+        --entitlements "${REPO_DIR}/Packaging/Wordhand.entitlements" \
+        --sign "${SIGNING_IDENTITY}" \
+        "${APP_PATH}"
+else
+    /usr/bin/codesign --force --deep --sign "${SIGNING_IDENTITY}" "${APP_PATH}"
+fi
 /usr/bin/codesign --verify --deep --strict "${APP_PATH}"
 
 /bin/echo "Built ${APP_PATH}"
