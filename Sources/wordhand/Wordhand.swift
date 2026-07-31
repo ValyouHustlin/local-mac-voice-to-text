@@ -613,6 +613,18 @@ struct Run: ParsableCommand {
                     )
                 }.value
             }
+            settingsController.onRecentActivitySnapshot = {
+                try await Task.detached {
+                    let generatedAt = Date()
+                    return WordhandHealthSnapshot.make(
+                        generatedAt: generatedAt,
+                        events: try diagnosticsStore.events(),
+                        labeledTranscriptIDs: try historyStore.labeledRecordIDs(),
+                        retainedRecordingIDs:
+                            try qualityAudioArchive.retainedTranscriptIDs()
+                    )
+                }.value
+            }
             settingsController.onPermissionsRefresh = { permissions in
                 recordDiagnostic(OperationalDiagnosticEvent(
                     severity: permissions.globalInputReady ? .info : .warning,
@@ -758,6 +770,9 @@ struct Run: ParsableCommand {
                         _ = try qualityAudioArchive.enforceMaximumBytes(
                             maximumBytes
                         )
+                        await MainActor.run {
+                            settingsController.refreshRecentActivity()
+                        }
                     } catch {
                         recordDiagnostic(OperationalDiagnosticEvent(
                             severity: .error,
@@ -806,6 +821,7 @@ struct Run: ParsableCommand {
             }
             coordinator.onHistoryChange = {
                 history.reloadIfVisible()
+                settingsController.refreshRecentActivity()
             }
         }
 

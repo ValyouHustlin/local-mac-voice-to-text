@@ -2,6 +2,13 @@ import AppKit
 import SwiftUI
 import WordhandCore
 
+enum RecentActivityPhase: Equatable {
+    case idle
+    case loading
+    case loaded
+    case unavailable
+}
+
 @MainActor
 final class SettingsController: NSObject, ObservableObject, NSWindowDelegate {
     @Published private(set) var settings: AppSettings
@@ -13,6 +20,8 @@ final class SettingsController: NSObject, ObservableObject, NSWindowDelegate {
     @Published private(set) var requiresRelaunch: Bool
     @Published private(set) var relaunchError: String?
     @Published private(set) var diagnosticsMessage: String?
+    @Published private(set) var recentActivitySnapshot: WordhandHealthSnapshot?
+    @Published private(set) var recentActivityPhase: RecentActivityPhase = .idle
     @Published private(set) var availableApplication: TranscriptTarget?
 
     var onSettingsChange: ((AppSettings) -> Void)?
@@ -23,6 +32,7 @@ final class SettingsController: NSObject, ObservableObject, NSWindowDelegate {
     var onDeleteQualityAudio: (() throws -> Void)?
     var onRevealDiagnostics: (() -> Void)?
     var onDiagnosticsReport: (() async throws -> String)?
+    var onRecentActivitySnapshot: (() async throws -> WordhandHealthSnapshot)?
 
     private let store: SettingsStore
     private let launchAtLoginManager: any LaunchAtLoginManaging
@@ -32,6 +42,8 @@ final class SettingsController: NSObject, ObservableObject, NSWindowDelegate {
     private let currentTarget: @MainActor () -> TranscriptTarget
     private var windowController: NSWindowController?
     private var localKeyMonitor: Any?
+    private var recentActivityTask: Task<Void, Never>?
+    private var recentActivityGeneration = 0
     private static let defaultWindowContentSize = NSSize(width: 760, height: 620)
 
     init(
@@ -58,6 +70,7 @@ final class SettingsController: NSObject, ObservableObject, NSWindowDelegate {
     }
 
     deinit {
+        recentActivityTask?.cancel()
         if let localKeyMonitor {
             NSEvent.removeMonitor(localKeyMonitor)
         }
@@ -66,6 +79,7 @@ final class SettingsController: NSObject, ObservableObject, NSWindowDelegate {
     func showSettings() {
         refreshAvailableApplication()
         refreshPermissions()
+        refreshRecentActivity()
         let controller = ensureWindowController()
         controller.showWindow(nil)
         controller.window?.makeKeyAndOrderFront(nil)
@@ -245,6 +259,7 @@ final class SettingsController: NSObject, ObservableObject, NSWindowDelegate {
         do {
             try onDeleteQualityAudio?()
             saveError = nil
+            refreshRecentActivity()
         } catch {
             saveError = "Couldn’t delete recordings: \(error.localizedDescription)"
             NSSound.beep()
@@ -271,6 +286,39 @@ final class SettingsController: NSObject, ObservableObject, NSWindowDelegate {
                 diagnosticsMessage =
                     "Couldn’t create the health report: \(error.localizedDescription)"
                 NSSound.beep()
+            }
+        }
+    }
+
+    func refreshRecentActivity() {
+        recentActivityGeneration += 1
+        let generation = recentActivityGeneration
+        recentActivityTask?.cancel()
+        guard let onRecentActivitySnapshot else {
+            recentActivityPhase = .unavailable
+            return
+        }
+        recentActivityPhase = .loading
+        recentActivityTask = Task { [weak self] in
+            do {
+                let snapshot = try await onRecentActivitySnapshot()
+                guard !Task.isCancelled,
+                      let self,
+                      generation == self.recentActivityGeneration
+                else {
+                    return
+                }
+                recentActivitySnapshot = snapshot
+                recentActivityPhase = .loaded
+            } catch {
+                guard !Task.isCancelled,
+                      let self,
+                      generation == self.recentActivityGeneration
+                else {
+                    return
+                }
+                recentActivitySnapshot = nil
+                recentActivityPhase = .unavailable
             }
         }
     }
@@ -474,6 +522,11 @@ final class SettingsController: NSObject, ObservableObject, NSWindowDelegate {
         cancelShortcutCapture()
     }
 
+    func windowDidBecomeKey(_ notification: Notification) {
+        guard recentActivityPhase != .loading else { return }
+        refreshRecentActivity()
+    }
+
     private func saveWindowFrame(from notification: Notification) {
         guard let window = notification.object as? NSWindow else { return }
         window.saveFrame(usingName: frameAutosaveName)
@@ -507,6 +560,158 @@ final class SettingsController: NSObject, ObservableObject, NSWindowDelegate {
     }
 }
 
+struct RecentActivityCard<Details: View>: View {
+    let snapshot: WordhandHealthSnapshot?
+    let phase: RecentActivityPhase
+    let onRetry: () -> Void
+    @ViewBuilder let details: () -> Details
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(alignment: .firstTextBaseline) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Recent activity")
+                        .font(.headline)
+                        .accessibilityAddTraits(.isHeader)
+                    Text(
+                        "Activity from the last 7 days · "
+                            + "Private and stored only on this Mac."
+                    )
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                if phase == .loading, snapshot != nil {
+                    ProgressView()
+                        .controlSize(.small)
+                        .accessibilityLabel("Refreshing recent activity")
+                }
+            }
+
+            if let snapshot {
+                if snapshot.completedDictationCount == 0 {
+                    Text("No recent dictations yet.")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                }
+                HStack(alignment: .top, spacing: 24) {
+                    metric(
+                        String(snapshot.completedDictationCount),
+                        label: "Completed"
+                    )
+                    metric(
+                        String(snapshot.failureEventCount),
+                        label: "Issue events"
+                    )
+                    metric(
+                        Self.duration(snapshot.medianCompletionSeconds),
+                        label: "Typical completion"
+                    )
+                    metric(
+                        String(snapshot.tailRecoveryDictationCount),
+                        label: "Endings recovered"
+                    )
+                }
+                .accessibilityElement(children: .contain)
+
+                Divider()
+
+                HStack(alignment: .firstTextBaseline) {
+                    Text("All retained quality evidence")
+                        .font(.subheadline.weight(.semibold))
+                    Spacer()
+                    Text("\(snapshot.correctedReferenceCount) corrected transcripts")
+                    Text("·")
+                        .foregroundStyle(.tertiary)
+                    Text("\(snapshot.pairedRecordingCount) paired recordings")
+                }
+                .font(.subheadline)
+                .accessibilityElement(children: .combine)
+                .accessibilityLabel(
+                    "Quality evidence, "
+                        + "\(snapshot.correctedReferenceCount) corrected transcripts, "
+                        + "\(snapshot.pairedRecordingCount) paired recordings"
+                )
+            } else {
+                initialState
+            }
+
+            Divider()
+
+            Label(
+                "No transcript or audio content enters this activity summary.",
+                systemImage: "lock.fill"
+            )
+            .font(.caption)
+            .foregroundStyle(.secondary)
+
+            HStack(alignment: .firstTextBaseline) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Diagnostics")
+                        .font(.caption.weight(.semibold))
+                    Text("90 days · 250 MB maximum")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer(minLength: 12)
+                details()
+            }
+        }
+        .accessibilityIdentifier("recent-activity-card")
+    }
+
+    @ViewBuilder
+    private var initialState: some View {
+        switch phase {
+        case .idle, .loading:
+            HStack(spacing: 8) {
+                ProgressView()
+                    .controlSize(.small)
+                Text("Loading recent activity and quality evidence…")
+                    .foregroundStyle(.secondary)
+            }
+            .accessibilityElement(children: .combine)
+            .accessibilityLabel("Loading recent activity and quality evidence")
+        case .unavailable:
+            HStack {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("Activity unavailable")
+                        .font(.subheadline.weight(.semibold))
+                    Text("Wordhand couldn’t read its private local evidence.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                Button("Try Again", action: onRetry)
+                    .accessibilityLabel("Try loading recent activity again")
+            }
+        case .loaded:
+            Text("No recent dictations yet.")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    private func metric(_ value: String, label: String) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(value)
+                .font(.title3.weight(.semibold))
+                .monospacedDigit()
+            Text(label)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(label), \(value)")
+    }
+
+    private static func duration(_ seconds: Double?) -> String {
+        guard let seconds else { return "—" }
+        return String(format: "%.1fs", seconds)
+    }
+}
+
 private struct SettingsView: View {
     @ObservedObject var controller: SettingsController
 
@@ -527,7 +732,7 @@ private struct SettingsView: View {
                     shortcutsCard
                     recordingCard
                     qualityLabCard
-                    diagnosticsCard
+                    recentActivityCard
                     privacyNote
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -577,38 +782,24 @@ private struct SettingsView: View {
         }
     }
 
-    private var diagnosticsCard: some View {
+    private var recentActivityCard: some View {
         settingsCard {
-            VStack(alignment: .leading, spacing: 12) {
-                HStack(alignment: .firstTextBaseline) {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("Diagnostics")
-                            .font(.headline)
-                        Text(
-                            "Keeps 90 days of private operational metadata, "
-                                + "rotated daily and capped at 250 MB."
-                        )
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
+            VStack(alignment: .leading, spacing: 8) {
+                RecentActivityCard(
+                    snapshot: controller.recentActivitySnapshot,
+                    phase: controller.recentActivityPhase,
+                    onRetry: controller.refreshRecentActivity,
+                    details: {
+                        Button("Open Diagnostics Folder") {
+                            controller.revealDiagnostics()
+                        }
+                        .buttonStyle(.bordered)
+                        Button("Copy Health Report") {
+                            controller.copyDiagnosticsReport()
+                        }
+                        .buttonStyle(.borderedProminent)
                     }
-                    Spacer(minLength: 18)
-                    Button("Open Folder") {
-                        controller.revealDiagnostics()
-                    }
-                    .buttonStyle(.bordered)
-                    Button("Copy Health Report") {
-                        controller.copyDiagnosticsReport()
-                    }
-                    .buttonStyle(.borderedProminent)
-                }
-
-                Label(
-                    "Transcript text and audio are never written to diagnostic logs.",
-                    systemImage: "lock.fill"
                 )
-                .font(.caption)
-                .foregroundStyle(.secondary)
-
                 if let message = controller.diagnosticsMessage {
                     Text(message)
                         .font(.caption)

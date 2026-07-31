@@ -83,6 +83,28 @@ struct TranscriptHistoryStoreTests {
                 == [record.id]
         )
         #expect(try fixture.store.labeledRecordCount() == 1)
+        #expect(try fixture.store.labeledRecordIDs() == [record.id])
+    }
+
+    @Test
+    func labeledRecordIDsExcludeMissingAndWhitespaceOnlyReferences() throws {
+        let fixture = try HistoryFixture()
+        let corrected = fixture.record(text: "Corrected")
+        let whitespace = fixture.record(text: "Whitespace")
+        let missing = fixture.record(text: "Missing")
+        for record in [corrected, whitespace, missing] {
+            try fixture.store.save(record)
+        }
+        try fixture.store.updateReferenceText(
+            id: corrected.id,
+            referenceText: "Correct reference"
+        )
+        try fixture.store.updateReferenceText(
+            id: whitespace.id,
+            referenceText: "   "
+        )
+
+        #expect(try fixture.store.labeledRecordIDs() == [corrected.id])
     }
 
     @Test

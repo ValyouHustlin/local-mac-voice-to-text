@@ -159,6 +159,30 @@ public final class TranscriptHistoryStore: TranscriptRecording, @unchecked Senda
         }
     }
 
+    public func labeledRecordIDs() throws -> Set<UUID> {
+        try locked {
+            let statement = try prepare(
+                """
+                SELECT id FROM transcripts
+                WHERE reference_text IS NOT NULL AND trim(reference_text) <> ''
+                """
+            )
+            defer { sqlite3_finalize(statement) }
+            var ids = Set<UUID>()
+            var result = sqlite3_step(statement)
+            while result == SQLITE_ROW {
+                if let id = string(at: 0, in: statement).flatMap(UUID.init) {
+                    ids.insert(id)
+                }
+                result = sqlite3_step(statement)
+            }
+            guard result == SQLITE_DONE else {
+                throw databaseError(result)
+            }
+            return ids
+        }
+    }
+
     public func records(matching query: String = "", limit: Int = 500) throws
         -> [TranscriptRecord]
     {

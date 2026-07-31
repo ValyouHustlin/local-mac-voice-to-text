@@ -1,5 +1,6 @@
 import AppKit
 import Foundation
+import SwiftUI
 import Testing
 import WordhandCore
 @testable import wordhand
@@ -354,6 +355,115 @@ struct GlobalInputAdapterTests {
         let restoredWindow = try #require(restoredController.ensureWindowController().window)
         defer { restoredWindow.close() }
         #expect(restoredWindow.contentView?.frame.size == NSSize(width: 900, height: 700))
+    }
+
+    @Test
+    @MainActor
+    func recentActivityRefreshRejectsAnOlderSuspendedResult() async throws {
+        let fixture = try TemporarySettingsFixture()
+        defer { fixture.remove() }
+        let gate = SuspendedRecentActivityProvider()
+        let controller = SettingsController(
+            store: fixture.store,
+            settings: AppSettings(),
+            launchAtLoginManager: FakeLaunchAtLoginManager(state: .disabled),
+            permissionManager: FakePermissionManager()
+        )
+        controller.onRecentActivitySnapshot = {
+            await gate.load()
+        }
+        let old = activitySnapshot(completed: 1)
+        let current = activitySnapshot(completed: 9)
+
+        controller.refreshRecentActivity()
+        await gate.waitForRequestCount(1)
+        controller.refreshRecentActivity()
+        await gate.waitForRequestCount(2)
+
+        await gate.completeRequest(at: 1, with: current)
+        while controller.recentActivitySnapshot != current {
+            await Task.yield()
+        }
+        await gate.completeRequest(at: 0, with: old)
+        for _ in 0..<10 {
+            await Task.yield()
+        }
+
+        #expect(controller.recentActivitySnapshot == current)
+        #expect(controller.recentActivityPhase == .loaded)
+    }
+
+    @Test
+    @MainActor
+    func recentActivityReadFailureIsUnavailableInsteadOfFalseZeros() async throws {
+        let fixture = try TemporarySettingsFixture()
+        defer { fixture.remove() }
+        let controller = SettingsController(
+            store: fixture.store,
+            settings: AppSettings(),
+            launchAtLoginManager: FakeLaunchAtLoginManager(state: .disabled),
+            permissionManager: FakePermissionManager()
+        )
+        controller.onRecentActivitySnapshot = {
+            throw RecentActivityTestError.unavailable
+        }
+
+        controller.refreshRecentActivity()
+        while controller.recentActivityPhase == .loading {
+            await Task.yield()
+        }
+
+        #expect(controller.recentActivitySnapshot == nil)
+        #expect(controller.recentActivityPhase == .unavailable)
+    }
+
+    @Test(
+        .enabled(
+            if: ProcessInfo.processInfo.environment[
+                "WORDHAND_ACTIVITY_RENDER_RECEIPT"
+            ] == "1"
+        )
+    )
+    @MainActor
+    func rendersRecentActivityAtTheMinimumSettingsWidth() throws {
+        _ = NSApplication.shared
+        let outputPath = try #require(
+            ProcessInfo.processInfo.environment[
+                "WORDHAND_ACTIVITY_RENDER_OUTPUT"
+            ]
+        )
+        let root = RecentActivityCard(
+            snapshot: activitySnapshot(completed: 42),
+            phase: .loaded,
+            onRetry: {},
+            details: {
+                Button("Open Diagnostics Folder") {}
+                Button("Copy Health Report") {}
+            }
+        )
+        .frame(width: 516, height: 280, alignment: .topLeading)
+        .background(Color(nsColor: .windowBackgroundColor))
+        let view = NSHostingView(rootView: root)
+        view.frame = NSRect(x: 0, y: 0, width: 516, height: 280)
+        view.layoutSubtreeIfNeeded()
+        let representation = try #require(NSBitmapImageRep(
+            bitmapDataPlanes: nil,
+            pixelsWide: 516,
+            pixelsHigh: 280,
+            bitsPerSample: 8,
+            samplesPerPixel: 4,
+            hasAlpha: true,
+            isPlanar: false,
+            colorSpaceName: .deviceRGB,
+            bytesPerRow: 0,
+            bitsPerPixel: 0
+        ))
+        view.cacheDisplay(in: view.bounds, to: representation)
+        let png = try #require(
+            representation.representation(using: .png, properties: [:])
+        )
+        try png.write(to: URL(fileURLWithPath: outputPath), options: [.atomic])
+        #expect(FileManager.default.fileExists(atPath: outputPath))
     }
 
     @Test(
@@ -1046,6 +1156,47 @@ struct GlobalInputAdapterTests {
             String(decoding: data, as: UTF8.self)
         )
     }
+}
+
+private enum RecentActivityTestError: Error {
+    case unavailable
+}
+
+private actor SuspendedRecentActivityProvider {
+    private var requests: [CheckedContinuation<WordhandHealthSnapshot, Never>?] = []
+
+    func load() async -> WordhandHealthSnapshot {
+        await withCheckedContinuation { continuation in
+            requests.append(continuation)
+        }
+    }
+
+    func waitForRequestCount(_ count: Int) async {
+        while requests.count < count {
+            await Task.yield()
+        }
+    }
+
+    func completeRequest(
+        at index: Int,
+        with snapshot: WordhandHealthSnapshot
+    ) {
+        requests[index]?.resume(returning: snapshot)
+        requests[index] = nil
+    }
+}
+
+private func activitySnapshot(completed: Int) -> WordhandHealthSnapshot {
+    WordhandHealthSnapshot(
+        windowStartedAt: Date(timeIntervalSince1970: 1_000),
+        generatedAt: Date(timeIntervalSince1970: 605_800),
+        completedDictationCount: completed,
+        failureEventCount: 1,
+        medianCompletionSeconds: 2.1,
+        tailRecoveryDictationCount: 2,
+        correctedReferenceCount: 3,
+        pairedRecordingCount: 2
+    )
 }
 
 private final class FakeHotkeyTapController: HotkeyTapControlling {

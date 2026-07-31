@@ -955,11 +955,27 @@ if one day alone exceeds the limit. Malformed lines are counted and skipped so
 one interrupted write cannot hide healthy records.
 
 `wordhand diagnostics status`, `report`, `export`, and confirmed `clear`
-provide local inspection. Settings exposes Open Folder and Copy Health Report;
-report construction runs off the UI thread. The report aggregates successful
-and failed stages, latency percentiles, audio health, tail recovery, models,
-targets, and event/failure breakdowns. No network analytics, telemetry, upload,
-or automatic support submission exists.
+provide local inspection. Settings exposes one compact Recent activity card
+plus Open Folder and Copy Health Report. Report and card construction run off
+the UI thread. The report aggregates successful and failed stages, latency
+percentiles, audio health, tail recovery, models, targets, and event/failure
+breakdowns.
+
+The native card is deliberately narrower than the full report. One captured
+timestamp defines an inclusive rolling 168-hour window. It shows unique
+completed dictations, failure events, the exact median of valid end-to-end
+completion times, and unique dictations whose missing endings were recovered.
+Quality evidence is current rather than time-windowed: History contributes only
+the UUIDs of nonempty corrected references, Quality Lab contributes only
+retained-audio UUIDs, and their intersection is the paired-recording count.
+The snapshot contains only dates, counts, and one duration; it is neither
+persisted nor appended to diagnostics. Duplicate completion and tail events
+cannot inflate dictation counts, future events are excluded, invalid durations
+cannot affect the median, and a read failure displays unavailable rather than
+zero. A generation gate prevents a slow older refresh from replacing newer
+evidence. These facts are not an accuracy score or a claim that Wordhand has
+improved. No network analytics, telemetry, upload, or automatic support
+submission exists.
 
 ## Private Quality Lab
 

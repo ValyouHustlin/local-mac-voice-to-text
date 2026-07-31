@@ -47,7 +47,9 @@ order:
 5. [x] deeper explicit spoken correction and editing commands; exact layout
    commands and one fail-closed earlier-phrase replacement are implemented and
    isolated-verified, while attended natural-command coverage remains;
-6. a native evidence-based diagnostics and quality view;
+6. [x] a native evidence-based diagnostics and quality view, using factual
+   seven-day activity and exact local evidence counts rather than a health or
+   accuracy score;
 7. fresh-Mac onboarding plus the signed, notarized, permission-stable updater.
 
 The first slice stores ordered 16 kHz Float32 frames in owner-only `Pending
@@ -550,11 +552,22 @@ use.
 - [x] Add local status, report, export, and confirmed clear CLI commands.
 - [x] Add Settings actions to reveal diagnostics and copy a report without
   blocking the UI while a large archive is read.
+- [x] Add one native Recent activity card with unique completed-dictation
+  count, failure-event count, exact median completion time, unique recovered-
+  ending count, corrected-reference count, and the exact corrected/audio pair
+  count.
+- [x] Keep the seven-day summary read-only and non-persisted, exclude future
+  and out-of-window events, and show an unavailable state instead of false
+  zeros when any local evidence store cannot be read.
+- [x] Cancel stale refresh work and gate publication by generation so a slow
+  older read cannot replace newer evidence.
+- [x] Render and inspect the loaded card at the minimum Settings content width.
 - [x] Keep the feature entirely local with no analytics or upload path.
 - [x] Observe the installed app write startup, permission, hotkey, and warmup
   events without exercising microphone or insertion.
 
-Receipt: `docs/verification/2026-07-30-operational-diagnostics.md`.
+Receipts: `docs/verification/2026-07-30-operational-diagnostics.md` and
+`docs/verification/2026-07-30-recent-activity.md`.
 
 ### Flow feedback and app-aware formatting checkpoint
 
