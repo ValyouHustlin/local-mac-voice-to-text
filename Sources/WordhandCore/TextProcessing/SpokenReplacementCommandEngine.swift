@@ -34,19 +34,34 @@ public struct SpokenReplacementCommandResult: Equatable, Sendable {
     }
 }
 
-/// Applies one exact, terminal replacement command to the current transcript.
+/// Applies one exact, terminal edit command to the current transcript.
 ///
-/// The reserved spoken form is:
+/// The reserved spoken forms are:
 /// `command correction, replace <old phrase> with <new phrase>`.
-/// Whisper may punctuate between `correction` and `replace`. Every rejected
+/// `command correction, insert <new phrase> after <anchor phrase>`.
+/// Whisper may punctuate between `correction` and the edit verb. Every rejected
 /// command returns the input unchanged so an ambiguous edit cannot hide text.
 public enum SpokenReplacementCommandEngine {
+    private enum Operation {
+        case replace
+        case insert
+
+        var delimiterPattern: String {
+            switch self {
+            case .replace:
+                return #"(?i)(?<![\p{L}\p{N}'’-])with(?![\p{L}\p{N}'’-])"#
+            case .insert:
+                return #"(?i)(?<![\p{L}\p{N}'’-])after(?![\p{L}\p{N}'’-])"#
+            }
+        }
+    }
+
     private static let namespacePattern =
         #"(?i)(?<![\p{L}\p{N}'’-])command\s+correction(?![\p{L}\p{N}'’-])"#
-    private static let commandPattern =
+    private static let replacementCommandPattern =
         #"(?i)(?<![\p{L}\p{N}'’-])command\s+correction\s*(?:[,.:;—–-]\s*)?replace(?![\p{L}\p{N}'’-])"#
-    private static let delimiterPattern =
-        #"(?i)(?<![\p{L}\p{N}'’-])with(?![\p{L}\p{N}'’-])"#
+    private static let insertionCommandPattern =
+        #"(?i)(?<![\p{L}\p{N}'’-])command\s+correction\s*(?:[,.:;—–-]\s*)?insert(?![\p{L}\p{N}'’-])"#
     private static let phrasePattern =
         #"^[\p{L}\p{N}]+(?:['’.-][\p{L}\p{N}]+)*(?:\s+[\p{L}\p{N}]+(?:['’.-][\p{L}\p{N}]+)*){0,7}$"#
 
@@ -65,7 +80,16 @@ public enum SpokenReplacementCommandEngine {
             return rejected(.multipleCommands, preserving: text)
         }
 
-        let commandRanges = ranges(matching: commandPattern, in: text)
+        let replacementCommandRanges = ranges(
+            matching: replacementCommandPattern,
+            in: text
+        )
+        let insertionCommandRanges = ranges(
+            matching: insertionCommandPattern,
+            in: text
+        )
+        let commandRanges =
+            replacementCommandRanges + insertionCommandRanges
         guard
             commandRanges.count == 1,
             commandRanges[0].lowerBound == namespaceRanges[0].lowerBound
@@ -73,6 +97,9 @@ public enum SpokenReplacementCommandEngine {
             return rejected(.malformedCommand, preserving: text)
         }
         let commandRange = commandRanges[0]
+        let operation: Operation = insertionCommandRanges.isEmpty
+            ? .replace
+            : .insert
 
         let prefix = String(text[..<commandRange.lowerBound])
         let body = prefix.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -100,7 +127,7 @@ public enum SpokenReplacementCommandEngine {
         }
 
         let delimiterRanges = ranges(
-            matching: delimiterPattern,
+            matching: operation.delimiterPattern,
             in: payload
         )
         guard !delimiterRanges.isEmpty else {
@@ -111,27 +138,37 @@ public enum SpokenReplacementCommandEngine {
         }
 
         let delimiter = delimiterRanges[0]
-        let oldPhrase = String(payload[..<delimiter.lowerBound])
+        let firstPhrase = String(payload[..<delimiter.lowerBound])
             .trimmingCharacters(in: .whitespacesAndNewlines)
-        let newPhrase = String(payload[delimiter.upperBound...])
+        let secondPhrase = String(payload[delimiter.upperBound...])
             .trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !oldPhrase.isEmpty, !newPhrase.isEmpty else {
+        guard !firstPhrase.isEmpty, !secondPhrase.isEmpty else {
             return rejected(.missingPayload, preserving: text)
         }
         guard
-            oldPhrase.count <= 80,
-            newPhrase.count <= 80,
-            matchesEntirePhrase(oldPhrase),
-            matchesEntirePhrase(newPhrase)
+            firstPhrase.count <= 80,
+            secondPhrase.count <= 80,
+            matchesEntirePhrase(firstPhrase),
+            matchesEntirePhrase(secondPhrase)
         else {
             return rejected(.payloadTooLarge, preserving: text)
         }
-        guard oldPhrase != newPhrase else {
-            return rejected(.noChange, preserving: text)
-        }
 
+        let targetPhrase: String
+        let insertedOrReplacementPhrase: String
+        switch operation {
+        case .replace:
+            targetPhrase = firstPhrase
+            insertedOrReplacementPhrase = secondPhrase
+            guard targetPhrase != insertedOrReplacementPhrase else {
+                return rejected(.noChange, preserving: text)
+            }
+        case .insert:
+            insertedOrReplacementPhrase = firstPhrase
+            targetPhrase = secondPhrase
+        }
         let targetRanges = exactPhraseRanges(
-            oldPhrase,
+            targetPhrase,
             in: body
         )
         guard !targetRanges.isEmpty else {
@@ -142,7 +179,25 @@ public enum SpokenReplacementCommandEngine {
         }
 
         var edited = body
-        edited.replaceSubrange(targetRanges[0], with: newPhrase)
+        switch operation {
+        case .replace:
+            edited.replaceSubrange(
+                targetRanges[0],
+                with: insertedOrReplacementPhrase
+            )
+        case .insert:
+            guard !hasImmediatePhrase(
+                insertedOrReplacementPhrase,
+                after: targetRanges[0],
+                in: body
+            ) else {
+                return rejected(.noChange, preserving: text)
+            }
+            edited.insert(
+                contentsOf: " \(insertedOrReplacementPhrase)",
+                at: targetRanges[0].upperBound
+            )
+        }
         return SpokenReplacementCommandResult(
             text: edited,
             outcome: .applied
@@ -204,6 +259,33 @@ public enum SpokenReplacementCommandEngine {
         return expression.matches(in: text, range: fullRange).compactMap {
             Range($0.range(withName: "target"), in: text)
         }
+    }
+
+    private static func hasImmediatePhrase(
+        _ phrase: String,
+        after target: Range<String.Index>,
+        in text: String
+    ) -> Bool {
+        let words = phrase.split(whereSeparator: \.isWhitespace)
+        let escaped = words
+            .map { NSRegularExpression.escapedPattern(for: String($0)) }
+            .joined(separator: #"\s+"#)
+        let pattern =
+            #"^[ \t]*(?:[,;:—–-][ \t]*)?"#
+            + escaped
+            + #"(?![\p{L}\p{N}'’-])"#
+        guard let expression = try? NSRegularExpression(
+            pattern: pattern,
+            options: [.caseInsensitive]
+        ) else {
+            return false
+        }
+        let suffix = String(text[target.upperBound...])
+        let fullRange = NSRange(
+            suffix.startIndex..<suffix.endIndex,
+            in: suffix
+        )
+        return expression.firstMatch(in: suffix, range: fullRange) != nil
     }
 
     private static func ranges(

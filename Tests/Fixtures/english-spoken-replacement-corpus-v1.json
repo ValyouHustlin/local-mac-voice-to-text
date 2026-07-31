@@ -89,6 +89,33 @@
         "Boundary amber begins this edit test",
         "Boundary copper ends this edit test"
       ]
+    },
+    {
+      "id": "english-spoken-insertion-positive-v1",
+      "purpose": "uniqueAdditiveInsertion",
+      "audio": "english-spoken-insertion-positive-v1.aiff",
+      "rate": 185,
+      "generatedAt": "2026-07-30T20:19:52-07:00",
+      "source": "Boundary amber begins this insert test. The release happens Friday. Boundary copper ends the dictated body. Command correction, insert at noon after Friday.",
+      "sourceSHA256": "622bdf4aa90d3d4158354757ba19e0e9cbf7f28e8dbfac9f97f3454f5435e569",
+      "audioSHA256": "4a0eba78aa156b0065031fa6849af90ef62f3496bfe64053b99e5fad2e3db5ea",
+      "nativeSampleRate": 22050,
+      "nativeSampleCount": 201848,
+      "decodedSampleRate": 16000,
+      "decodedSampleCount": 146466,
+      "durationSeconds": 9.154104,
+      "expectedDecodedText": "Boundary amber begins this insert test. The release happens Friday. Boundary copper ends the dictated body. Command correction. Insert at noon after Friday.",
+      "expectedDecodedSHA256": "5a28da2a3a8e9cfdd103c257d70d633ffd0887fa61f9844a9e526d24e1fed109",
+      "expectedProcessedText": "Boundary amber begins this insert test. The release happens Friday at noon. Boundary copper ends the dictated body.",
+      "expectedProcessedSHA256": "54cdc7ec5d80fcd39b5e2eb4bba6d73f9c8efc901a0862008399d505800b33f6",
+      "expectedOutcome": "applied",
+      "anchorPhrase": "Friday",
+      "insertedPhrase": "at noon",
+      "expectedAnchorOccurrences": 1,
+      "protectedSpans": [
+        "Boundary amber begins this insert test",
+        "Boundary copper ends the dictated body"
+      ]
     }
   ]
 }

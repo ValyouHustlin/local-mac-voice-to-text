@@ -1112,6 +1112,65 @@ struct DictationCoordinatorTests {
     }
 
     @Test
+    func acceptedInsertionReachesHistoryBeforeInsertionWithoutCommandText() async throws {
+        let raw =
+            "Send the proposal Friday. "
+            + "Command correction, insert at noon after Friday."
+        let history = FakeHistory()
+        let inserter = FakeInserter()
+        let coordinator = DictationCoordinator(
+            capture: FakeCapture(samples: [0.1]),
+            transcriber: FakeTranscriber(result: raw),
+            processor: TranscriptProcessor(),
+            inserter: inserter,
+            history: history
+        )
+        var notices: [TranscriptProcessingNotice] = []
+        coordinator.onProcessingNotice = { notices.append($0) }
+
+        await coordinator.handle(.pressed)
+        await coordinator.handle(.released)
+
+        let saved = try #require(history.saved.first)
+        #expect(saved.rawText == raw)
+        #expect(saved.text == "Send the proposal Friday at noon.")
+        #expect(inserter.insertions == ["Send the proposal Friday at noon."])
+        #expect(notices.isEmpty)
+        #expect(history.updates.count == 1)
+        #expect(history.updates[0].0 == saved.id)
+        #expect(history.updates[0].1 == .inserted)
+    }
+
+    @Test
+    func rejectedInsertionIsLiteralAndDiagnosticRemainsTextFree() async throws {
+        let raw =
+            "Friday is possible. Friday is preferred. "
+            + "Command correction, insert not after Friday."
+        let history = FakeHistory()
+        let inserter = FakeInserter()
+        let coordinator = DictationCoordinator(
+            capture: FakeCapture(samples: [0.1]),
+            transcriber: FakeTranscriber(result: raw),
+            processor: TranscriptProcessor(),
+            inserter: inserter,
+            history: history
+        )
+        var events: [OperationalDiagnosticEvent] = []
+        coordinator.onDiagnosticEvent = { events.append($0) }
+
+        await coordinator.handle(.pressed)
+        await coordinator.handle(.released)
+
+        #expect(history.saved.first?.text == raw)
+        #expect(inserter.insertions == [raw])
+        let rejection = try #require(
+            events.first { $0.name == "processing.command_rejected" }
+        )
+        #expect(rejection.attributes == ["reason": "target_repeated"])
+        #expect(!rejection.attributes.values.contains(raw))
+    }
+
+    @Test
     func failedInsertionRemainsRecoverableInHistory() async throws {
         let history = FakeHistory()
         let coordinator = DictationCoordinator(

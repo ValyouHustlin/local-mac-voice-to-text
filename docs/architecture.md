@@ -902,8 +902,9 @@ Initial order:
 5. resolve explicit spoken repairs such as `wait, no`, `I meant`, `make that`,
    `correction`, `scratch that`, and immediate false starts; ambiguous language
    is preserved rather than guessed;
-6. apply one exact earlier-phrase replacement only from the reserved terminal
-   grammar `command correction, replace <old> with <new>`;
+6. apply one exact earlier-phrase replacement or additive insertion only from
+   the reserved terminal grammars `command correction, replace <old> with
+   <new>` and `command correction, insert <new> after <anchor>`;
 7. apply the explicit Casual, Formatted, Professional, or AI Communication
    writing style;
 8. validate on-device rewrites for facts, constraints, perspective, modality,
@@ -911,15 +912,17 @@ Initial order:
 9. interpret explicitly supported layout commands;
 10. produce the final transcript stored in history.
 
-Earlier-phrase replacement is limited to the current dictation and never reads
-the active application's text, selection, cursor, or surrounding document. The
-reserved command must be the final standalone clause, survive as the exact
-normalized words `command correction replace`, contain one standalone `with`
-delimiter, and provide 1–8 lexical tokens on each side. The old phrase must
-occur exactly once before the command using Unicode-aware token boundaries.
-Matching is case-insensitive so explicit spelling/casing corrections work, but
-replacement preserves the newly dictated casing exactly. There is no fuzzy
-match, stemming, semantic inference, or partial numeric/domain-token match.
+Explicit phrase editing is limited to the current dictation and never reads the
+active application's text, selection, cursor, or surrounding document. The
+reserved command must be the final standalone clause, use exactly one `with` or
+`after` delimiter, and provide 1–8 lexical tokens on each side. A replacement
+requires exactly one old-phrase match. An insertion adds the new phrase after
+exactly one anchor and rejects an already-adjacent identical phrase rather than
+duplicating it. Both operations use case-insensitive Unicode-aware token
+boundaries while preserving the newly dictated replacement or insertion casing
+exactly. Additive insertion never removes or replaces a body byte. There is no
+fuzzy match, stemming, semantic inference, or partial numeric/domain-token
+match.
 
 Every rejected command returns the literal cleaned input with a text-free
 reason enum. The processor bypasses both deterministic polish and the

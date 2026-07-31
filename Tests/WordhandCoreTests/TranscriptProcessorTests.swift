@@ -146,6 +146,35 @@ struct TranscriptProcessorTests {
     }
 
     @Test
+    func appliesAdditiveInsertionAfterImmediateRepairs() async {
+        let processor = TranscriptProcessor()
+        let result = await processor.processResult(
+            "Send Friday—wait, no, Monday. "
+                + "Command correction, insert at noon after Monday."
+        )
+
+        #expect(result.text == "Send Monday at noon.")
+        #expect(result.notices.isEmpty)
+    }
+
+    @Test
+    func rejectedAdditiveInsertionPreservesTextAndReportsReason() async {
+        let processor = TranscriptProcessor(
+            formattingProfile: .professional
+        )
+        let input =
+            "Friday is possible. Friday is preferred. "
+            + "Command correction, insert not after Friday."
+        let result = await processor.processResult(input)
+
+        #expect(result.text == input)
+        #expect(
+            result.notices
+                == [.spokenReplacementRejected(.targetRepeated)]
+        )
+    }
+
+    @Test
     func rejectedEarlierPhraseReplacementPreservesTextAndReportsReason() async {
         let processor = TranscriptProcessor(
             formattingProfile: .professional

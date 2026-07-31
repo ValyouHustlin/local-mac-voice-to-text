@@ -339,6 +339,20 @@ or field-delivery proof.
 Receipt:
 `docs/verification/2026-07-30-spoken-replacement-command.md`.
 
+The next explicit editing slice reuses the same fail-closed namespace for
+omitted words: `command correction, insert <new> after <anchor>`. It adds only
+after one exact, unique, token-bounded anchor in the current dictation and
+cannot delete or replace body text. Repeated, missing, subword, decimal,
+domain-token, already-present, malformed, quoted, question, oversized, or
+nonterminal commands remain literal and bypass formatting. One retained
+Samantha fixture decoded the complete namespace, anchor, beginning, and ending
+identically in four cached Large v3 runs, then both Casual and the real local
+Formatted path produced the bound additive edit. This remains synthetic-voice,
+not attended natural-command evidence.
+
+Receipt:
+`docs/verification/2026-07-30-spoken-insertion-command.md`.
+
 ## Public checkpoint cadence
 
 Public updates follow product evidence, not a calendar. Each checkpoint groups

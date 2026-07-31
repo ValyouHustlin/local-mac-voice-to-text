@@ -1307,6 +1307,73 @@ struct GlobalInputAdapterTests {
     }
 
     @Test
+    func appliedInsertionFormatsOnlyTheEditedBodyAcrossWritingProfiles() async {
+        let input =
+            "Send the proposal Friday. "
+            + "Command correction, insert at noon after Friday."
+        let edited = "Send the proposal Friday at noon."
+        let profiles: [TranscriptFormattingProfile] = [
+            .casual,
+            .formatted,
+            .professional,
+            .aiCommunication,
+        ]
+
+        for profile in profiles {
+            let rewriter = RecordingLocalTranscriptRewriter(
+                responses: profile == .casual ? [] : [edited]
+            )
+            let processor = AppAwareTranscriptProcessor(
+                dictionaryProcessor: MutableTranscriptProcessor(),
+                profile: profile,
+                rewriter: rewriter
+            )
+
+            let result = await processor.processResult(
+                input,
+                target: .unknown
+            )
+            let calls = await rewriter.recordedCalls()
+
+            #expect(result.text == edited)
+            #expect(result.notices.isEmpty)
+            #expect(calls.count == (profile == .casual ? 0 : 1))
+            if let call = calls.first {
+                #expect(call.text == edited)
+                #expect(!call.text.localizedCaseInsensitiveContains("command"))
+            }
+        }
+    }
+
+    @Test
+    func rejectedInsertionBypassesFormatterAndPreservesLiteralCommand() async {
+        let rewriter = RecordingLocalTranscriptRewriter(
+            responses: ["This response must never be used."]
+        )
+        let processor = AppAwareTranscriptProcessor(
+            dictionaryProcessor: MutableTranscriptProcessor(),
+            profile: .professional,
+            rewriter: rewriter
+        )
+        let input =
+            "Friday is possible. Friday is preferred. "
+            + "Command correction, insert not after Friday."
+
+        let result = await processor.processResult(
+            input,
+            target: .unknown
+        )
+        let calls = await rewriter.recordedCalls()
+
+        #expect(result.text == input)
+        #expect(
+            result.notices
+                == [.spokenReplacementRejected(.targetRepeated)]
+        )
+        #expect(calls.isEmpty)
+    }
+
+    @Test
     func rejectedEarlierReplacementBypassesFormatterAndPreservesLiteralCommand() async {
         let rewriter = RecordingLocalTranscriptRewriter(
             responses: ["This response must never be used."]

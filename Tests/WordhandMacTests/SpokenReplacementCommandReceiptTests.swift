@@ -14,7 +14,7 @@ struct SpokenReplacementCommandReceiptTests {
         #expect(fixture.provenance == "syntheticNamespaceEvidence")
         #expect(fixture.generator.path == "/usr/bin/say")
         #expect(fixture.generator.voice == "Samantha")
-        #expect(fixture.fixtures.count == 3)
+        #expect(fixture.fixtures.count == 4)
 
         let fixtureDirectory = Self.fixtureDirectory()
         for item in fixture.fixtures {
