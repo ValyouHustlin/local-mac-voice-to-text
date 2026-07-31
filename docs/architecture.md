@@ -146,6 +146,10 @@ Verified by source inspection and dated receipts through 2026-07-30:
 - deterministic spoken-repair handling for explicit phrases such as
   `wait, no`, `I meant`, `make that`, and `scratch that`, while preserving
   ordinary semantic uses of `no` and `I meant`;
+- fail-closed current-dictation editing through one reserved terminal
+  namespace for exact replace, insert, and delete operations; deletion requires
+  one unique target and refuses sentence-emptying or punctuation-ambiguous
+  boundaries;
 - explicit `command new line` and `command new paragraph` commands only when
   they occupy a complete punctuation-delimited clause between dictated
   content; unprefixed, leading, trailing, quoted, or structurally ambiguous
@@ -915,9 +919,10 @@ Initial order:
 5. resolve explicit spoken repairs such as `wait, no`, `I meant`, `make that`,
    `correction`, `scratch that`, and immediate false starts; ambiguous language
    is preserved rather than guessed;
-6. apply one exact earlier-phrase replacement or additive insertion only from
-   the reserved terminal grammars `command correction, replace <old> with
-   <new>` and `command correction, insert <new> after <anchor>`;
+6. apply one exact earlier-phrase replacement, additive insertion, or bounded
+   deletion only from the reserved terminal grammars `command correction,
+   replace <old> with <new>`, `command correction, insert <new> after
+   <anchor>`, and `command correction, delete <target>`;
 7. apply the explicit Casual, Formatted, Professional, or AI Communication
    writing style;
 8. validate on-device rewrites for facts, constraints, perspective, modality,
@@ -927,13 +932,17 @@ Initial order:
 
 Explicit phrase editing is limited to the current dictation and never reads the
 active application's text, selection, cursor, or surrounding document. The
-reserved command must be the final standalone clause, use exactly one `with` or
-`after` delimiter, and provide 1–8 lexical tokens on each side. A replacement
-requires exactly one old-phrase match. An insertion adds the new phrase after
-exactly one anchor and rejects an already-adjacent identical phrase rather than
-duplicating it. Both operations use case-insensitive Unicode-aware token
-boundaries while preserving the newly dictated replacement or insertion casing
-exactly. Additive insertion never removes or replaces a body byte. There is no
+reserved command must be the final standalone clause and every phrase is
+limited to 1–8 lexical tokens and 80 characters. Replacement and insertion use
+exactly one `with` or `after` delimiter. A replacement requires exactly one
+old-phrase match. An insertion adds the new phrase after exactly one anchor and
+rejects an already-adjacent identical phrase rather than duplicating it.
+Deletion requires one exact target and removes only that target plus one
+adjacent horizontal-whitespace run. It refuses a sentence-initial, newline, or
+punctuation-ambiguous boundary and cannot remove the affected sentence's last
+lexical content. All three operations use case-insensitive Unicode-aware token
+boundaries. Replacement and insertion preserve newly dictated casing exactly;
+deletion preserves every byte outside its explicit removal range. There is no
 fuzzy match, stemming, semantic inference, or partial numeric/domain-token
 match.
 

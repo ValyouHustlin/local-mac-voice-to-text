@@ -116,6 +116,84 @@
         "Boundary amber begins this insert test",
         "Boundary copper ends the dictated body"
       ]
+    },
+    {
+      "id": "english-spoken-deletion-positive-v1",
+      "purpose": "uniqueDeletion",
+      "audio": "english-spoken-deletion-positive-v1.aiff",
+      "rate": 185,
+      "generatedAt": "2026-07-30T21:16:31-07:00",
+      "source": "Boundary amber begins this delete test. The release label is obsolete draft. Boundary copper ends the dictated body. Command correction, delete obsolete.",
+      "sourceSHA256": "c7e97d2b92ee75bcc351e87382b4210f1567fcab01e6a59f74f3bcb7a25132d5",
+      "audioSHA256": "1115f7c0ad6a3e5b22acc6e9f2a80cb2f3bc736580ae42206f16bf89d91f3ce1",
+      "nativeSampleRate": 22050,
+      "nativeSampleCount": 200568,
+      "decodedSampleRate": 16000,
+      "decodedSampleCount": 145537,
+      "durationSeconds": 9.096054,
+      "expectedDecodedText": "Boundary amber begins this delete test. The release label is obsolete draft. Boundary copper ends the dictated body. Command correction. Delete obsolete.",
+      "expectedDecodedSHA256": "7a5a6a76f1dfc156aa76dabc586dbde5a2bef59217731fc6086651099c374494",
+      "expectedProcessedText": "Boundary amber begins this delete test. The release label is draft. Boundary copper ends the dictated body.",
+      "expectedProcessedSHA256": "505fb6689217e7d9fdde7323da9e2414abcc2e0d23f74d6d986e426a78bfd769",
+      "expectedOutcome": "applied",
+      "targetPhrase": "obsolete",
+      "expectedTargetOccurrences": 1,
+      "protectedSpans": [
+        "Boundary amber begins this delete test",
+        "Boundary copper ends the dictated body"
+      ]
+    },
+    {
+      "id": "english-spoken-deletion-repeated-v1",
+      "purpose": "repeatedDeletionTargetLiteralNoOp",
+      "audio": "english-spoken-deletion-repeated-v1.aiff",
+      "rate": 195,
+      "generatedAt": "2026-07-30T21:16:31-07:00",
+      "source": "Boundary amber begins this delete test. Obsolete appears in the title, and obsolete appears in the note. Boundary copper ends the dictated body. Command correction, delete obsolete.",
+      "sourceSHA256": "486d255dcacf72f93c0608dc8f835b1541d8542043b4fc72cff33343401e09d7",
+      "audioSHA256": "be4603a36606e658cb5a7ca229fa2332115eabc1d175177d4a50ce953ce6d157",
+      "nativeSampleRate": 22050,
+      "nativeSampleCount": 221332,
+      "decodedSampleRate": 16000,
+      "decodedSampleCount": 160604,
+      "durationSeconds": 10.037732,
+      "expectedDecodedText": "Boundary amber begins this delete test. Obsolete appears in the title, and obsolete appears in the note. Boundary copper ends the dictated body. Command correction. Delete obsolete.",
+      "expectedDecodedSHA256": "387272e797ad002e5ce80b59bec822b53b1cbc0f1539f483aae3eb6c616da5dc",
+      "expectedProcessedText": "Boundary amber begins this delete test. Obsolete appears in the title, and obsolete appears in the note. Boundary copper ends the dictated body. Command correction. Delete obsolete.",
+      "expectedProcessedSHA256": "387272e797ad002e5ce80b59bec822b53b1cbc0f1539f483aae3eb6c616da5dc",
+      "expectedOutcome": "rejected:target_repeated",
+      "targetPhrase": "obsolete",
+      "expectedTargetOccurrences": 2,
+      "protectedSpans": [
+        "Boundary amber begins this delete test",
+        "Boundary copper ends the dictated body"
+      ]
+    },
+    {
+      "id": "english-spoken-deletion-semantic-v1",
+      "purpose": "semanticDeletionDiscussionLiteralNoOp",
+      "audio": "english-spoken-deletion-semantic-v1.aiff",
+      "rate": 205,
+      "generatedAt": "2026-07-30T21:16:31-07:00",
+      "source": "Boundary amber begins this delete test. The guide documents the phrase command correction delete obsolete for reviewers. Boundary copper ends this delete test.",
+      "sourceSHA256": "ade067f852bf5aa8c63f28222a063fa770abb3ad400a26efe38bf89d40dec90e",
+      "audioSHA256": "4ac1e964db5e961b4af4b265baf97466e44c69b01319d1f857664f06fadbbb0d",
+      "nativeSampleRate": 22050,
+      "nativeSampleCount": 177072,
+      "decodedSampleRate": 16000,
+      "decodedSampleCount": 128488,
+      "durationSeconds": 8.030476,
+      "expectedDecodedText": "Boundary amber begins this delete test. The guide documents the phrase command correction delete obsolete for reviewers. Boundary copper ends this delete test.",
+      "expectedDecodedSHA256": "ade067f852bf5aa8c63f28222a063fa770abb3ad400a26efe38bf89d40dec90e",
+      "expectedProcessedText": "Boundary amber begins this delete test. The guide documents the phrase command correction delete obsolete for reviewers. Boundary copper ends this delete test.",
+      "expectedProcessedSHA256": "ade067f852bf5aa8c63f28222a063fa770abb3ad400a26efe38bf89d40dec90e",
+      "expectedOutcome": "rejected:non_standalone",
+      "targetPhrase": "obsolete",
+      "expectedTargetOccurrences": 1,
+      "protectedSpans": [
+        "Boundary amber begins this delete test",
+        "Boundary copper ends this delete test"
+      ]
     }
   ]
 }

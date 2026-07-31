@@ -1169,6 +1169,65 @@ struct DictationCoordinatorTests {
     }
 
     @Test
+    func acceptedDeletionReachesHistoryBeforeInsertionWithoutCommandText() async throws {
+        let raw =
+            "Send the obsolete proposal Friday. "
+            + "Command correction, delete obsolete."
+        let history = FakeHistory()
+        let inserter = FakeInserter()
+        let coordinator = DictationCoordinator(
+            capture: FakeCapture(samples: [0.1]),
+            transcriber: FakeTranscriber(result: raw),
+            processor: TranscriptProcessor(),
+            inserter: inserter,
+            history: history
+        )
+
+        await coordinator.handle(.pressed)
+        await coordinator.handle(.released)
+
+        let saved = try #require(history.saved.first)
+        #expect(saved.rawText == raw)
+        #expect(saved.text == "Send the proposal Friday.")
+        #expect(inserter.insertions == ["Send the proposal Friday."])
+        #expect(history.updates.count == 1)
+        #expect(history.updates[0].0 == saved.id)
+        #expect(history.updates[0].1 == .insertionPostedUnverified)
+    }
+
+    @Test
+    func rejectedDeletionIsLiteralAndDiagnosticRemainsTextFree() async throws {
+        let raw =
+            "Keep draft, then ship. "
+            + "Command correction, delete draft."
+        let history = FakeHistory()
+        let inserter = FakeInserter()
+        let coordinator = DictationCoordinator(
+            capture: FakeCapture(samples: [0.1]),
+            transcriber: FakeTranscriber(result: raw),
+            processor: TranscriptProcessor(),
+            inserter: inserter,
+            history: history
+        )
+        var events: [OperationalDiagnosticEvent] = []
+        coordinator.onDiagnosticEvent = { events.append($0) }
+
+        await coordinator.handle(.pressed)
+        await coordinator.handle(.released)
+
+        #expect(history.saved.first?.text == raw)
+        #expect(inserter.insertions == [raw])
+        let rejection = try #require(
+            events.first { $0.name == "processing.command_rejected" }
+        )
+        #expect(
+            rejection.attributes
+                == ["reason": "unsafe_deletion_boundary"]
+        )
+        #expect(!rejection.attributes.values.contains(raw))
+    }
+
+    @Test
     func rejectedInsertionIsLiteralAndDiagnosticRemainsTextFree() async throws {
         let raw =
             "Friday is possible. Friday is preferred. "

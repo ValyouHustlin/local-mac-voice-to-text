@@ -1658,6 +1658,73 @@ struct GlobalInputAdapterTests {
     }
 
     @Test
+    func appliedDeletionFormatsOnlyTheEditedBodyAcrossWritingProfiles() async {
+        let input =
+            "Send the obsolete proposal Friday. "
+            + "Command correction, delete obsolete."
+        let edited = "Send the proposal Friday."
+        let profiles: [TranscriptFormattingProfile] = [
+            .casual,
+            .formatted,
+            .professional,
+            .aiCommunication,
+        ]
+
+        for profile in profiles {
+            let rewriter = RecordingLocalTranscriptRewriter(
+                responses: profile == .casual ? [] : [edited]
+            )
+            let processor = AppAwareTranscriptProcessor(
+                dictionaryProcessor: MutableTranscriptProcessor(),
+                profile: profile,
+                rewriter: rewriter
+            )
+
+            let result = await processor.processResult(
+                input,
+                target: .unknown
+            )
+            let calls = await rewriter.recordedCalls()
+
+            #expect(result.text == edited)
+            #expect(result.notices.isEmpty)
+            #expect(calls.count == (profile == .casual ? 0 : 1))
+            if let call = calls.first {
+                #expect(call.text == edited)
+                #expect(!call.text.localizedCaseInsensitiveContains("command"))
+            }
+        }
+    }
+
+    @Test
+    func rejectedDeletionBypassesFormatterAndPreservesLiteralCommand() async {
+        let rewriter = RecordingLocalTranscriptRewriter(
+            responses: ["This response must never be used."]
+        )
+        let processor = AppAwareTranscriptProcessor(
+            dictionaryProcessor: MutableTranscriptProcessor(),
+            profile: .professional,
+            rewriter: rewriter
+        )
+        let input =
+            "Keep draft, then ship. "
+            + "Command correction, delete draft."
+
+        let result = await processor.processResult(
+            input,
+            target: .unknown
+        )
+        let calls = await rewriter.recordedCalls()
+
+        #expect(result.text == input)
+        #expect(
+            result.notices
+                == [.spokenReplacementRejected(.unsafeDeletionBoundary)]
+        )
+        #expect(calls.isEmpty)
+    }
+
+    @Test
     func rejectedInsertionBypassesFormatterAndPreservesLiteralCommand() async {
         let rewriter = RecordingLocalTranscriptRewriter(
             responses: ["This response must never be used."]

@@ -86,6 +86,178 @@ struct SpokenReplacementCommandEngineTests {
     }
 
     @Test
+    func deletesOneExactUniquePhraseWithoutRewritingTheRemainingBody() {
+        let examples = [
+            (
+                "Send the obsolete proposal Friday. Command correction, delete obsolete.",
+                "Send the proposal Friday."
+            ),
+            (
+                "Email Aaron Browne-Moore and Valyou today. Command correction, delete and Valyou.",
+                "Email Aaron Browne-Moore today."
+            ),
+            (
+                "We should not deploy Friday. Command correction, delete not.",
+                "We should deploy Friday."
+            ),
+            (
+                "Use API beta v2 today. Command correction, delete beta.",
+                "Use API v2 today."
+            ),
+            (
+                "Use version 14.5 beta today. Command correction, delete 14.5.",
+                "Use version beta today."
+            ),
+            (
+                "Deploy on Friday. Command correction, delete on Friday.",
+                "Deploy."
+            ),
+        ]
+
+        for (input, expected) in examples {
+            let result = SpokenReplacementCommandEngine.apply(to: input)
+            #expect(result.text == expected)
+            #expect(result.outcome == .applied)
+        }
+    }
+
+    @Test
+    func deletionRemovesOnlyTheTargetAndOneAdjacentWhitespaceRun() {
+        let result = SpokenReplacementCommandEngine.apply(
+            to: "Keep  API-v2 beta  today! "
+                + "Command correction, delete beta."
+        )
+
+        #expect(result.text == "Keep  API-v2 today!")
+        #expect(result.outcome == .applied)
+    }
+
+    @Test
+    func deletionRequiresOneExactUniqueBoundedTargetAndAUsableResult() {
+        let examples: [(String, SpokenReplacementCommandRejection)] = [
+            (
+                "Friday is possible. Friday is preferred. Command correction, delete Friday.",
+                .targetRepeated
+            ),
+            (
+                "Send Friday. Command correction, delete Tuesday.",
+                .targetMissing
+            ),
+            (
+                "Ha ha ha. Command correction, delete ha ha.",
+                .targetRepeated
+            ),
+            (
+                "Concatenate values. Command correction, delete cat.",
+                .targetMissing
+            ),
+            (
+                "Visit cat.example. Command correction, delete cat.",
+                .targetMissing
+            ),
+            (
+                "Use version 14.5. Command correction, delete 14.",
+                .targetMissing
+            ),
+            (
+                "Friday. Command correction, delete Friday.",
+                .wouldEmptySentence
+            ),
+            (
+                "Keep this. Friday. Keep that. Command correction, delete Friday.",
+                .wouldEmptySentence
+            ),
+            (
+                "Command correction, delete Friday.",
+                .missingBody
+            ),
+        ]
+
+        for (input, reason) in examples {
+            let result = SpokenReplacementCommandEngine.apply(to: input)
+            #expect(result.text == input)
+            #expect(result.outcome == .rejected(reason))
+        }
+    }
+
+    @Test
+    func unsafeOrMalformedDeletionCommandsFailClosedByteForByte() {
+        let tooManyWords = (1...9).map { "word\($0)" }.joined(separator: " ")
+        let examples: [(String, SpokenReplacementCommandRejection)] = [
+            (
+                "Keep draft, then ship. Command correction, delete draft.",
+                .unsafeDeletionBoundary
+            ),
+            (
+                "Keep “ obsolete ” today. Command correction, delete obsolete.",
+                .unsafeDeletionBoundary
+            ),
+            (
+                "Keep [ obsolete ] today. Command correction, delete obsolete.",
+                .unsafeDeletionBoundary
+            ),
+            (
+                "Keep obsolete / draft today. Command correction, delete obsolete.",
+                .unsafeDeletionBoundary
+            ),
+            (
+                "Keep obsolete 🙂 draft today. Command correction, delete obsolete.",
+                .unsafeDeletionBoundary
+            ),
+            (
+                "Actually deploy Friday. Command correction, delete Actually.",
+                .unsafeDeletionBoundary
+            ),
+            (
+                "Keep this.\nOmit that. Command correction, delete Omit.",
+                .unsafeDeletionBoundary
+            ),
+            (
+                "Keep obsolete \nThen ship. Command correction, delete obsolete.",
+                .unsafeDeletionBoundary
+            ),
+            (
+                "Send Friday. Command correction, delete.",
+                .missingPayload
+            ),
+            (
+                "Send Friday. Command correction, delete \(tooManyWords).",
+                .payloadTooLarge
+            ),
+            (
+                "Keep replace Friday. Command correction, delete replace Friday.",
+                .malformedCommand
+            ),
+            (
+                "Send Friday. Command correction, delete Friday. Continue working.",
+                .nonTerminal
+            ),
+            (
+                "Tell command correction, delete Friday.",
+                .nonStandalone
+            ),
+            (
+                "Keep command correction here. Command correction, delete Friday.",
+                .multipleCommands
+            ),
+            (
+                "He wrote “Command correction, delete Friday.”",
+                .nonStandalone
+            ),
+            (
+                "Send Friday. Command correction, delete Friday?",
+                .questionCommand
+            ),
+        ]
+
+        for (input, reason) in examples {
+            let result = SpokenReplacementCommandEngine.apply(to: input)
+            #expect(result.text == input)
+            #expect(result.outcome == .rejected(reason))
+        }
+    }
+
+    @Test
     func insertionRequiresOneExactUniqueBoundedAnchor() {
         let examples: [(String, SpokenReplacementCommandRejection)] = [
             (

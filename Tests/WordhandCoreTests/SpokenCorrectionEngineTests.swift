@@ -98,11 +98,15 @@ struct SpokenCorrectionEngineTests {
     }
 
     @Test
-    func preservesReservedEarlierReplacementCommandForItsDedicatedEngine() {
-        let input =
-            "Friday is possible. Friday is preferred. "
-            + "Command correction, replace Friday with Monday."
+    func preservesReservedEditingCommandsForTheirDedicatedEngine() {
+        let inputs = [
+            "Friday is possible. Command correction, replace Friday with Monday.",
+            "Friday is possible. Command correction, insert not after is.",
+            "Friday is possible. Command correction, delete possible.",
+        ]
 
-        #expect(SpokenCorrectionEngine.apply(to: input) == input)
+        for input in inputs {
+            #expect(SpokenCorrectionEngine.apply(to: input) == input)
+        }
     }
 }

@@ -158,6 +158,35 @@ struct TranscriptProcessorTests {
     }
 
     @Test
+    func appliesDeletionAfterImmediateRepairs() async {
+        let processor = TranscriptProcessor()
+        let result = await processor.processResult(
+            "Send Friday—wait, no, Monday morning. "
+                + "Command correction, delete morning."
+        )
+
+        #expect(result.text == "Send Monday.")
+        #expect(result.notices.isEmpty)
+    }
+
+    @Test
+    func rejectedDeletionPreservesTextAndReportsReason() async {
+        let processor = TranscriptProcessor(
+            formattingProfile: .professional
+        )
+        let input =
+            "Keep draft, then ship. "
+            + "Command correction, delete draft."
+        let result = await processor.processResult(input)
+
+        #expect(result.text == input)
+        #expect(
+            result.notices
+                == [.spokenReplacementRejected(.unsafeDeletionBoundary)]
+        )
+    }
+
+    @Test
     func rejectedAdditiveInsertionPreservesTextAndReportsReason() async {
         let processor = TranscriptProcessor(
             formattingProfile: .professional

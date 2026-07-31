@@ -49,8 +49,9 @@ order:
 4. [x] optional application-to-profile routing behind one understandable
    global default;
 5. [x] deeper explicit spoken correction and editing commands; exact layout
-   commands and one fail-closed earlier-phrase replacement are implemented and
-   isolated-verified, while attended natural-command coverage remains;
+   commands plus fail-closed earlier-phrase replacement, additive insertion,
+   and bounded deletion are implemented and isolated-verified, while attended
+   natural-command coverage remains;
 6. [x] a native evidence-based diagnostics and quality view, using factual
    seven-day activity and exact local evidence counts rather than a health or
    accuracy score;
@@ -366,6 +367,21 @@ not attended natural-command evidence.
 
 Receipt:
 `docs/verification/2026-07-30-spoken-insertion-command.md`.
+
+The destructive counterpart is intentionally narrower:
+`command correction, delete <target>`. It deletes only one exact, unique,
+Unicode token-bounded target in the current dictation plus one deterministic
+adjacent horizontal-whitespace run. It refuses sentence-initial, newline, and
+punctuation-ambiguous boundaries, cannot empty the affected sentence, and
+preserves the complete literal command on every rejection. Applied and rejected
+paths now cross all four writing profiles, History-before-insertion, and
+text-free diagnostics. Three retained Samantha fixtures bind one safe
+deletion, one repeated-target rejection, and one semantic discussion; four
+cached Large v3 replays of the complete seven-fixture edit corpus matched every
+decode and formatted result.
+
+Receipt:
+`docs/verification/2026-07-30-spoken-deletion-command.md`.
 
 ## Public checkpoint cadence
 
