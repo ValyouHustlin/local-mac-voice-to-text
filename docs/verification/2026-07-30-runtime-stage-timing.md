@@ -61,6 +61,15 @@ omitting unavailable stage averages.
 - `/bin/bash -n scripts/*.sh` and `git diff --check`: passed with no output.
 - Independent diff review verdict: ship, with no findings at or above the
   requested 80% confidence threshold.
+- Source commit `80f85c8` was pushed to `origin/master`. GitHub CI run
+  `30605604667` passed its tests, packaging guards, and release build in 5
+  minutes 46 seconds.
+- A development candidate was built as version `0.1.0` build 24 with bundle
+  identifier `com.valyou.wordhand.dev`, signed by `Wordhand Local Signing`, and
+  passed strict signature verification. It was not installed or launched.
+- The installed app remained build 22, running as PID 7994; no microphone,
+  global-input, clipboard, insertion, sound, or natural-dictation path was
+  exercised.
 
 ## Privacy and claim boundary
 
