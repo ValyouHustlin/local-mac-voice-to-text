@@ -438,6 +438,180 @@ struct GlobalInputAdapterTests {
     }
 
     @Test
+    @MainActor
+    func accessibilityNotificationCompletesVerificationBeforeTimeout() async {
+        let element = AXUIElementCreateApplication(getpid())
+        let selection = LockedSelection(
+            NSRange(location: 0, length: 0)
+        )
+        let sleeper = ControlledInsertionSleeper()
+        let resultBox = LockedVerificationResult()
+        let driver = FakeAXVerificationNotificationDriver()
+        let observer = AXTextInsertionObserver(
+            focusedElementProvider: { element },
+            selectionProvider: { _ in selection.value },
+            automaticPasteRetryPolicy: { _ in true },
+            notificationDriver: driver,
+            timeoutSleep: { _ in await sleeper.sleep() }
+        )
+        let checkpoint = observer.captureCheckpoint()
+        #expect(checkpoint != nil)
+        guard let checkpoint else { return }
+
+        let verificationTask = Task {
+            let result = await observer.waitForVerification(
+                checkpoint,
+                insertedUTF16Count: 5,
+                timeoutNanoseconds: 360_000_000
+            )
+            resultBox.value = result
+            return result
+        }
+        while driver.registrationCount == 0 {
+            await Task.yield()
+        }
+        await sleeper.waitUntilStarted()
+
+        selection.value = NSRange(location: 5, length: 0)
+        driver.fire(element: element)
+        for _ in 0..<20 where resultBox.value == nil {
+            await Task.yield()
+        }
+        #expect(resultBox.value != nil)
+        await sleeper.release()
+        let result = await verificationTask.value
+
+        #expect(
+            result == .verified(TextInsertionUndoToken(
+                checkpointID: checkpoint.id,
+                insertedRange: NSRange(location: 0, length: 5),
+                expectedSelection: NSRange(location: 5, length: 0)
+            ))
+        )
+        #expect(driver.invalidationCount == 1)
+    }
+
+    @Test
+    @MainActor
+    func cancelledAccessibilityWaitCleansUpAndCannotReportANoOp() async {
+        let element = AXUIElementCreateApplication(getpid())
+        let selection = LockedSelection(
+            NSRange(location: 0, length: 0)
+        )
+        let canceller = LockedTaskCanceller()
+        let driver = FakeAXVerificationNotificationDriver(
+            onRegister: { canceller.cancel() }
+        )
+        let observer = AXTextInsertionObserver(
+            focusedElementProvider: { element },
+            selectionProvider: { _ in selection.value },
+            automaticPasteRetryPolicy: { _ in true },
+            notificationDriver: driver
+        )
+        let checkpoint = observer.captureCheckpoint()
+        #expect(checkpoint != nil)
+        guard let checkpoint else { return }
+
+        let verificationTask = Task {
+            await observer.waitForVerification(
+                checkpoint,
+                insertedUTF16Count: 5,
+                timeoutNanoseconds: 360_000_000
+            )
+        }
+        canceller.set { verificationTask.cancel() }
+
+        #expect(await verificationTask.value == .unavailable)
+        #expect(driver.registrationCount == 1)
+        #expect(driver.invalidationCount == 1)
+    }
+
+    @Test
+    @MainActor
+    func unsupportedAccessibilityNotificationsUseFinalTimeoutPoll() async {
+        let element = AXUIElementCreateApplication(getpid())
+        let selection = LockedSelection(
+            NSRange(location: 0, length: 0)
+        )
+        let observer = AXTextInsertionObserver(
+            focusedElementProvider: { element },
+            selectionProvider: { _ in selection.value },
+            automaticPasteRetryPolicy: { _ in true },
+            notificationDriver: FakeAXVerificationNotificationDriver(
+                supportsRegistration: false
+            )
+        )
+        let checkpoint = observer.captureCheckpoint()
+        #expect(checkpoint != nil)
+        guard let checkpoint else { return }
+
+        let result = await observer.waitForVerification(
+            checkpoint,
+            insertedUTF16Count: 5,
+            timeoutNanoseconds: 0
+        )
+
+        #expect(result == .unchanged)
+    }
+
+    @Test
+    func eventDrivenPasteRecordsExactVerificationWaitAndCompatibilityBound()
+        async throws
+    {
+        let poster = FakeTextEventPoster()
+        let checkpoint = TextInsertionCheckpoint(
+            id: UUID(),
+            selection: NSRange(location: 0, length: 0)
+        )
+        let token = TextInsertionUndoToken(
+            checkpointID: checkpoint.id,
+            insertedRange: NSRange(location: 0, length: 5),
+            expectedSelection: NSRange(location: 5, length: 0)
+        )
+        let observer = FakeTextInsertionObserver(
+            checkpoint: checkpoint,
+            results: [.verified(token)]
+        )
+        let clock = LockedClock(values: [10, 10.025])
+        let inserter = MacTextInserter(
+            eventPoster: poster,
+            observer: observer,
+            secureInputEnabled: { false },
+            now: { clock.next() }
+        )
+
+        try await inserter.insert("hello", mode: .paste)
+
+        let diagnostics = await inserter.lastInsertionDiagnostics()
+        #expect(abs(diagnostics.verificationWaitSeconds - 0.025) < 0.000_001)
+        #expect(observer.verificationTimeouts == [360_000_000])
+        #expect(poster.pasteShortcutCount == 1)
+    }
+
+    @Test
+    func checkpointlessPasteRetainsClipboardConsumptionBound() async throws {
+        let poster = FakeTextEventPoster()
+        let waitRecorder = AsyncWaitRecorder()
+        let clock = LockedClock(values: [20, 20.36])
+        let inserter = MacTextInserter(
+            eventPoster: poster,
+            observer: FakeTextInsertionObserver(results: [.unavailable]),
+            secureInputEnabled: { false },
+            now: { clock.next() },
+            compatibilityWait: { duration in
+                await waitRecorder.record(duration)
+            }
+        )
+
+        try await inserter.insert("hello", mode: .paste)
+
+        #expect(await waitRecorder.durations == [360_000_000])
+        let diagnostics = await inserter.lastInsertionDiagnostics()
+        #expect(abs(diagnostics.verificationWaitSeconds - 0.36) < 0.000_001)
+        #expect(poster.pasteShortcutCount == 1)
+    }
+
+    @Test
     func verifiedPasteSubmitsExactlyOnceAfterInsertion() async throws {
         let poster = FakeTextEventPoster()
         let checkpoint = TextInsertionCheckpoint(
@@ -2530,6 +2704,7 @@ private final class FakeTextInsertionObserver: TextInsertionObserving, @unchecke
     private let checkpoint: TextInsertionCheckpoint?
     private var results: [TextInsertionVerification]
     private(set) var undoTokens: [TextInsertionUndoToken] = []
+    private(set) var verificationTimeouts: [UInt64] = []
 
     init(
         checkpoint: TextInsertionCheckpoint? = nil,
@@ -2552,10 +2727,173 @@ private final class FakeTextInsertionObserver: TextInsertionObserving, @unchecke
         }
     }
 
+    func waitForVerification(
+        _ checkpoint: TextInsertionCheckpoint,
+        insertedUTF16Count: Int,
+        timeoutNanoseconds: UInt64
+    ) async -> TextInsertionVerification {
+        lock.withLock {
+            verificationTimeouts.append(timeoutNanoseconds)
+            return results.isEmpty ? .unavailable : results.removeFirst()
+        }
+    }
+
     func undo(_ token: TextInsertionUndoToken) throws {
         lock.withLock {
             undoTokens.append(token)
         }
+    }
+}
+
+private final class LockedSelection: @unchecked Sendable {
+    private let lock = NSLock()
+    private var storedValue: NSRange
+
+    init(_ value: NSRange) {
+        storedValue = value
+    }
+
+    var value: NSRange {
+        get { lock.withLock { storedValue } }
+        set { lock.withLock { storedValue = newValue } }
+    }
+}
+
+private final class LockedClock: @unchecked Sendable {
+    private let lock = NSLock()
+    private var values: [TimeInterval]
+
+    init(values: [TimeInterval]) {
+        self.values = values
+    }
+
+    func next() -> TimeInterval {
+        lock.withLock {
+            values.isEmpty ? 0 : values.removeFirst()
+        }
+    }
+}
+
+private final class LockedVerificationResult: @unchecked Sendable {
+    private let lock = NSLock()
+    private var storedValue: TextInsertionVerification?
+
+    var value: TextInsertionVerification? {
+        get { lock.withLock { storedValue } }
+        set { lock.withLock { storedValue = newValue } }
+    }
+}
+
+private final class LockedTaskCanceller: @unchecked Sendable {
+    private let lock = NSLock()
+    private var cancellation: (@Sendable () -> Void)?
+
+    func set(_ cancellation: @escaping @Sendable () -> Void) {
+        lock.withLock {
+            self.cancellation = cancellation
+        }
+    }
+
+    func cancel() {
+        lock.withLock { cancellation }?()
+    }
+}
+
+private actor ControlledInsertionSleeper {
+    private var didStart = false
+    private var continuation: CheckedContinuation<Void, Never>?
+
+    func sleep() async {
+        didStart = true
+        await withCheckedContinuation { continuation in
+            self.continuation = continuation
+        }
+    }
+
+    func waitUntilStarted() async {
+        while !didStart {
+            await Task.yield()
+        }
+    }
+
+    func release() {
+        continuation?.resume()
+        continuation = nil
+    }
+}
+
+private actor AsyncWaitRecorder {
+    private(set) var durations: [UInt64] = []
+
+    func record(_ duration: UInt64) {
+        durations.append(duration)
+    }
+}
+
+private final class FakeAXVerificationNotificationToken:
+    AXVerificationNotificationToken,
+    @unchecked Sendable
+{
+    private let onInvalidate: @Sendable () -> Void
+
+    init(onInvalidate: @escaping @Sendable () -> Void) {
+        self.onInvalidate = onInvalidate
+    }
+
+    @MainActor
+    func invalidate() {
+        onInvalidate()
+    }
+}
+
+private final class FakeAXVerificationNotificationDriver:
+    AXVerificationNotificationDriving,
+    @unchecked Sendable
+{
+    private let lock = NSLock()
+    private let supportsRegistration: Bool
+    private let onRegister: @Sendable () -> Void
+    private var handler: (@Sendable (AXUIElement) -> Void)?
+    private var storedRegistrationCount = 0
+    private var storedInvalidationCount = 0
+
+    var registrationCount: Int {
+        lock.withLock { storedRegistrationCount }
+    }
+
+    var invalidationCount: Int {
+        lock.withLock { storedInvalidationCount }
+    }
+
+    init(
+        supportsRegistration: Bool = true,
+        onRegister: @escaping @Sendable () -> Void = {}
+    ) {
+        self.supportsRegistration = supportsRegistration
+        self.onRegister = onRegister
+    }
+
+    @MainActor
+    func register(
+        element: AXUIElement,
+        onChange: @escaping @Sendable (AXUIElement) -> Void
+    ) -> (any AXVerificationNotificationToken)? {
+        lock.withLock {
+            handler = onChange
+            storedRegistrationCount += 1
+        }
+        onRegister()
+        guard supportsRegistration else { return nil }
+        return FakeAXVerificationNotificationToken { [weak self] in
+            self?.lock.withLock {
+                self?.storedInvalidationCount += 1
+                self?.handler = nil
+            }
+        }
+    }
+
+    func fire(element: AXUIElement) {
+        lock.withLock { handler }?(element)
     }
 }
 

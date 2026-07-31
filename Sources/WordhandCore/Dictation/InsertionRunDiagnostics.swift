@@ -32,6 +32,7 @@ public struct InsertionRunDiagnostics: Equatable, Sendable {
     public var secureInputBlocked: Bool
     public var undoAvailable: Bool
     public var postActionOutcome: InsertionPostActionOutcome
+    public var verificationWaitSeconds: TimeInterval
 
     public init(
         mode: InsertionMode,
@@ -40,7 +41,8 @@ public struct InsertionRunDiagnostics: Equatable, Sendable {
         checkpointAvailable: Bool = false,
         secureInputBlocked: Bool = false,
         undoAvailable: Bool = false,
-        postActionOutcome: InsertionPostActionOutcome = .notRequested
+        postActionOutcome: InsertionPostActionOutcome = .notRequested,
+        verificationWaitSeconds: TimeInterval = 0
     ) {
         self.mode = mode
         self.verification = verification
@@ -49,6 +51,7 @@ public struct InsertionRunDiagnostics: Equatable, Sendable {
         self.secureInputBlocked = secureInputBlocked
         self.undoAvailable = undoAvailable
         self.postActionOutcome = postActionOutcome
+        self.verificationWaitSeconds = verificationWaitSeconds
     }
 }
 

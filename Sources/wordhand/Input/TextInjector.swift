@@ -46,6 +46,11 @@ protocol TextInsertionObserving: Sendable {
         _ checkpoint: TextInsertionCheckpoint,
         insertedUTF16Count: Int
     ) -> TextInsertionVerification
+    func waitForVerification(
+        _ checkpoint: TextInsertionCheckpoint,
+        insertedUTF16Count: Int,
+        timeoutNanoseconds: UInt64
+    ) async -> TextInsertionVerification
     func undo(_ token: TextInsertionUndoToken) throws
 }
 
@@ -124,6 +129,8 @@ final class MacTextInserter:
     private let eventPoster: any TextEventPosting
     private let observer: any TextInsertionObserving
     private let secureInputEnabled: @Sendable () -> Bool
+    private let now: @Sendable () -> TimeInterval
+    private let compatibilityWait: @Sendable (UInt64) async -> Void
     private let lock = NSLock()
     private var undoToken: TextInsertionUndoToken?
     private var hasPostedPaste = false
@@ -135,11 +142,20 @@ final class MacTextInserter:
         observer: any TextInsertionObserving = AXTextInsertionObserver(),
         secureInputEnabled: @escaping @Sendable () -> Bool = {
             IsSecureEventInputEnabled()
+        },
+        now: @escaping @Sendable () -> TimeInterval = {
+            ProcessInfo.processInfo.systemUptime
+        },
+        compatibilityWait:
+            @escaping @Sendable (UInt64) async -> Void = { nanoseconds in
+                try? await Task.sleep(nanoseconds: nanoseconds)
         }
     ) {
         self.eventPoster = eventPoster
         self.observer = observer
         self.secureInputEnabled = secureInputEnabled
+        self.now = now
+        self.compatibilityWait = compatibilityWait
     }
 
     func insert(_ text: String, mode: InsertionMode) async throws {
@@ -294,33 +310,49 @@ final class MacTextInserter:
                 throw error
             }
 
-            // Give browser/Electron targets time to consume the paste, then
-            // confirm delivery from the target's cursor. A proven no-op gets
-            // one retry only when the target exposes a reliable editor cursor.
+            // Accessibility notifications can confirm delivery as soon as the
+            // cursor moves. The 360 ms bound remains a compatibility timeout,
+            // not an unconditional delay. A proven no-op gets one retry only
+            // when the target exposes a reliable editor cursor.
             // Terminal accessibility surfaces can leave their reported cursor
             // unchanged after a successful paste, so retrying there duplicates
             // the transcript.
-            try? await Task.sleep(nanoseconds: 360_000_000)
             var observationError: Error?
             var verification: InsertionVerificationOutcome =
                 checkpoint == nil ? .unavailable : .notAttempted
             var retryCount = 0
+            var verificationWaitSeconds: TimeInterval = 0
             if let checkpoint {
                 do {
-                    switch observer.verify(
+                    let waitStarted = now()
+                    let firstVerification = await observer.waitForVerification(
                         checkpoint,
-                        insertedUTF16Count: text.utf16.count
-                    ) {
+                        insertedUTF16Count: text.utf16.count,
+                        timeoutNanoseconds: 360_000_000
+                    )
+                    verificationWaitSeconds += max(0, now() - waitStarted)
+                    switch firstVerification {
                     case .unchanged:
                         if checkpoint.allowsAutomaticPasteRetry {
                             retryCount = 1
                             try await MainActor.run {
                                 try eventPoster.postPasteShortcut()
                             }
-                            try? await Task.sleep(nanoseconds: 360_000_000)
+                            let retryWaitStarted = now()
+                            let retryObservation =
+                                await observer.waitForVerification(
+                                    checkpoint,
+                                    insertedUTF16Count: text.utf16.count,
+                                    timeoutNanoseconds: 360_000_000
+                                )
+                            verificationWaitSeconds += max(
+                                0,
+                                now() - retryWaitStarted
+                            )
                             let retryVerification = try finalizeObservation(
                                 checkpoint,
-                                insertedUTF16Count: text.utf16.count
+                                insertedUTF16Count: text.utf16.count,
+                                observed: retryObservation
                             )
                             verification = retryVerification == .verified
                                 ? .verifiedAfterRetry
@@ -341,6 +373,13 @@ final class MacTextInserter:
                 } catch {
                     observationError = error
                 }
+            } else {
+                // Without a readable AX selection there is no event that can
+                // prove consumption. Preserve the former compatibility bound
+                // before restoring the user's clipboard.
+                let waitStarted = now()
+                await compatibilityWait(360_000_000)
+                verificationWaitSeconds += max(0, now() - waitStarted)
             }
             await MainActor.run {
                 let pasteboard = NSPasteboard.general
@@ -357,7 +396,8 @@ final class MacTextInserter:
                     mode: mode,
                     verification: .failed,
                     retryCount: retryCount,
-                    checkpointAvailable: checkpoint != nil
+                    checkpointAvailable: checkpoint != nil,
+                    verificationWaitSeconds: verificationWaitSeconds
                 ))
                 throw observationError
             }
@@ -373,7 +413,8 @@ final class MacTextInserter:
                 retryCount: retryCount,
                 checkpointAvailable: checkpoint != nil,
                 undoAvailable: canUndoLastInsertion,
-                postActionOutcome: postActionOutcome
+                postActionOutcome: postActionOutcome,
+                verificationWaitSeconds: verificationWaitSeconds
             ))
         }
     }
@@ -433,13 +474,15 @@ final class MacTextInserter:
 
     private func finalizeObservation(
         _ checkpoint: TextInsertionCheckpoint?,
-        insertedUTF16Count: Int
+        insertedUTF16Count: Int,
+        observed: TextInsertionVerification? = nil
     ) throws -> InsertionVerificationOutcome {
         guard let checkpoint else { return .unavailable }
-        switch observer.verify(
+        let result = observed ?? observer.verify(
             checkpoint,
             insertedUTF16Count: insertedUTF16Count
-        ) {
+        )
+        switch result {
         case .verified(let token):
             setUndo(token)
             return .verified
@@ -512,18 +555,206 @@ enum TextInsertionError: LocalizedError {
     }
 }
 
+protocol AXVerificationNotificationToken: AnyObject, Sendable {
+    @MainActor
+    func invalidate()
+}
+
+protocol AXVerificationNotificationDriving: Sendable {
+    @MainActor
+    func register(
+        element: AXUIElement,
+        onChange: @escaping @Sendable (AXUIElement) -> Void
+    ) -> (any AXVerificationNotificationToken)?
+}
+
+private final class SystemAXVerificationNotificationToken:
+    AXVerificationNotificationToken,
+    @unchecked Sendable
+{
+    let observer: AXObserver
+    let element: AXUIElement
+    private(set) var notifications: [CFString] = []
+    let onChange: @Sendable (AXUIElement) -> Void
+    private var isValid = true
+
+    init(
+        observer: AXObserver,
+        element: AXUIElement,
+        onChange: @escaping @Sendable (AXUIElement) -> Void
+    ) {
+        self.observer = observer
+        self.element = element
+        self.onChange = onChange
+    }
+
+    @MainActor
+    func setNotifications(_ notifications: [CFString]) {
+        self.notifications = notifications
+    }
+
+    @MainActor
+    func invalidate() {
+        guard isValid else { return }
+        isValid = false
+        for notification in notifications {
+            AXObserverRemoveNotification(observer, element, notification)
+        }
+        CFRunLoopRemoveSource(
+            CFRunLoopGetMain(),
+            AXObserverGetRunLoopSource(observer),
+            .commonModes
+        )
+    }
+}
+
+private let axVerificationNotificationCallback: AXObserverCallback = {
+    _,
+    element,
+    _,
+    context
+in
+    guard let context else { return }
+    let token = Unmanaged<SystemAXVerificationNotificationToken>
+        .fromOpaque(context)
+        .takeUnretainedValue()
+    token.onChange(element)
+}
+
+struct SystemAXVerificationNotificationDriver:
+    AXVerificationNotificationDriving
+{
+    @MainActor
+    func register(
+        element: AXUIElement,
+        onChange: @escaping @Sendable (AXUIElement) -> Void
+    ) -> (any AXVerificationNotificationToken)? {
+        var processIdentifier: pid_t = 0
+        var observer: AXObserver?
+        guard AXUIElementGetPid(
+            element,
+            &processIdentifier
+        ) == .success,
+        AXObserverCreate(
+            processIdentifier,
+            axVerificationNotificationCallback,
+            &observer
+        ) == .success,
+        let observer
+        else {
+            return nil
+        }
+
+        let requestedNotifications = [
+            kAXSelectedTextChangedNotification as CFString,
+            kAXValueChangedNotification as CFString,
+        ]
+        var registeredNotifications: [CFString] = []
+        let token = SystemAXVerificationNotificationToken(
+            observer: observer,
+            element: element,
+            onChange: onChange
+        )
+        let context = Unmanaged.passUnretained(token).toOpaque()
+        for notification in requestedNotifications where
+            AXObserverAddNotification(
+                observer,
+                element,
+                notification,
+                context
+            ) == .success
+        {
+            registeredNotifications.append(notification)
+        }
+        guard !registeredNotifications.isEmpty else { return nil }
+        token.setNotifications(registeredNotifications)
+        CFRunLoopAddSource(
+            CFRunLoopGetMain(),
+            AXObserverGetRunLoopSource(observer),
+            .commonModes
+        )
+        return token
+    }
+}
+
 final class AXTextInsertionObserver: TextInsertionObserving, @unchecked Sendable {
     private struct StoredCheckpoint {
         let element: AXUIElement
         let selection: NSRange
     }
 
+    private final class ActiveVerificationWait: @unchecked Sendable {
+        let checkpoint: TextInsertionCheckpoint
+        let insertedUTF16Count: Int
+        let element: AXUIElement
+        let notificationToken: (any AXVerificationNotificationToken)?
+        let continuation: CheckedContinuation<
+            TextInsertionVerification,
+            Never
+        >
+
+        init(
+            checkpoint: TextInsertionCheckpoint,
+            insertedUTF16Count: Int,
+            element: AXUIElement,
+            notificationToken: (any AXVerificationNotificationToken)?,
+            continuation: CheckedContinuation<
+                TextInsertionVerification,
+                Never
+            >
+        ) {
+            self.checkpoint = checkpoint
+            self.insertedUTF16Count = insertedUTF16Count
+            self.element = element
+            self.notificationToken = notificationToken
+            self.continuation = continuation
+        }
+    }
+
     private let lock = NSLock()
+    private let focusedElementProvider: @Sendable () -> AXUIElement?
+    private let selectionProvider:
+        @Sendable (AXUIElement) -> NSRange?
+    private let automaticPasteRetryPolicy:
+        @Sendable (AXUIElement) -> Bool
+    private let notificationDriver: any AXVerificationNotificationDriving
+    private let timeoutSleep: @Sendable (UInt64) async -> Void
     private var checkpoints: [UUID: StoredCheckpoint] = [:]
+    private var activeVerificationWaits: [UUID: ActiveVerificationWait] = [:]
+    private var pendingVerificationWaits: Set<UUID> = []
+    private var cancelledVerificationWaits: Set<UUID> = []
+
+    init(
+        focusedElementProvider:
+            @escaping @Sendable () -> AXUIElement? = {
+                AXTextInsertionObserver.focusedElement()
+            },
+        selectionProvider:
+            @escaping @Sendable (AXUIElement) -> NSRange? = {
+                AXTextInsertionObserver.selection(of: $0)
+            },
+        automaticPasteRetryPolicy:
+            @escaping @Sendable (AXUIElement) -> Bool = {
+                AXTextInsertionObserver.allowsAutomaticPasteRetry(for: $0)
+            },
+        notificationDriver:
+            any AXVerificationNotificationDriving =
+                SystemAXVerificationNotificationDriver(),
+        timeoutSleep:
+            @escaping @Sendable (UInt64) async -> Void = { nanoseconds in
+                try? await Task.sleep(nanoseconds: nanoseconds)
+            }
+    ) {
+        self.focusedElementProvider = focusedElementProvider
+        self.selectionProvider = selectionProvider
+        self.automaticPasteRetryPolicy = automaticPasteRetryPolicy
+        self.notificationDriver = notificationDriver
+        self.timeoutSleep = timeoutSleep
+    }
 
     func captureCheckpoint() -> TextInsertionCheckpoint? {
-        guard let element = Self.focusedElement(),
-              let selection = Self.selection(of: element)
+        guard let element = focusedElementProvider(),
+              let selection = selectionProvider(element)
         else {
             return nil
         }
@@ -534,7 +765,7 @@ final class AXTextInsertionObserver: TextInsertionObserving, @unchecked Sendable
         return TextInsertionCheckpoint(
             id: id,
             selection: selection,
-            allowsAutomaticPasteRetry: Self.allowsAutomaticPasteRetry(for: element)
+            allowsAutomaticPasteRetry: automaticPasteRetryPolicy(element)
         )
     }
 
@@ -543,14 +774,14 @@ final class AXTextInsertionObserver: TextInsertionObserving, @unchecked Sendable
         insertedUTF16Count: Int
     ) -> TextInsertionVerification {
         guard let stored = lock.withLock({ checkpoints[checkpoint.id] }),
-              let focused = Self.focusedElement()
+              let focused = focusedElementProvider()
         else {
             return .unavailable
         }
         guard CFEqual(stored.element, focused) else {
             return .targetChanged
         }
-        guard let selection = Self.selection(of: focused) else {
+        guard let selection = selectionProvider(focused) else {
             return .unavailable
         }
         if selection == stored.selection {
@@ -577,11 +808,45 @@ final class AXTextInsertionObserver: TextInsertionObserving, @unchecked Sendable
         ))
     }
 
+    func waitForVerification(
+        _ checkpoint: TextInsertionCheckpoint,
+        insertedUTF16Count: Int,
+        timeoutNanoseconds: UInt64
+    ) async -> TextInsertionVerification {
+        let immediate = verify(
+            checkpoint,
+            insertedUTF16Count: insertedUTF16Count
+        )
+        if Self.isTerminalVerification(immediate) {
+            return immediate
+        }
+
+        let waitID = UUID()
+        _ = lock.withLock {
+            pendingVerificationWaits.insert(waitID)
+        }
+        return await withTaskCancellationHandler {
+            await withCheckedContinuation { continuation in
+                Task { @MainActor [self] in
+                    installVerificationWait(
+                        id: waitID,
+                        checkpoint: checkpoint,
+                        insertedUTF16Count: insertedUTF16Count,
+                        timeoutNanoseconds: timeoutNanoseconds,
+                        continuation: continuation
+                    )
+                }
+            }
+        } onCancel: { [weak self] in
+            self?.cancelVerificationWait(id: waitID)
+        }
+    }
+
     func undo(_ token: TextInsertionUndoToken) throws {
         guard let stored = lock.withLock({ checkpoints[token.checkpointID] }),
-              let focused = Self.focusedElement(),
+              let focused = focusedElementProvider(),
               CFEqual(stored.element, focused),
-              Self.selection(of: focused) == token.expectedSelection
+              selectionProvider(focused) == token.expectedSelection
         else {
             throw TextInsertionError.undoTargetChanged
         }
@@ -600,12 +865,168 @@ final class AXTextInsertionObserver: TextInsertionObserving, @unchecked Sendable
                 kAXSelectedTextAttribute as CFString,
                 "" as CFString
               ) == .success,
-              Self.selection(of: focused) == NSRange(
+              selectionProvider(focused) == NSRange(
                   location: token.insertedRange.location,
                   length: 0
               )
         else {
             throw TextInsertionError.undoFailed
+        }
+    }
+
+    @MainActor
+    private func installVerificationWait(
+        id: UUID,
+        checkpoint: TextInsertionCheckpoint,
+        insertedUTF16Count: Int,
+        timeoutNanoseconds: UInt64,
+        continuation: CheckedContinuation<
+            TextInsertionVerification,
+            Never
+        >
+    ) {
+        let wasCancelled = lock.withLock {
+            guard cancelledVerificationWaits.remove(id) != nil else {
+                return false
+            }
+            pendingVerificationWaits.remove(id)
+            return true
+        }
+        guard !wasCancelled else {
+            continuation.resume(returning: .unavailable)
+            return
+        }
+        guard let stored = lock.withLock({
+            checkpoints[checkpoint.id]
+        }) else {
+            lock.withLock {
+                pendingVerificationWaits.remove(id)
+                cancelledVerificationWaits.remove(id)
+            }
+            continuation.resume(returning: .unavailable)
+            return
+        }
+
+        let notificationToken = notificationDriver.register(
+            element: stored.element
+        ) { [weak self] element in
+            self?.handleVerificationNotification(for: element)
+        }
+
+        let registration = ActiveVerificationWait(
+            checkpoint: checkpoint,
+            insertedUTF16Count: insertedUTF16Count,
+            element: stored.element,
+            notificationToken: notificationToken,
+            continuation: continuation
+        )
+        let activated = lock.withLock {
+            if cancelledVerificationWaits.remove(id) != nil {
+                pendingVerificationWaits.remove(id)
+                return false
+            }
+            guard pendingVerificationWaits.remove(id) != nil else {
+                return false
+            }
+            activeVerificationWaits[id] = registration
+            return true
+        }
+        guard activated else {
+            finishVerificationWait(
+                registration,
+                result: .unavailable
+            )
+            return
+        }
+
+        // Close the race where delivery lands after the first verification
+        // but before notification registration completes.
+        let afterRegistration = verify(
+            checkpoint,
+            insertedUTF16Count: insertedUTF16Count
+        )
+        if Self.isTerminalVerification(afterRegistration) {
+            completeVerificationWait(id: id, result: afterRegistration)
+            return
+        }
+
+        Task { [weak self] in
+            guard let self else { return }
+            await self.timeoutSleep(timeoutNanoseconds)
+            let result = self.verify(
+                checkpoint,
+                insertedUTF16Count: insertedUTF16Count
+            )
+            self.completeVerificationWait(id: id, result: result)
+        }
+    }
+
+    private func handleVerificationNotification(for element: AXUIElement) {
+        let waits = lock.withLock {
+            activeVerificationWaits.filter {
+                CFEqual($0.value.element, element)
+            }
+        }
+        for (id, wait) in waits {
+            let result = verify(
+                wait.checkpoint,
+                insertedUTF16Count: wait.insertedUTF16Count
+            )
+            if Self.isTerminalVerification(result) {
+                completeVerificationWait(id: id, result: result)
+            }
+        }
+    }
+
+    private static func isTerminalVerification(
+        _ result: TextInsertionVerification
+    ) -> Bool {
+        switch result {
+        case .verified, .verifiedWithoutUndo, .targetChanged:
+            true
+        case .unchanged, .unavailable:
+            false
+        }
+    }
+
+    private func cancelVerificationWait(id: UUID) {
+        let registration: ActiveVerificationWait? = lock.withLock {
+            if let registration = activeVerificationWaits.removeValue(
+                forKey: id
+            ) {
+                return registration
+            }
+            if pendingVerificationWaits.remove(id) != nil {
+                cancelledVerificationWaits.insert(id)
+            }
+            return nil
+        }
+        guard let registration else { return }
+        finishVerificationWait(
+            registration,
+            result: .unavailable
+        )
+    }
+
+    private func completeVerificationWait(
+        id: UUID,
+        result: TextInsertionVerification
+    ) {
+        guard let registration = lock.withLock({
+            activeVerificationWaits.removeValue(forKey: id)
+        }) else {
+            return
+        }
+        finishVerificationWait(registration, result: result)
+    }
+
+    private func finishVerificationWait(
+        _ registration: ActiveVerificationWait,
+        result: TextInsertionVerification
+    ) {
+        Task { @MainActor in
+            registration.notificationToken?.invalidate()
+            registration.continuation.resume(returning: result)
         }
     }
 

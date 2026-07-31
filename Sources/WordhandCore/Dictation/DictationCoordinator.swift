@@ -737,6 +737,8 @@ public final class DictationCoordinator {
                     "release_to_insertion_seconds":
                         max(0, insertionCompletedAt - recordingEndedAt),
                     "retry_count": Double(insertionDiagnostics.retryCount),
+                    "verification_wait_seconds":
+                        insertionDiagnostics.verificationWaitSeconds,
                 ],
                 attributes: [
                     "insertion_mode": insertionMode.rawValue,

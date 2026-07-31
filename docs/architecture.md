@@ -389,7 +389,11 @@ and restores the original clipboard only if no newer clipboard write won the
 race. The first paste from each process receives a 120 ms pasteboard settle
 interval; later pastes use 40 ms before Wordhand
 posts a complete Command-down, V-down, V-up, Command-up chord from a combined
-session event source. Cursor observation waits 360 ms for slower targets.
+session event source. Accessibility selection/value notifications now wake
+cursor verification as soon as the exact focused element changes. Notifications
+are only wake signals: Wordhand still re-reads the element and expected UTF-16
+cursor advance before accepting delivery. A 360 ms final-poll timeout remains
+for targets that do not emit usable notifications.
 When Accessibility exposes a reliable editor element and selection, an
 unchanged cursor proves a no-op and permits exactly one retry. Terminal
 accessibility surfaces are not reliable editor cursors: Ghostty was observed
@@ -1166,8 +1170,9 @@ Paste insertion:
 2. place transcript text on the pasteboard;
 3. wait 120 ms for the first process paste or 40 ms for later transactions;
 4. send a complete Command-V key chord;
-5. wait for the target to consume the paste and, where supported, confirm the
-   expected cursor advance;
+5. listen for Accessibility selection/value changes on the exact target and,
+   where supported, confirm the expected cursor advance immediately; use a
+   360 ms final-poll timeout when notification delivery is unavailable;
 6. retry exactly once only when the same focused field has a reliable editor
    cursor and proves it did not move; never retry from terminal cursor evidence;
 7. restore the previous pasteboard only if no third party changed it in the
@@ -1188,7 +1193,10 @@ available, but History records it as `Sent · unverified` rather than claiming
 field delivery. The evidence marker reuses the existing `inserted` storage
 value with a versioned reason so older rollback builds can still read the row
 under their previous event-posting semantics. No database migration is
-required.
+required. Notification callbacks never count as delivery evidence by
+themselves. Callback, timeout, cancellation, and the post-registration race
+check share one exactly-once completion path; cancellation resolves as
+unavailable so it cannot trigger a duplicate paste.
 
 Direct Unicode insertion remains a fallback. Copy-only intentionally leaves the
 transcript on the clipboard. The last verified insertion keeps enough local
@@ -1285,7 +1293,8 @@ Pure tests cover:
 - history insertion, search, retention, and deletion;
 - Quality Lab opt-in defaults, WAV encoding, file permissions, record pairing,
   expiry, and deletion;
-- insertion routing and clipboard restoration decisions;
+- insertion routing, event-driven cursor verification, cancellation/timeout
+  cleanup, and clipboard restoration decisions;
 - hotkey parsing, serialization, validation, conflicts, and coordinator states;
 - rolling-transcript agreement, correction horizon, bounded-window progress,
   ordered chunk forwarding, cancellation, and complete-buffer fallback.

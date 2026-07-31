@@ -89,6 +89,18 @@ unverified compatibility delivery, failed paste, or a changed target.
 
 Receipt: `docs/verification/2026-07-30-parakeet-fast-path.md`.
 
+The insertion-latency slice removes the unconditional 360 ms cursor-observation
+sleep when the exact Accessibility target emits a selection or value change.
+The notification only wakes a fresh verification; it cannot authorize
+delivery, retry, undo, or Return on its own. Targets without usable
+notifications retain the 360 ms final-poll compatibility bound. Fake-driven
+oracles cover immediate notification completion, fallback timeout, cancellation
+without duplicate retry, exactly-once cleanup, the unchanged one-retry policy,
+and measured verification-wait diagnostics. An attended installed-build pass
+remains before claiming native/browser/Electron latency.
+
+Receipt: `docs/verification/2026-07-31-event-driven-insertion.md`.
+
 The first slice stores ordered 16 kHz Float32 frames in owner-only `Pending
 Captures` files. A torn last frame is ignored while every earlier complete frame
 is recovered bit for bit. The normal stop path still transcribes the complete
@@ -559,6 +571,9 @@ destroying the user's clipboard.
   acknowledgement where Accessibility exposes a selection.
 - [x] Retry exactly once only after a reliable editor field proves the paste
   was a no-op; never retry from an unchanged terminal Accessibility cursor.
+- [x] Replace the fixed 360 ms post-paste verification sleep with exact-target
+  Accessibility wakeups while retaining that duration as the compatibility
+  timeout and preserving fresh proof before retry, undo, or Return.
 - [x] Distinguish acknowledged insertion, unverified event posting, intentional
   Copy Only, and failed insertion in History without breaking rollback reads.
 - [x] Add an immediate guarded undo/revert action for the last verified
