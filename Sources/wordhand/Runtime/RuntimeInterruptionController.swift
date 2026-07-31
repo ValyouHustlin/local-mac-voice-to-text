@@ -29,7 +29,9 @@ final class RuntimeInterruptionController {
     private let preserve:
         @MainActor (CaptureInterruptionReason) async -> Bool
     private let recoverPending: @MainActor () async -> Void
-    private var sleepTask: Task<Void, Never>?
+    private var sleepPreservationTask: Task<Bool, Never>?
+    private var wakeRecoveryTask: Task<Void, Never>?
+    private var isTerminating = false
 
     init(
         preserve: @escaping @MainActor (CaptureInterruptionReason) async -> Bool,
@@ -40,22 +42,46 @@ final class RuntimeInterruptionController {
     }
 
     func prepareForApplicationQuit() async {
-        if let sleepTask {
-            await sleepTask.value
+        isTerminating = true
+        if let wakeRecoveryTask {
+            await wakeRecoveryTask.value
+            return
+        }
+        if let sleepPreservationTask {
+            _ = await sleepPreservationTask.value
             return
         }
         _ = await preserve(.applicationQuit)
     }
 
     func systemWillSleep() {
-        guard sleepTask == nil else { return }
-        sleepTask = Task { @MainActor [weak self] in
+        guard !isTerminating, sleepPreservationTask == nil else { return }
+        sleepPreservationTask = Task { @MainActor [weak self] in
+            guard let self else { return false }
+            return await preserve(.systemSleep)
+        }
+    }
+
+    func systemDidWake() {
+        guard !isTerminating,
+              let sleepPreservationTask,
+              wakeRecoveryTask == nil
+        else {
+            return
+        }
+        wakeRecoveryTask = Task { @MainActor [weak self] in
+            let didPreserve = await sleepPreservationTask.value
             guard let self else { return }
-            let didPreserve = await preserve(.systemSleep)
+            guard !isTerminating else {
+                self.sleepPreservationTask = nil
+                wakeRecoveryTask = nil
+                return
+            }
             if didPreserve {
                 await recoverPending()
             }
-            sleepTask = nil
+            self.sleepPreservationTask = nil
+            wakeRecoveryTask = nil
         }
     }
 }
@@ -63,28 +89,39 @@ final class RuntimeInterruptionController {
 @MainActor
 final class SystemSleepObserver {
     private let notificationCenter: NotificationCenter
-    private var token: NSObjectProtocol?
+    private var tokens: [NSObjectProtocol] = []
 
     init(
         notificationCenter: NotificationCenter =
             NSWorkspace.shared.notificationCenter,
-        name: Notification.Name = NSWorkspace.willSleepNotification,
-        onWillSleep: @escaping @MainActor () -> Void
+        willSleepName: Notification.Name = NSWorkspace.willSleepNotification,
+        didWakeName: Notification.Name = NSWorkspace.didWakeNotification,
+        onWillSleep: @escaping @MainActor () -> Void,
+        onDidWake: @escaping @MainActor () -> Void
     ) {
         self.notificationCenter = notificationCenter
-        token = notificationCenter.addObserver(
-            forName: name,
+        tokens.append(notificationCenter.addObserver(
+            forName: willSleepName,
             object: nil,
             queue: .main
         ) { _ in
             MainActor.assumeIsolated {
                 onWillSleep()
             }
-        }
+        })
+        tokens.append(notificationCenter.addObserver(
+            forName: didWakeName,
+            object: nil,
+            queue: .main
+        ) { _ in
+            MainActor.assumeIsolated {
+                onDidWake()
+            }
+        })
     }
 
     deinit {
-        if let token {
+        for token in tokens {
             notificationCenter.removeObserver(token)
         }
     }

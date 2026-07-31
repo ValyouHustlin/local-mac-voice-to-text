@@ -826,13 +826,18 @@ expire locally.
 
 Standard application termination is deferred while any active capture stops,
 drains, synchronizes, and leaves its journal recoverable. The same coordinator
-operation handles a system-sleep notification. It never transcribes or inserts
-inside the interruption boundary; once execution can continue and the local
-model is ready, the ordinary recovery loop saves the audio to History without
-insertion. If a normal release is already inside its 80 ms tail, both paths
-await one shared capture-stop task rather than stopping the audio engine twice.
-Recording-limit timer cancellation is also joined before capture stop so its
-suspended task cannot outlive the state transition.
+operation begins on a system-will-sleep notification, but it only preserves the
+capture at that boundary. A matching did-wake notification waits for the
+preservation task and then starts the ordinary full-buffer recovery once;
+duplicate sleep or wake notifications coalesce. Quit during the pre-wake
+boundary synchronously latches termination, waits for preservation, and
+suppresses both newly requested and already scheduled wake recovery. The
+interruption boundary never inserts text, and recovered audio is saved to
+History only after execution resumes and the local model is ready. If a normal
+release is already inside its 80 ms tail, both paths await one shared
+capture-stop task rather than stopping the audio engine twice. Recording-limit
+timer cancellation is also joined before capture stop so its suspended task
+cannot outlive the state transition.
 
 The journal uses the coordinator's dictation UUID, which later becomes the
 History primary key. Normal capture deletes the journal only after History

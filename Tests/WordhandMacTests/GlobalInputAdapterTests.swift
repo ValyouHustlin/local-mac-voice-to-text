@@ -36,7 +36,7 @@ struct GlobalInputAdapterTests {
 
     @Test
     @MainActor
-    func systemSleepRecoveryRunsOnlyAfterCaptureIsPreserved() async {
+    func systemSleepRecoveryWaitsForWakeAndCapturePreservation() async {
         let gate = SuspendedRuntimeInterruption()
         let controller = RuntimeInterruptionController(
             preserve: { reason in
@@ -52,6 +52,10 @@ struct GlobalInputAdapterTests {
         await gate.waitUntilPreserveStarted()
         #expect(await gate.recoveryCount == 0)
 
+        controller.systemDidWake()
+        controller.systemDidWake()
+        #expect(await gate.recoveryCount == 0)
+
         await gate.finishPreserve(true)
         await gate.waitUntilRecovered()
         #expect(await gate.preserveReasons == [.systemSleep])
@@ -60,20 +64,112 @@ struct GlobalInputAdapterTests {
 
     @Test
     @MainActor
-    func workspaceSleepObserverRoutesTheConfiguredNotificationOnce() {
-        let center = NotificationCenter()
-        let name = Notification.Name("wordhand.test.will-sleep")
-        var callCount = 0
-        let observer = SystemSleepObserver(
-            notificationCenter: center,
-            name: name
-        ) {
-            callCount += 1
+    func systemWakeWithoutSleepDoesNotRunRecovery() async {
+        let gate = SuspendedRuntimeInterruption()
+        let controller = RuntimeInterruptionController(
+            preserve: { reason in
+                await gate.preserve(reason)
+            },
+            recoverPending: {
+                await gate.recoverPending()
+            }
+        )
+
+        controller.systemDidWake()
+        await Task.yield()
+
+        #expect(await gate.preserveReasons.isEmpty)
+        #expect(await gate.recoveryCount == 0)
+    }
+
+    @Test
+    @MainActor
+    func applicationQuitDuringSleepWaitsForSealWithoutRecovering() async {
+        let gate = SuspendedRuntimeInterruption()
+        let controller = RuntimeInterruptionController(
+            preserve: { reason in
+                await gate.preserve(reason)
+            },
+            recoverPending: {
+                await gate.recoverPending()
+            }
+        )
+
+        controller.systemWillSleep()
+        await gate.waitUntilPreserveStarted()
+        let quit = Task { @MainActor in
+            await controller.prepareForApplicationQuit()
+        }
+        await Task.yield()
+
+        #expect(await gate.preserveReasons == [.systemSleep])
+        #expect(await gate.recoveryCount == 0)
+
+        controller.systemDidWake()
+        await gate.finishPreserve(true)
+        await quit.value
+        for _ in 0..<10 {
+            await Task.yield()
+        }
+        #expect(await gate.recoveryCount == 0)
+    }
+
+    @Test
+    @MainActor
+    func applicationQuitSuppressesAlreadyScheduledWakeRecovery() async {
+        let gate = SuspendedRuntimeInterruption()
+        let controller = RuntimeInterruptionController(
+            preserve: { reason in
+                await gate.preserve(reason)
+            },
+            recoverPending: {
+                await gate.recoverPending()
+            }
+        )
+
+        controller.systemWillSleep()
+        await gate.waitUntilPreserveStarted()
+        controller.systemDidWake()
+        let quit = Task { @MainActor in
+            await controller.prepareForApplicationQuit()
+        }
+        await Task.yield()
+
+        await gate.finishPreserve(true)
+        await quit.value
+        for _ in 0..<10 {
+            await Task.yield()
         }
 
-        center.post(name: name, object: nil)
+        #expect(await gate.preserveReasons == [.systemSleep])
+        #expect(await gate.recoveryCount == 0)
+    }
 
-        #expect(callCount == 1)
+    @Test
+    @MainActor
+    func workspaceSleepObserverRoutesWillSleepAndDidWakeOnce() {
+        let center = NotificationCenter()
+        let willSleepName = Notification.Name("wordhand.test.will-sleep")
+        let didWakeName = Notification.Name("wordhand.test.did-wake")
+        var willSleepCount = 0
+        var didWakeCount = 0
+        let observer = SystemSleepObserver(
+            notificationCenter: center,
+            willSleepName: willSleepName,
+            didWakeName: didWakeName,
+            onWillSleep: {
+                willSleepCount += 1
+            },
+            onDidWake: {
+                didWakeCount += 1
+            }
+        )
+
+        center.post(name: willSleepName, object: nil)
+        center.post(name: didWakeName, object: nil)
+
+        #expect(willSleepCount == 1)
+        #expect(didWakeCount == 1)
         withExtendedLifetime(observer) {}
     }
 

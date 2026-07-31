@@ -20,10 +20,14 @@ contract and target boundaries.
 
 Status: crash-safe rolling capture is implemented, its real queued writer is
 covered by the process-death oracle, and standard Quit plus system-sleep
-interruptions now seal in-flight audio before recovery. An attended installed-
-app dictation/Quit/sleep receipt remains before this source checkpoint can be
-called daily-runtime verified. The next slice has a checked-in retained-audio
-authority oracle; no live partial path is enabled.
+interruptions now seal in-flight audio before recovery. Sleep recovery is gated
+on the matching did-wake notification instead of launching Whisper while macOS
+is entering sleep; duplicate notifications coalesce, and Quit during that
+boundary latches termination, waits for sealing, and suppresses wake recovery
+whether the wake arrives before or after Quit starts. An attended installed-app
+dictation/Quit/sleep receipt remains before this source checkpoint can be called
+daily-runtime verified. The next slice has a checked-in retained-audio authority
+oracle; no live partial path is enabled.
 
 Measured daily-use impact keeps the remaining English-first macOS work in this
 order:
@@ -80,7 +84,8 @@ one-shot capture-stop task prevents Quit or sleep from stopping the audio engine
 twice during the 80 ms release tail.
 
 Receipts: `docs/verification/2026-07-30-crash-safe-capture.md` and
-`docs/verification/2026-07-30-crash-safe-capture-lifecycle.md`.
+`docs/verification/2026-07-30-crash-safe-capture-lifecycle.md` and
+`docs/verification/2026-07-30-sleep-wake-recovery.md`.
 
 The safe work-during-speech entry gate is now executable with `models
 authority-compare`. It verifies the retained audio identity, hashes the fixture

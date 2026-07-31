@@ -592,9 +592,14 @@ struct Run: ParsableCommand {
             )
         }
         let sleepObserver = MainActor.assumeIsolated {
-            SystemSleepObserver {
-                interruptionController.systemWillSleep()
-            }
+            SystemSleepObserver(
+                onWillSleep: {
+                    interruptionController.systemWillSleep()
+                },
+                onDidWake: {
+                    interruptionController.systemDidWake()
+                }
+            )
         }
         let appDelegate = MainActor.assumeIsolated {
             WordhandAppDelegate(
