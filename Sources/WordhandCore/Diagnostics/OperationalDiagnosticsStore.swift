@@ -69,6 +69,11 @@ public struct OperationalDiagnosticsReport: Equatable, Sendable {
     public let averagePrimaryDecodeSeconds: Double?
     public let averageTailAuditDecodeSeconds: Double?
     public let averageFullRetryDecodeSeconds: Double?
+    public let averageCaptureDrainSeconds: Double?
+    public let averageReleaseToRawTextSeconds: Double?
+    public let averageReleaseToFormattedTextSeconds: Double?
+    public let medianReleaseToInsertionSeconds: Double?
+    public let p95ReleaseToInsertionSeconds: Double?
     public let averageProcessingSeconds: Double?
     public let averageInsertionSeconds: Double?
     public let p95TotalSeconds: Double?
@@ -216,6 +221,9 @@ public final class OperationalDiagnosticsStore: @unchecked Sendable {
                 $0.name == "transcription.completed"
             }
             let captures = events.filter { $0.name == "capture.completed" }
+            let processingEvents = events.filter {
+                $0.name == "processing.completed"
+            }
             let insertions = events.filter { $0.name == "insertion.completed" }
             let tailAudits = transcriptions.filter {
                 $0.attributes["tail_outcome"] != nil
@@ -243,6 +251,22 @@ public final class OperationalDiagnosticsStore: @unchecked Sendable {
             let fullRetryDecodeDurations = Self.positiveMetrics(
                 transcriptions,
                 key: "full_retry_decode_seconds"
+            )
+            let captureDrainDurations = Self.positiveMetrics(
+                captures,
+                key: "capture_drain_seconds"
+            )
+            let releaseToRawTextDurations = Self.positiveMetrics(
+                transcriptions,
+                key: "release_to_raw_text_seconds"
+            )
+            let releaseToFormattedTextDurations = Self.positiveMetrics(
+                processingEvents,
+                key: "release_to_formatted_text_seconds"
+            )
+            let releaseToInsertionDurations = Self.positiveMetrics(
+                insertions,
+                key: "release_to_insertion_seconds"
             )
             let totalDurations = completedDictations.compactMap {
                 $0.metrics["total_seconds"]
@@ -300,8 +324,27 @@ public final class OperationalDiagnosticsStore: @unchecked Sendable {
                 averageFullRetryDecodeSeconds: Self.average(
                     fullRetryDecodeDurations
                 ),
+                averageCaptureDrainSeconds: Self.average(
+                    captureDrainDurations
+                ),
+                averageReleaseToRawTextSeconds: Self.average(
+                    releaseToRawTextDurations
+                ),
+                averageReleaseToFormattedTextSeconds: Self.average(
+                    releaseToFormattedTextDurations
+                ),
+                medianReleaseToInsertionSeconds: Self.percentile(
+                    releaseToInsertionDurations,
+                    percentile: 0.5
+                ),
+                p95ReleaseToInsertionSeconds: Self.percentile(
+                    releaseToInsertionDurations,
+                    percentile: 0.95
+                ),
                 averageProcessingSeconds: Self.average(
-                    events.compactMap { $0.metrics["processing_seconds"] }
+                    processingEvents.compactMap {
+                        $0.metrics["processing_seconds"]
+                    }
                 ),
                 averageInsertionSeconds: Self.average(
                     insertions.compactMap { $0.metrics["insertion_seconds"] }

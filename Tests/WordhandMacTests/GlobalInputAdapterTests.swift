@@ -273,7 +273,7 @@ struct GlobalInputAdapterTests {
     }
 
     @Test
-    func diagnosticsReportLabelsDecodeStagesWithoutPayloadContent() throws {
+    func diagnosticsReportLabelsDecodeAndReleaseStagesWithoutPayloadContent() throws {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent(
                 "wordhand-diagnostics-format-\(UUID().uuidString)",
@@ -290,11 +290,36 @@ struct GlobalInputAdapterTests {
                 "primary_decode_seconds": 1.25,
                 "tail_audit_decode_seconds": 0.75,
                 "full_retry_decode_seconds": 2.5,
+                "release_to_raw_text_seconds": 3,
             ],
             attributes: [
                 "tail_outcome": "full_retry_recovered",
                 "full_retry_performed": "true",
             ]
+        ))
+        try store.append(OperationalDiagnosticEvent(
+            severity: .info,
+            name: "capture.completed",
+            sessionID: UUID(),
+            metrics: ["capture_drain_seconds": 0.25]
+        ))
+        try store.append(OperationalDiagnosticEvent(
+            severity: .info,
+            name: "processing.completed",
+            sessionID: UUID(),
+            metrics: ["release_to_formatted_text_seconds": 4]
+        ))
+        try store.append(OperationalDiagnosticEvent(
+            severity: .info,
+            name: "insertion.completed",
+            sessionID: UUID(),
+            metrics: ["release_to_insertion_seconds": 4.5]
+        ))
+        try store.append(OperationalDiagnosticEvent(
+            severity: .info,
+            name: "dictation.completed",
+            sessionID: UUID(),
+            metrics: ["total_seconds": 40]
         ))
 
         let output = DiagnosticsCommands.Report.format(
@@ -306,6 +331,13 @@ struct GlobalInputAdapterTests {
         #expect(output.contains("average primary decode: 1.25s"))
         #expect(output.contains("average tail-audit decode: 0.75s"))
         #expect(output.contains("average full-buffer retry decode: 2.50s"))
+        #expect(output.contains("average capture drain: 0.250s"))
+        #expect(output.contains("average release to raw text: 3.00s"))
+        #expect(output.contains("average release to formatted text: 4.00s"))
+        #expect(output.contains("median release to insertion: 4.50s"))
+        #expect(output.contains("p95 release to insertion: 4.50s"))
+        #expect(output.contains("p95 recording through completion: 40.00s"))
+        #expect(!output.contains("p95 end-to-end"))
         #expect(output.contains(
             "privacy: metadata only; no transcript text or audio"
         ))

@@ -128,7 +128,18 @@ struct DictationCoordinatorTests {
             processor: TranscriptProcessor(),
             inserter: FakeInserter(),
             history: history,
-            now: makeClock([10, 12, 13, 14, 15, 16])
+            now: makeClock([
+                10,
+                12,
+                12.25,
+                12.5,
+                14,
+                14.25,
+                15,
+                15.25,
+                15.5,
+                16,
+            ])
         )
         var events: [OperationalDiagnosticEvent] = []
         coordinator.onDiagnosticEvent = { events.append($0) }
@@ -152,6 +163,10 @@ struct DictationCoordinatorTests {
         let ids = Set(events.compactMap(\.dictationID))
         #expect(ids.count == 1)
         #expect(events.allSatisfy { !$0.attributes.keys.contains("text") })
+        let capture = try #require(
+            events.first(where: { $0.name == "capture.completed" })
+        )
+        #expect(capture.metrics["capture_drain_seconds"] == 0.25)
         let transcription = try #require(
             events.first(where: { $0.name == "transcription.completed" })
         )
@@ -162,6 +177,40 @@ struct DictationCoordinatorTests {
         #expect(transcription.metrics["primary_decode_seconds"] == 1.25)
         #expect(transcription.metrics["tail_audit_decode_seconds"] == 0.75)
         #expect(transcription.metrics["full_retry_decode_seconds"] == 2.5)
+        #expect(transcription.metrics["release_to_raw_text_seconds"] == 2)
+        let processing = try #require(
+            events.first(where: { $0.name == "processing.completed" })
+        )
+        #expect(processing.metrics["release_to_formatted_text_seconds"] == 3)
+        let insertion = try #require(
+            events.first(where: { $0.name == "insertion.completed" })
+        )
+        #expect(insertion.metrics["release_to_insertion_seconds"] == 3.5)
+    }
+
+    @Test
+    func releaseClockStartsBeforeCaptureStopAndDrain() async {
+        var timeline: [String] = []
+        let capture = FakeCapture(
+            samples: [0.1],
+            onStop: { timeline.append("capture-stop") }
+        )
+        let coordinator = DictationCoordinator(
+            capture: capture,
+            transcriber: FakeTranscriber(result: "hello"),
+            processor: TranscriptProcessor(),
+            inserter: FakeInserter(),
+            now: {
+                timeline.append("clock")
+                return Double(timeline.count)
+            }
+        )
+
+        await coordinator.handle(.pressed)
+        timeline.removeAll()
+        await coordinator.handle(.released)
+
+        #expect(Array(timeline.prefix(2)) == ["clock", "capture-stop"])
     }
 
     @Test
@@ -258,13 +307,12 @@ struct DictationCoordinatorTests {
         let capture = FakeCapture(samples: Array(repeating: 0.1, count: 16_000))
         let transcriber = FakeTranscriber(result: "partial transcript")
         let inserter = FakeInserter()
-        var timestamps: [TimeInterval] = [100, 105]
         let coordinator = DictationCoordinator(
             capture: capture,
             transcriber: transcriber,
             processor: TranscriptProcessor(),
             inserter: inserter,
-            now: { timestamps.removeFirst() }
+            now: makeClock([100, 105, 105.1])
         )
 
         await coordinator.handle(.pressed)
@@ -1022,7 +1070,7 @@ struct DictationCoordinatorTests {
                 )
             },
             date: { createdAt },
-            now: makeClock([10, 10.75, 20, 20.75, 30, 30])
+            now: makeClock([10, 10.75, 10.75, 20, 20.75, 30, 30])
         )
         var qualitySample: QualityAudioSample?
         coordinator.onQualityAudio = { qualitySample = $0 }
@@ -1466,17 +1514,20 @@ private final class FakeCapture: AudioCapturing {
     private let samples: [Float]
     private let startError: Error?
     private let onStart: (() -> Void)?
+    private let onStop: (() -> Void)?
     private(set) var startCount = 0
     private(set) var stopCount = 0
 
     init(
         samples: [Float],
         startError: Error? = nil,
-        onStart: (() -> Void)? = nil
+        onStart: (() -> Void)? = nil,
+        onStop: (() -> Void)? = nil
     ) {
         self.samples = samples
         self.startError = startError
         self.onStart = onStart
+        self.onStop = onStop
     }
 
     func start() throws {
@@ -1488,6 +1539,7 @@ private final class FakeCapture: AudioCapturing {
     }
 
     func stop() async -> [Float] {
+        onStop?()
         stopCount += 1
         return samples
     }

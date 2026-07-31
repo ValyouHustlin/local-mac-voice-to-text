@@ -1061,6 +1061,12 @@ artifact detection, full-retry use, whether a tail audit verified or recovered
 missing text, and separate primary-decode, tail-audit-decode, and full-buffer-
 retry-decode durations. Stage averages include only positive finite values, so
 legacy events and stages that did not run cannot dilute the report with zeroes.
+The release clock starts when the coordinator accepts the stop gesture, before
+the audio engine stops or queued streaming chunks drain. Cumulative,
+monotonic milestones then record capture drain, raw-text readiness, formatted-
+text readiness, and insertion completion. The report surfaces median and p95
+release-to-insertion separately from recording-through-completion duration, so
+time spent speaking cannot be mistaken for time spent waiting.
 Insertion records mode, verification strength, retry count, Secure Input
 blocking, checkpoint availability, and guarded-undo availability. App lifecycle
 records startup, permissions, hotkey readiness, model warmup, settings changes,
@@ -1273,6 +1279,11 @@ Pure tests cover:
 Adapter tests use fakes for pasteboard, event posting, active application,
 clock, filesystem, transcriber, capture, and hotkey monitor. Hardware behavior
 still requires manual receipts.
+
+Any coordinator change that adds a monotonic-clock read must audit every
+injected clock sequence in the coordinator tests. Stage-timing oracles enumerate
+the intentional milestones explicitly so a new read cannot silently relabel an
+existing duration.
 
 Release verification includes real dictation into:
 

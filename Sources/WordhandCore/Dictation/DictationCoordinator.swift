@@ -328,6 +328,7 @@ public final class DictationCoordinator {
             state = .transcribing
             let samples = await stopCaptureOnce()
             await finishStreamingAudioForwarding()
+            let captureCompletedAt = now()
             guard activeOperationID == operationID else {
                 if activeOperationID == nil {
                     state = .idle
@@ -349,6 +350,8 @@ public final class DictationCoordinator {
                 metrics: [
                     "audio_seconds": audioDuration,
                     "recording_wall_seconds": wallDuration,
+                    "capture_drain_seconds":
+                        max(0, captureCompletedAt - recordingEndedAt),
                     "sample_count": Double(samples.count),
                     "rms": signal.rms,
                     "peak": signal.peak,
@@ -401,7 +404,7 @@ public final class DictationCoordinator {
 
             let transcriptionStarted = now()
             let raw: String
-            let transcriptionElapsed: TimeInterval
+            let reportedInferenceDuration: TimeInterval?
             do {
                 if let streamingTranscriber = activeStreamingTranscriber {
                     do {
@@ -409,16 +412,16 @@ public final class DictationCoordinator {
                             finalAudio: samples
                         )
                         raw = result.text
-                        transcriptionElapsed = result.totalInferenceDuration
+                        reportedInferenceDuration = result.totalInferenceDuration
                         onStreamingFinalizationDuration?(result.finalizationDuration)
                     } catch {
                         raw = try await transcriber.transcribe(samples)
-                        transcriptionElapsed = now() - transcriptionStarted
+                        reportedInferenceDuration = nil
                     }
                     activeStreamingTranscriber = nil
                 } else {
                     raw = try await transcriber.transcribe(samples)
-                    transcriptionElapsed = now() - transcriptionStarted
+                    reportedInferenceDuration = nil
                 }
             } catch {
                 guard activeOperationID == operationID else { return }
@@ -440,6 +443,9 @@ public final class DictationCoordinator {
                 return
             }
             guard activeOperationID == operationID else { return }
+            let transcriptionCompletedAt = now()
+            let transcriptionElapsed = reportedInferenceDuration
+                ?? max(0, transcriptionCompletedAt - transcriptionStarted)
             let transcriptionDiagnostics: TranscriptionRunDiagnostics
             if let provider = transcriber as? any TranscriptionDiagnosticsProviding {
                 transcriptionDiagnostics = await provider.lastRunDiagnostics()
@@ -465,6 +471,8 @@ public final class DictationCoordinator {
                         transcriptionDiagnostics.tailAuditDecodeSeconds,
                     "full_retry_decode_seconds":
                         transcriptionDiagnostics.fullRetryDecodeSeconds,
+                    "release_to_raw_text_seconds":
+                        max(0, transcriptionCompletedAt - recordingEndedAt),
                 ],
                 attributes: [
                     "model_id": transcriber.modelID,
@@ -541,7 +549,11 @@ public final class DictationCoordinator {
                 context: processingContext
             )
             let text = processingResult.text
-            let processingElapsed = now() - processingStarted
+            let processingCompletedAt = now()
+            let processingElapsed = max(
+                0,
+                processingCompletedAt - processingStarted
+            )
             onProcessingDuration?(processingElapsed)
             recordProcessingNotices(
                 processingResult.notices,
@@ -552,6 +564,8 @@ public final class DictationCoordinator {
                 dictationID: operationID,
                 metrics: [
                     "processing_seconds": processingElapsed,
+                    "release_to_formatted_text_seconds":
+                        max(0, processingCompletedAt - recordingEndedAt),
                     "processed_character_count": Double(text.count),
                     "notice_count": Double(processingResult.notices.count),
                 ],
@@ -654,7 +668,11 @@ public final class DictationCoordinator {
             do {
                 try await inserter.insert(text, mode: insertionMode)
             } catch {
-                let insertionElapsed = now() - insertionStarted
+                let insertionCompletedAt = now()
+                let insertionElapsed = max(
+                    0,
+                    insertionCompletedAt - insertionStarted
+                )
                 let insertionDiagnostics = await currentInsertionDiagnostics()
                 if let history {
                     try? history.updateStatus(
@@ -670,7 +688,11 @@ public final class DictationCoordinator {
                     severity: .error,
                     name: "insertion.failed",
                     dictationID: operationID,
-                    metrics: ["insertion_seconds": insertionElapsed],
+                    metrics: [
+                        "insertion_seconds": insertionElapsed,
+                        "release_to_insertion_seconds":
+                            max(0, insertionCompletedAt - recordingEndedAt),
+                    ],
                     attributes: [
                         "insertion_mode": insertionMode.rawValue,
                         "reason": String(describing: error),
@@ -684,7 +706,11 @@ public final class DictationCoordinator {
                 state = .failed(.insertion(String(describing: error)))
                 return
             }
-            let insertionElapsed = now() - insertionStarted
+            let insertionCompletedAt = now()
+            let insertionElapsed = max(
+                0,
+                insertionCompletedAt - insertionStarted
+            )
             let insertionDiagnostics = await currentInsertionDiagnostics()
             let insertionHistoryStatus = InsertionHistoryStatusPolicy.status(
                 for: insertionDiagnostics
@@ -694,6 +720,8 @@ public final class DictationCoordinator {
                 dictationID: operationID,
                 metrics: [
                     "insertion_seconds": insertionElapsed,
+                    "release_to_insertion_seconds":
+                        max(0, insertionCompletedAt - recordingEndedAt),
                     "retry_count": Double(insertionDiagnostics.retryCount),
                 ],
                 attributes: [

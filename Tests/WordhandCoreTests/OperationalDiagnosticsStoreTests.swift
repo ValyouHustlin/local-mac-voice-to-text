@@ -265,6 +265,77 @@ struct OperationalDiagnosticsStoreTests {
         #expect(report.averagePrimaryDecodeSeconds == 2)
         #expect(report.averageTailAuditDecodeSeconds == nil)
         #expect(report.averageFullRetryDecodeSeconds == nil)
+        #expect(report.averageCaptureDrainSeconds == nil)
+        #expect(report.averageReleaseToRawTextSeconds == nil)
+        #expect(report.averageReleaseToFormattedTextSeconds == nil)
+        #expect(report.medianReleaseToInsertionSeconds == nil)
+        #expect(report.p95ReleaseToInsertionSeconds == nil)
+    }
+
+    @Test
+    func reportAggregatesPostReleaseMilestonesByOwningStage() throws {
+        let fixture = DiagnosticsFixture()
+        defer { fixture.remove() }
+        let now = Date(timeIntervalSince1970: 1_700_000_000)
+        let store = try OperationalDiagnosticsStore(
+            directoryURL: fixture.directory,
+            now: { now }
+        )
+        let sessionID = UUID()
+
+        for event in [
+            OperationalDiagnosticEvent(
+                occurredAt: now,
+                severity: .info,
+                name: "capture.completed",
+                sessionID: sessionID,
+                metrics: ["capture_drain_seconds": 0.25]
+            ),
+            OperationalDiagnosticEvent(
+                occurredAt: now,
+                severity: .info,
+                name: "transcription.completed",
+                sessionID: sessionID,
+                metrics: ["release_to_raw_text_seconds": 2]
+            ),
+            OperationalDiagnosticEvent(
+                occurredAt: now,
+                severity: .info,
+                name: "processing.completed",
+                sessionID: sessionID,
+                metrics: ["release_to_formatted_text_seconds": 3]
+            ),
+            OperationalDiagnosticEvent(
+                occurredAt: now,
+                severity: .info,
+                name: "insertion.completed",
+                sessionID: sessionID,
+                metrics: ["release_to_insertion_seconds": 3.5]
+            ),
+            OperationalDiagnosticEvent(
+                occurredAt: now,
+                severity: .info,
+                name: "dictation.completed",
+                sessionID: sessionID,
+                metrics: [
+                    "total_seconds": 45,
+                    "capture_drain_seconds": 99,
+                    "release_to_raw_text_seconds": 99,
+                    "release_to_formatted_text_seconds": 99,
+                    "release_to_insertion_seconds": 99,
+                ]
+            ),
+        ] {
+            try store.append(event)
+        }
+
+        let report = try store.report()
+        #expect(report.averageCaptureDrainSeconds == 0.25)
+        #expect(report.averageReleaseToRawTextSeconds == 2)
+        #expect(report.averageReleaseToFormattedTextSeconds == 3)
+        #expect(report.medianReleaseToInsertionSeconds == 3.5)
+        #expect(report.p95ReleaseToInsertionSeconds == 3.5)
+        #expect(report.p95TotalSeconds == 45)
     }
 
     @Test

@@ -707,6 +707,10 @@ use.
 - [x] Preserve metadata-only primary, tail-audit, and full-buffer-retry decode
   durations and report their positive finite averages plus the retry count;
   legacy events remain readable without false zero timings.
+- [x] Start one monotonic latency clock at accepted release before capture
+  shutdown, preserve cumulative capture-drain/raw-text/formatted-text/insertion
+  milestones, and report median plus p95 release-to-insertion without treating
+  spoken duration as user wait.
 - [x] Rotate logs daily, retain 90 days, enforce a strict 250 MB aggregate
   ceiling, and keep directory/file permissions at `0700`/`0600`.
 - [x] Reject known transcript, prompt, dictionary, and audio payload keys in
@@ -737,6 +741,14 @@ runtime cost breakdown required to judge one without weakening full-buffer
 authority.
 
 Receipt: `docs/verification/2026-07-30-runtime-stage-timing.md`.
+The next read-only report contained 32 transcriptions, 19 tail audits, 15
+tail recoveries, and 15 full-buffer retries. Its installed build-22 events
+correctly omit the new decode and release milestones. The report now labels
+the legacy total as recording-through-completion rather than end-to-end, while
+the new release-to-insertion percentiles remain absent until a later build
+records them.
+
+Receipt: `docs/verification/2026-07-30-release-latency-oracle.md`.
 - [x] Keep the feature entirely local with no analytics or upload path.
 - [x] Observe the installed app write startup, permission, hotkey, and warmup
   events without exercising microphone or insertion.

@@ -102,6 +102,33 @@ struct DiagnosticsCommands: ParsableCommand {
                     value
                 ))
             }
+            if let value = report.averageCaptureDrainSeconds {
+                lines.append(String(format: "average capture drain: %.3fs", value))
+            }
+            if let value = report.averageReleaseToRawTextSeconds {
+                lines.append(String(
+                    format: "average release to raw text: %.2fs",
+                    value
+                ))
+            }
+            if let value = report.averageReleaseToFormattedTextSeconds {
+                lines.append(String(
+                    format: "average release to formatted text: %.2fs",
+                    value
+                ))
+            }
+            if let value = report.medianReleaseToInsertionSeconds {
+                lines.append(String(
+                    format: "median release to insertion: %.2fs",
+                    value
+                ))
+            }
+            if let value = report.p95ReleaseToInsertionSeconds {
+                lines.append(String(
+                    format: "p95 release to insertion: %.2fs",
+                    value
+                ))
+            }
             if let value = report.averageProcessingSeconds {
                 lines.append(String(format: "average formatting: %.2fs", value))
             }
@@ -109,7 +136,10 @@ struct DiagnosticsCommands: ParsableCommand {
                 lines.append(String(format: "average insertion: %.3fs", value))
             }
             if let value = report.p95TotalSeconds {
-                lines.append(String(format: "p95 end-to-end: %.2fs", value))
+                lines.append(String(
+                    format: "p95 recording through completion: %.2fs",
+                    value
+                ))
             }
             if report.malformedLineCount > 0 {
                 lines.append(
