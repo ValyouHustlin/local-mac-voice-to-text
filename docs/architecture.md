@@ -177,6 +177,11 @@ Verified by source inspection and dated receipts through 2026-07-30:
 - permission doctor and visible in-app recovery that independently checks
   Microphone, Input Monitoring, and Accessibility instead of reporting a
   false-ready state;
+- versioned fresh-install onboarding that presents those three permissions
+  without prompting automatically, reports local-model preparation separately,
+  withholds global hotkey activation until its two permissions are ready,
+  persists completion only after all four checks are ready, and exposes a
+  bounded retry after transient model-preparation failure;
 - a stable native application bundle with configurable persistent local code
   signing, isolated development and release identities, release-only native
   login-item registration, standard Applications-folder and Spotlight
@@ -186,9 +191,9 @@ Verified by source inspection and dated receipts through 2026-07-30:
   asynchronously from a complete local cache without network validation;
 - macOS continuous integration for tests and release builds.
 
-Developer ID signing, hardened runtime, notarization, public packaging, a
-fresh-account onboarding pass, and a permission-stable updater remain planned.
-Only measured receipts may promote latency or compatibility claims.
+Developer ID signing, hardened runtime, notarization, public packaging, an
+attended fresh-account onboarding pass, and a permission-stable updater remain
+planned. Only measured receipts may promote latency or compatibility claims.
 
 ## Current delivery state
 
@@ -227,8 +232,22 @@ non-launchable `.app-backup` suffix. The build-output directory carries a
 installation.
 The UI starts before model warmup; a complete local WhisperKit
 cache is opened with downloading disabled, while a missing cache falls back to
-the explicit download path. Settings, dictionary, history, and the data
-directory are hardened to owner-only permissions.
+the explicit download path. A fresh bundled install opens one native Welcome
+window while preparation continues. It never triggers a permission prompt by
+presentation alone, and a failed model preparation remains recoverable through
+one visible retry action in Welcome and Settings. Existing settings files
+migrate as already onboarded; a new install persists its onboarding version
+only when Accessibility, Input Monitoring, Microphone, and the local model are
+all ready. Settings, dictionary, history, and the data directory are hardened
+to owner-only permissions.
+
+The updater must fail closed before replacing an installed release unless the
+candidate preserves the canonical bundle identifier, installed path, Team ID,
+and designated signing requirement. The present tagged workflow and legacy
+curl installer do not meet that bar: they distribute a command-line archive
+rather than a notarized app and do not authenticate the downloaded archive.
+That release-path work is a separate shipping slice so first-run UI cannot be
+mistaken for update identity proof.
 
 P2 custom dictionary now drives both transcription stages. Its runtime path is:
 

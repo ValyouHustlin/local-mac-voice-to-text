@@ -61,6 +61,60 @@ struct SettingsTests {
             ]
         )
         #expect(settings.applicationFormattingRules.isEmpty)
+        #expect(settings.completedOnboardingVersion == 0)
+        #expect(OnboardingPresentationPolicy.shouldPresent(
+            isBundledApplication: true,
+            completedVersion: settings.completedOnboardingVersion
+        ))
+    }
+
+    @Test
+    func onboardingRequiresEveryPermissionAndTheLocalModel() {
+        for mask in 0..<16 {
+            let readiness = OnboardingReadiness(
+                accessibilityGranted: mask & 1 != 0,
+                inputMonitoringGranted: mask & 2 != 0,
+                microphoneGranted: mask & 4 != 0,
+                modelReady: mask & 8 != 0
+            )
+            #expect(readiness.canFinish == (mask == 15))
+        }
+        #expect(!OnboardingPresentationPolicy.shouldPresent(
+            isBundledApplication: false,
+            completedVersion: 0
+        ))
+        #expect(!OnboardingPresentationPolicy.shouldPresent(
+            isBundledApplication: true,
+            completedVersion: OnboardingPresentationPolicy.currentVersion
+        ))
+    }
+
+    @Test
+    func legacySettingsDoNotReopenOnboardingButFreshCompletionPersists() throws {
+        var completed = AppSettings()
+        completed.completedOnboardingVersion =
+            OnboardingPresentationPolicy.currentVersion
+        let encoded = try JSONEncoder().encode(completed)
+        var legacy = try #require(
+            JSONSerialization.jsonObject(with: encoded) as? [String: Any]
+        )
+        legacy.removeValue(forKey: "completedOnboardingVersion")
+        let legacyData = try JSONSerialization.data(withJSONObject: legacy)
+
+        let decodedLegacy = try JSONDecoder().decode(
+            AppSettings.self,
+            from: legacyData
+        )
+        #expect(
+            decodedLegacy.completedOnboardingVersion
+                == OnboardingPresentationPolicy.currentVersion
+        )
+
+        let roundTripped = try JSONDecoder().decode(
+            AppSettings.self,
+            from: JSONEncoder().encode(completed)
+        )
+        #expect(roundTripped.completedOnboardingVersion == completed.completedOnboardingVersion)
     }
 
     @Test
@@ -133,6 +187,9 @@ struct SettingsTests {
 
         #expect(throws: SettingsError.invalidQualityAudioRetentionDays(0)) {
             _ = try AppSettings(qualityAudioRetentionDays: 0).validated()
+        }
+        #expect(throws: SettingsError.invalidOnboardingVersion(-1)) {
+            _ = try AppSettings(completedOnboardingVersion: -1).validated()
         }
     }
 

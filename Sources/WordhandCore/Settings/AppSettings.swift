@@ -230,6 +230,7 @@ public struct AppSettings: Codable, Equatable, Sendable {
     public var qualityAudioRetentionEnabled: Bool
     public var qualityAudioRetentionDays: Int
     public var qualityAudioMaximumBytes: Int64
+    public var completedOnboardingVersion: Int
     public var hotkeys: [HotkeyBinding]
 
     public init(
@@ -245,6 +246,7 @@ public struct AppSettings: Codable, Equatable, Sendable {
         qualityAudioRetentionEnabled: Bool = false,
         qualityAudioRetentionDays: Int = 7,
         qualityAudioMaximumBytes: Int64 = 2_000_000_000,
+        completedOnboardingVersion: Int = 0,
         hotkeys: [HotkeyBinding] = [
             HotkeyBinding(key: "space", modifiers: ["control"], action: .pushToTalk),
         ]
@@ -261,6 +263,7 @@ public struct AppSettings: Codable, Equatable, Sendable {
         self.qualityAudioRetentionEnabled = qualityAudioRetentionEnabled
         self.qualityAudioRetentionDays = qualityAudioRetentionDays
         self.qualityAudioMaximumBytes = qualityAudioMaximumBytes
+        self.completedOnboardingVersion = completedOnboardingVersion
         self.hotkeys = hotkeys
     }
 
@@ -277,6 +280,7 @@ public struct AppSettings: Codable, Equatable, Sendable {
         case qualityAudioRetentionEnabled
         case qualityAudioRetentionDays
         case qualityAudioMaximumBytes
+        case completedOnboardingVersion
         case hotkeys
     }
 
@@ -315,6 +319,10 @@ public struct AppSettings: Codable, Equatable, Sendable {
             Int64.self,
             forKey: .qualityAudioMaximumBytes
         ) ?? 2_000_000_000
+        completedOnboardingVersion = try container.decodeIfPresent(
+            Int.self,
+            forKey: .completedOnboardingVersion
+        ) ?? OnboardingPresentationPolicy.currentVersion
         hotkeys = try container.decode([HotkeyBinding].self, forKey: .hotkeys)
     }
 
@@ -337,6 +345,11 @@ public struct AppSettings: Codable, Equatable, Sendable {
         else {
             throw SettingsError.invalidQualityAudioMaximumBytes(
                 qualityAudioMaximumBytes
+            )
+        }
+        guard completedOnboardingVersion >= 0 else {
+            throw SettingsError.invalidOnboardingVersion(
+                completedOnboardingVersion
             )
         }
         guard applicationFormattingRules.count
@@ -396,6 +409,7 @@ public enum SettingsError: Error, Equatable {
     case invalidRetentionDays(Int)
     case invalidQualityAudioRetentionDays(Int)
     case invalidQualityAudioMaximumBytes(Int64)
+    case invalidOnboardingVersion(Int)
     case tooManyApplicationFormattingRules
     case invalidApplicationFormattingRule
     case duplicateApplicationFormattingRule

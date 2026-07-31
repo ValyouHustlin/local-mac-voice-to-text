@@ -413,7 +413,10 @@ struct Run: ParsableCommand {
             return controller!
         }
         let readiness = MainActor.assumeIsolated {
-            RuntimeReadiness()
+            let readiness = RuntimeReadiness()
+            readiness.microphoneReady =
+                startupPermissions.microphone == .granted
+            return readiness
         }
         var modelWarmupTask: Task<Void, Never>?
         var diagnosticsHeartbeatTask: Task<Void, Never>?
@@ -441,6 +444,88 @@ struct Run: ParsableCommand {
                 let recovered = await coordinator.recover(pendingCapture)
                 guard recovered else { break }
                 try recoveryJournal.discard(id: pendingCapture.id)
+            }
+        }
+        let startModelWarmup: @MainActor () -> Void = {
+            modelWarmupTask?.cancel()
+            readiness.modelReady = false
+            settingsController.setModelPreparationPhase(.preparing)
+            menuBar.setLoadingModel(chosenModel.id)
+            modelWarmupTask = Task { @MainActor in
+                let warmupStarted = ProcessInfo.processInfo.systemUptime
+                do {
+                    try await transcriber.warmUp()
+                    guard !Task.isCancelled else { return }
+                    if let quarantineCutoff = Calendar.current.date(
+                        byAdding: .day,
+                        value: -30,
+                        to: Date()
+                    ) {
+                        try recoveryJournal.pruneQuarantine(
+                            olderThan: quarantineCutoff
+                        )
+                    }
+                    try await recoverPendingCaptures()
+                    if settingsController.settings.performanceMode == .maximum {
+                        await processor.prepare(target: currentTranscriptTarget())
+                    }
+                    readiness.modelReady = true
+                    settingsController.setModelPreparationPhase(.ready)
+                    if coordinator.state == .idle {
+                        switch readiness.presentation(
+                            globalInputReady:
+                                settingsController.permissionStatus.globalInputReady
+                        ) {
+                        case .ready:
+                            menuBar.setReady()
+                        case .permissionsRequired:
+                            menuBar.setFailure(
+                                "permissions needed · open Settings"
+                            )
+                        case .microphoneRequired:
+                            menuBar.setFailure(
+                                "microphone needed · open Settings"
+                            )
+                        case .modelPreparing:
+                            menuBar.setLoadingModel(chosenModel.id)
+                        }
+                    }
+                    recordDiagnostic(OperationalDiagnosticEvent(
+                        severity: .info,
+                        name: "model.warmup_completed",
+                        sessionID: appSessionID,
+                        metrics: [
+                            "warmup_seconds":
+                                ProcessInfo.processInfo.systemUptime - warmupStarted
+                        ],
+                        attributes: ["model_id": chosenModel.id]
+                    ))
+                } catch is CancellationError {
+                    return
+                } catch {
+                    guard !Task.isCancelled else { return }
+                    readiness.modelReady = false
+                    settingsController.setModelPreparationPhase(.unavailable)
+                    recordDiagnostic(OperationalDiagnosticEvent(
+                        severity: .error,
+                        name: "model.warmup_failed",
+                        sessionID: appSessionID,
+                        metrics: [
+                            "warmup_seconds":
+                                ProcessInfo.processInfo.systemUptime - warmupStarted
+                        ],
+                        attributes: [
+                            "model_id": chosenModel.id,
+                            "reason": String(describing: error),
+                        ]
+                    ))
+                    FileHandle.standardError.write(Data(
+                        "warmup failed: \(error)\n".utf8
+                    ))
+                    if coordinator.state == .idle {
+                        menuBar.setFailure("model unavailable · open Settings")
+                    }
+                }
             }
         }
         let interruptionController = MainActor.assumeIsolated {
@@ -493,7 +578,7 @@ struct Run: ParsableCommand {
         let startHotkeyMonitor = {
             try monitor.start { event in
                 Task { @MainActor in
-                    await coordinator.handle(event)
+                    await readiness.route(event, to: coordinator.handle)
                 }
             }
         }
@@ -625,6 +710,7 @@ struct Run: ParsableCommand {
                     )
                 }.value
             }
+            settingsController.onRetryModelPreparation = startModelWarmup
             settingsController.onPermissionsRefresh = { permissions in
                 recordDiagnostic(OperationalDiagnosticEvent(
                     severity: permissions.globalInputReady ? .info : .warning,
@@ -642,24 +728,22 @@ struct Run: ParsableCommand {
                         ),
                     ]
                 ))
-                guard permissions.globalInputReady else {
-                    if readiness.hotkeyReady {
-                        monitor.stop()
-                        readiness.hotkeyReady = false
-                    }
-                    menuBar.setFailure("permissions needed · open Settings")
-                    return
-                }
-                guard !readiness.hotkeyReady else {
-                    return
-                }
                 do {
-                    try startHotkeyMonitor()
-                    readiness.hotkeyReady = true
-                    if readiness.modelReady {
+                    let presentation = try readiness.reconcilePermissions(
+                        globalInputReady: permissions.globalInputReady,
+                        microphoneReady: permissions.microphone == .granted,
+                        startHotkey: startHotkeyMonitor,
+                        stopHotkey: monitor.stop
+                    )
+                    switch presentation {
+                    case .ready:
                         menuBar.setReady()
-                    } else {
+                    case .microphoneRequired:
+                        menuBar.setFailure("microphone needed · open Settings")
+                    case .modelPreparing:
                         menuBar.setLoadingModel(chosenModel.id)
+                    case .permissionsRequired:
+                        menuBar.setFailure("permissions needed · open Settings")
                     }
                 } catch {
                     FileHandle.standardError.write(Data(
@@ -825,89 +909,85 @@ struct Run: ParsableCommand {
             }
         }
 
-        MainActor.assumeIsolated {
+        let initialPermissions = MainActor.assumeIsolated {
             menuBar.setLoadingModel(chosenModel.id)
+            return settingsController.permissionStatus
         }
-        do {
-            try startHotkeyMonitor()
-            MainActor.assumeIsolated {
-                readiness.hotkeyReady = true
+        if initialPermissions.globalInputReady {
+            do {
+                try startHotkeyMonitor()
+                MainActor.assumeIsolated {
+                    readiness.hotkeyReady = true
+                }
+                recordDiagnostic(OperationalDiagnosticEvent(
+                    severity: .info,
+                    name: "hotkey.ready",
+                    sessionID: appSessionID,
+                    attributes: ["binding_count": String(settings.hotkeys.count)]
+                ))
+            } catch {
+                recordDiagnostic(OperationalDiagnosticEvent(
+                    severity: .error,
+                    name: "hotkey.failed",
+                    sessionID: appSessionID,
+                    attributes: ["reason": String(describing: error)]
+                ))
+                FileHandle.standardError.write(Data(
+                    "failed to register hotkey tap: \(error)\n".utf8
+                ))
+                FileHandle.standardError.write(Data(
+                    "run `wordhand setup` to configure permissions.\n".utf8
+                ))
+                if isBundledApplication {
+                    MainActor.assumeIsolated {
+                        menuBar.setFailure("permissions needed · open Settings")
+                        if !OnboardingPresentationPolicy.shouldPresent(
+                            isBundledApplication: true,
+                            completedVersion:
+                                settingsController.settings.completedOnboardingVersion
+                        ) {
+                            settingsController.showSettings()
+                        }
+                    }
+                } else {
+                    throw ExitCode(1)
+                }
             }
+        } else {
             recordDiagnostic(OperationalDiagnosticEvent(
-                severity: .info,
-                name: "hotkey.ready",
+                severity: .warning,
+                name: "hotkey.blocked_by_permissions",
                 sessionID: appSessionID,
-                attributes: ["binding_count": String(settings.hotkeys.count)]
+                attributes: [
+                    "accessibility": String(
+                        initialPermissions.accessibilityGranted
+                    ),
+                    "input_monitoring": String(
+                        initialPermissions.inputMonitoringGranted
+                    ),
+                ]
             ))
-        } catch {
-            recordDiagnostic(OperationalDiagnosticEvent(
-                severity: .error,
-                name: "hotkey.failed",
-                sessionID: appSessionID,
-                attributes: ["reason": String(describing: error)]
-            ))
-            FileHandle.standardError.write(Data("failed to register hotkey tap: \(error)\n".utf8))
-            FileHandle.standardError.write(Data("run `wordhand setup` to configure permissions.\n".utf8))
             if isBundledApplication {
                 MainActor.assumeIsolated {
                     menuBar.setFailure("permissions needed · open Settings")
-                    settingsController.showSettings()
+                    if !OnboardingPresentationPolicy.shouldPresent(
+                        isBundledApplication: true,
+                        completedVersion:
+                            settingsController.settings.completedOnboardingVersion
+                    ) {
+                        settingsController.showSettings()
+                    }
                 }
             } else {
                 throw ExitCode(1)
             }
         }
 
-        modelWarmupTask = Task { @MainActor in
-            let warmupStarted = ProcessInfo.processInfo.systemUptime
-            do {
-                try await transcriber.warmUp()
-                if let quarantineCutoff = Calendar.current.date(
-                    byAdding: .day,
-                    value: -30,
-                    to: Date()
-                ) {
-                    try recoveryJournal.pruneQuarantine(
-                        olderThan: quarantineCutoff
-                    )
-                }
-                try await recoverPendingCaptures()
-                if settingsController.settings.performanceMode == .maximum {
-                    await processor.prepare(target: currentTranscriptTarget())
-                }
-                readiness.modelReady = true
-                if readiness.hotkeyReady, coordinator.state == .idle {
-                    menuBar.setReady()
-                }
-                recordDiagnostic(OperationalDiagnosticEvent(
-                    severity: .info,
-                    name: "model.warmup_completed",
-                    sessionID: appSessionID,
-                    metrics: [
-                        "warmup_seconds":
-                            ProcessInfo.processInfo.systemUptime - warmupStarted
-                    ],
-                    attributes: ["model_id": chosenModel.id]
-                ))
-            } catch {
-                recordDiagnostic(OperationalDiagnosticEvent(
-                    severity: .error,
-                    name: "model.warmup_failed",
-                    sessionID: appSessionID,
-                    metrics: [
-                        "warmup_seconds":
-                            ProcessInfo.processInfo.systemUptime - warmupStarted
-                    ],
-                    attributes: [
-                        "model_id": chosenModel.id,
-                        "reason": String(describing: error),
-                    ]
-                ))
-                FileHandle.standardError.write(Data("warmup failed: \(error)\n".utf8))
-                if coordinator.state == .idle {
-                    menuBar.setFailure("model unavailable · open Settings")
-                }
-            }
+        MainActor.assumeIsolated {
+            settingsController.showOnboardingIfNeeded(
+                isBundledApplication: isBundledApplication
+            )
+            startModelWarmup()
         }
         diagnosticsHeartbeatTask = Task { @MainActor in
             while !Task.isCancelled {

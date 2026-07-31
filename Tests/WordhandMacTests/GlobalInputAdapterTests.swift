@@ -642,6 +642,83 @@ struct GlobalInputAdapterTests {
 
     @Test
     @MainActor
+    func runtimeRoutesHotkeysOnlyAfterMicrophoneAndModelAreReady() async {
+        let readiness = RuntimeReadiness()
+        var handledEvents: [HotkeyEvent] = []
+
+        for mask in 0..<8 {
+            readiness.hotkeyReady = mask & 1 != 0
+            readiness.microphoneReady = mask & 2 != 0
+            readiness.modelReady = mask & 4 != 0
+            await readiness.route(.pressed) { handledEvents.append($0) }
+            #expect(
+                (readiness.presentation(globalInputReady: true) == .ready)
+                    == (mask == 7)
+            )
+        }
+
+        #expect(handledEvents == [.pressed])
+        readiness.hotkeyReady = true
+        readiness.microphoneReady = false
+        readiness.modelReady = true
+        #expect(
+            readiness.presentation(globalInputReady: true)
+                == .microphoneRequired
+        )
+        #expect(
+            readiness.presentation(globalInputReady: false)
+                == .permissionsRequired
+        )
+    }
+
+    @Test
+    @MainActor
+    func runtimeReconcilesMicrophoneChangesWithoutRestartingTheHotkey() throws {
+        let readiness = RuntimeReadiness()
+        readiness.modelReady = true
+        var startCount = 0
+        var stopCount = 0
+
+        var presentation = try readiness.reconcilePermissions(
+            globalInputReady: true,
+            microphoneReady: false,
+            startHotkey: { startCount += 1 },
+            stopHotkey: { stopCount += 1 }
+        )
+        #expect(presentation == .microphoneRequired)
+        #expect(startCount == 1)
+
+        presentation = try readiness.reconcilePermissions(
+            globalInputReady: true,
+            microphoneReady: true,
+            startHotkey: { startCount += 1 },
+            stopHotkey: { stopCount += 1 }
+        )
+        #expect(presentation == .ready)
+        #expect(startCount == 1)
+
+        presentation = try readiness.reconcilePermissions(
+            globalInputReady: true,
+            microphoneReady: false,
+            startHotkey: { startCount += 1 },
+            stopHotkey: { stopCount += 1 }
+        )
+        #expect(presentation == .microphoneRequired)
+        #expect(startCount == 1)
+
+        presentation = try readiness.reconcilePermissions(
+            globalInputReady: false,
+            microphoneReady: false,
+            startHotkey: { startCount += 1 },
+            stopHotkey: { stopCount += 1 }
+        )
+        #expect(presentation == .permissionsRequired)
+        #expect(stopCount == 1)
+        #expect(!readiness.hotkeyReady)
+    }
+
+    @Test
+    @MainActor
     func settingsCanRepairInputMonitoringPermission() throws {
         let permissions = FakePermissionManager()
         permissions.currentStatus.inputMonitoringGranted = false
@@ -658,6 +735,254 @@ struct GlobalInputAdapterTests {
 
         #expect(permissions.inputMonitoringRequestCount == 1)
         #expect(permissions.inputMonitoringSettingsCount == 1)
+    }
+
+    @Test
+    @MainActor
+    func onboardingPresentationDoesNotRequestPermissionsUntilAnActionIsChosen() throws {
+        _ = NSApplication.shared
+        let permissions = FakePermissionManager()
+        permissions.currentStatus = WordhandPermissionStatus(
+            accessibilityGranted: false,
+            inputMonitoringGranted: false,
+            microphone: .notDetermined
+        )
+        let fixture = try TemporarySettingsFixture()
+        defer { fixture.remove() }
+        let controller = SettingsController(
+            store: fixture.store,
+            settings: AppSettings(),
+            launchAtLoginManager: FakeLaunchAtLoginManager(state: .disabled),
+            permissionManager: permissions
+        )
+
+        controller.showOnboardingIfNeeded(isBundledApplication: true)
+        let window = try #require(controller.ensureOnboardingWindowController().window)
+        defer { window.close() }
+
+        #expect(window.isVisible)
+        #expect(window.title == "Welcome to Wordhand")
+        #expect(permissions.accessibilityRequestCount == 0)
+        #expect(permissions.accessibilitySettingsCount == 0)
+        #expect(permissions.inputMonitoringRequestCount == 0)
+        #expect(permissions.inputMonitoringSettingsCount == 0)
+        #expect(permissions.microphoneRequestCount == 0)
+        #expect(permissions.microphoneSettingsCount == 0)
+    }
+
+    @Test
+    @MainActor
+    func onboardingRefreshesPermissionsWhenItBecomesKeyAgain() throws {
+        _ = NSApplication.shared
+        let permissions = FakePermissionManager()
+        permissions.currentStatus = WordhandPermissionStatus(
+            accessibilityGranted: false,
+            inputMonitoringGranted: false,
+            microphone: .denied
+        )
+        let fixture = try TemporarySettingsFixture()
+        defer { fixture.remove() }
+        let controller = SettingsController(
+            store: fixture.store,
+            settings: AppSettings(),
+            launchAtLoginManager: FakeLaunchAtLoginManager(state: .disabled),
+            permissionManager: permissions
+        )
+        var refreshCount = 0
+        controller.onPermissionsRefresh = { _ in refreshCount += 1 }
+        let window = try #require(controller.ensureOnboardingWindowController().window)
+        defer { window.close() }
+        permissions.currentStatus = WordhandPermissionStatus(
+            accessibilityGranted: true,
+            inputMonitoringGranted: true,
+            microphone: .granted
+        )
+
+        controller.windowDidBecomeKey(Notification(
+            name: NSWindow.didBecomeKeyNotification,
+            object: window
+        ))
+
+        #expect(controller.permissionStatus.isReady)
+        #expect(refreshCount == 1)
+    }
+
+    @Test
+    @MainActor
+    func onboardingCompletionRequiresLiveReadinessAndPersists() throws {
+        _ = NSApplication.shared
+        let permissions = FakePermissionManager()
+        permissions.currentStatus = WordhandPermissionStatus(
+            accessibilityGranted: false,
+            inputMonitoringGranted: true,
+            microphone: .granted
+        )
+        let fixture = try TemporarySettingsFixture()
+        defer { fixture.remove() }
+        let controller = SettingsController(
+            store: fixture.store,
+            settings: AppSettings(),
+            launchAtLoginManager: FakeLaunchAtLoginManager(state: .disabled),
+            permissionManager: permissions
+        )
+        controller.showOnboardingIfNeeded(isBundledApplication: true)
+        let window = try #require(controller.ensureOnboardingWindowController().window)
+        controller.setModelPreparationPhase(.ready)
+        #expect(window.isVisible)
+
+        controller.completeOnboarding()
+        #expect(controller.settings.completedOnboardingVersion == 0)
+        #expect(try fixture.store.load().completedOnboardingVersion == 0)
+
+        permissions.currentStatus.accessibilityGranted = true
+        controller.refreshPermissions()
+        controller.completeOnboarding()
+
+        #expect(
+            controller.settings.completedOnboardingVersion
+                == OnboardingPresentationPolicy.currentVersion
+        )
+        #expect(
+            try fixture.store.load().completedOnboardingVersion
+                == OnboardingPresentationPolicy.currentVersion
+        )
+        #expect(!OnboardingPresentationPolicy.shouldPresent(
+            isBundledApplication: true,
+            completedVersion: controller.settings.completedOnboardingVersion
+        ))
+        #expect(!window.isVisible)
+    }
+
+    @Test
+    @MainActor
+    func onboardingCloseWithoutCompletionRemainsPending() throws {
+        _ = NSApplication.shared
+        let fixture = try TemporarySettingsFixture()
+        defer { fixture.remove() }
+        let controller = SettingsController(
+            store: fixture.store,
+            settings: AppSettings(),
+            launchAtLoginManager: FakeLaunchAtLoginManager(state: .disabled),
+            permissionManager: FakePermissionManager()
+        )
+        let window = try #require(controller.ensureOnboardingWindowController().window)
+
+        window.close()
+
+        #expect(controller.settings.completedOnboardingVersion == 0)
+        #expect(OnboardingPresentationPolicy.shouldPresent(
+            isBundledApplication: true,
+            completedVersion: controller.settings.completedOnboardingVersion
+        ))
+    }
+
+    @Test
+    @MainActor
+    func unavailableModelRetryStartsExactlyOneNewPreparation() throws {
+        let fixture = try TemporarySettingsFixture()
+        defer { fixture.remove() }
+        let controller = SettingsController(
+            store: fixture.store,
+            settings: AppSettings(),
+            launchAtLoginManager: FakeLaunchAtLoginManager(state: .disabled),
+            permissionManager: FakePermissionManager()
+        )
+        var retryCount = 0
+        controller.onRetryModelPreparation = { retryCount += 1 }
+
+        controller.retryModelPreparation()
+        #expect(retryCount == 0)
+
+        controller.setModelPreparationPhase(.unavailable)
+        controller.retryModelPreparation()
+        controller.retryModelPreparation()
+
+        #expect(retryCount == 1)
+        #expect(controller.modelPreparationPhase == .preparing)
+        controller.setModelPreparationPhase(.ready)
+        #expect(controller.onboardingReadiness.modelReady)
+    }
+
+    @Test
+    @MainActor
+    func microphoneRepairRoutesPromptAndSettingsByCurrentState() async throws {
+        let permissions = FakePermissionManager()
+        permissions.currentStatus.microphone = .notDetermined
+        let fixture = try TemporarySettingsFixture()
+        defer { fixture.remove() }
+        let controller = SettingsController(
+            store: fixture.store,
+            settings: AppSettings(),
+            launchAtLoginManager: FakeLaunchAtLoginManager(state: .disabled),
+            permissionManager: permissions
+        )
+
+        controller.repairMicrophonePermission()
+        while permissions.microphoneRequestCount == 0 {
+            await Task.yield()
+        }
+        #expect(controller.permissionStatus.microphone == .granted)
+        #expect(permissions.microphoneSettingsCount == 0)
+
+        permissions.currentStatus.microphone = .denied
+        controller.refreshPermissions()
+        controller.repairMicrophonePermission()
+        #expect(permissions.microphoneSettingsCount == 1)
+        #expect(permissions.microphoneRequestCount == 1)
+    }
+
+    @Test(
+        .enabled(
+            if: ProcessInfo.processInfo.environment[
+                "WORDHAND_ONBOARDING_RENDER_RECEIPT"
+            ] == "1"
+        )
+    )
+    @MainActor
+    func rendersFreshMacReadinessWithoutClipping() throws {
+        _ = NSApplication.shared
+        let outputPath = try #require(
+            ProcessInfo.processInfo.environment[
+                "WORDHAND_ONBOARDING_RENDER_OUTPUT"
+            ]
+        )
+        let permissions = FakePermissionManager()
+        permissions.currentStatus = WordhandPermissionStatus(
+            accessibilityGranted: false,
+            inputMonitoringGranted: true,
+            microphone: .notDetermined
+        )
+        let fixture = try TemporarySettingsFixture()
+        defer { fixture.remove() }
+        let controller = SettingsController(
+            store: fixture.store,
+            settings: AppSettings(),
+            launchAtLoginManager: FakeLaunchAtLoginManager(state: .disabled),
+            permissionManager: permissions
+        )
+        controller.setModelPreparationPhase(.unavailable)
+        let root = OnboardingView(controller: controller)
+        let view = NSHostingView(rootView: root)
+        view.frame = NSRect(x: 0, y: 0, width: 560, height: 560)
+        view.layoutSubtreeIfNeeded()
+        let representation = try #require(NSBitmapImageRep(
+            bitmapDataPlanes: nil,
+            pixelsWide: 560,
+            pixelsHigh: 560,
+            bitsPerSample: 8,
+            samplesPerPixel: 4,
+            hasAlpha: true,
+            isPlanar: false,
+            colorSpaceName: .deviceRGB,
+            bytesPerRow: 0,
+            bitsPerPixel: 0
+        ))
+        view.cacheDisplay(in: view.bounds, to: representation)
+        let png = try #require(
+            representation.representation(using: .png, properties: [:])
+        )
+        try png.write(to: URL(fileURLWithPath: outputPath), options: [.atomic])
+        #expect(FileManager.default.fileExists(atPath: outputPath))
     }
 
     @Test
@@ -1386,6 +1711,7 @@ private final class FakePermissionManager: PermissionManaging {
     private(set) var accessibilitySettingsCount = 0
     private(set) var inputMonitoringRequestCount = 0
     private(set) var inputMonitoringSettingsCount = 0
+    private(set) var microphoneRequestCount = 0
     private(set) var microphoneSettingsCount = 0
 
     func status() -> WordhandPermissionStatus {
@@ -1401,6 +1727,7 @@ private final class FakePermissionManager: PermissionManaging {
     }
 
     func requestMicrophone() async -> Bool {
+        microphoneRequestCount += 1
         currentStatus.microphone = .granted
         return true
     }

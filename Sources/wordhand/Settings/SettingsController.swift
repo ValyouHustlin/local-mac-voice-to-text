@@ -9,6 +9,12 @@ enum RecentActivityPhase: Equatable {
     case unavailable
 }
 
+enum ModelPreparationPhase: Equatable {
+    case preparing
+    case ready
+    case unavailable
+}
+
 @MainActor
 final class SettingsController: NSObject, ObservableObject, NSWindowDelegate {
     @Published private(set) var settings: AppSettings
@@ -22,6 +28,8 @@ final class SettingsController: NSObject, ObservableObject, NSWindowDelegate {
     @Published private(set) var diagnosticsMessage: String?
     @Published private(set) var recentActivitySnapshot: WordhandHealthSnapshot?
     @Published private(set) var recentActivityPhase: RecentActivityPhase = .idle
+    @Published private(set) var modelPreparationPhase: ModelPreparationPhase =
+        .preparing
     @Published private(set) var availableApplication: TranscriptTarget?
 
     var onSettingsChange: ((AppSettings) -> Void)?
@@ -33,6 +41,7 @@ final class SettingsController: NSObject, ObservableObject, NSWindowDelegate {
     var onRevealDiagnostics: (() -> Void)?
     var onDiagnosticsReport: (() async throws -> String)?
     var onRecentActivitySnapshot: (() async throws -> WordhandHealthSnapshot)?
+    var onRetryModelPreparation: (() -> Void)?
 
     private let store: SettingsStore
     private let launchAtLoginManager: any LaunchAtLoginManaging
@@ -41,6 +50,7 @@ final class SettingsController: NSObject, ObservableObject, NSWindowDelegate {
     private let activeModelID: String
     private let currentTarget: @MainActor () -> TranscriptTarget
     private var windowController: NSWindowController?
+    private var onboardingWindowController: NSWindowController?
     private var localKeyMonitor: Any?
     private var recentActivityTask: Task<Void, Never>?
     private var recentActivityGeneration = 0
@@ -84,6 +94,61 @@ final class SettingsController: NSObject, ObservableObject, NSWindowDelegate {
         controller.showWindow(nil)
         controller.window?.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
+    }
+
+    func showOnboardingIfNeeded(isBundledApplication: Bool) {
+        guard OnboardingPresentationPolicy.shouldPresent(
+            isBundledApplication: isBundledApplication,
+            completedVersion: settings.completedOnboardingVersion
+        ) else {
+            return
+        }
+        refreshPermissions()
+        let controller = ensureOnboardingWindowController()
+        controller.showWindow(nil)
+        controller.window?.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+    }
+
+    var onboardingReadiness: OnboardingReadiness {
+        OnboardingReadiness(
+            accessibilityGranted: permissionStatus.accessibilityGranted,
+            inputMonitoringGranted: permissionStatus.inputMonitoringGranted,
+            microphoneGranted: permissionStatus.microphone == .granted,
+            modelReady: modelPreparationPhase == .ready
+        )
+    }
+
+    var activeModel: TranscriptionModel? {
+        ModelRegistry.find(activeModelID)
+    }
+
+    func setModelPreparationPhase(_ phase: ModelPreparationPhase) {
+        modelPreparationPhase = phase
+    }
+
+    func retryModelPreparation() {
+        guard modelPreparationPhase == .unavailable,
+              let onRetryModelPreparation
+        else {
+            return
+        }
+        modelPreparationPhase = .preparing
+        onRetryModelPreparation()
+    }
+
+    func completeOnboarding() {
+        guard onboardingReadiness.canFinish else { return }
+        update {
+            $0.completedOnboardingVersion =
+                OnboardingPresentationPolicy.currentVersion
+        }
+        guard settings.completedOnboardingVersion
+            >= OnboardingPresentationPolicy.currentVersion
+        else {
+            return
+        }
+        onboardingWindowController?.close()
     }
 
     func setAction(_ action: HotkeyBinding.Action, at index: Int) {
@@ -509,8 +574,32 @@ final class SettingsController: NSObject, ObservableObject, NSWindowDelegate {
         return created
     }
 
+    func ensureOnboardingWindowController() -> NSWindowController {
+        if let onboardingWindowController {
+            return onboardingWindowController
+        }
+        let view = OnboardingView(controller: self)
+        let hostingController = NSHostingController(rootView: view)
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 560, height: 560),
+            styleMask: [.titled, .closable],
+            backing: .buffered,
+            defer: false
+        )
+        window.title = "Welcome to Wordhand"
+        window.contentViewController = hostingController
+        window.isReleasedWhenClosed = false
+        window.delegate = self
+        window.center()
+        let created = NSWindowController(window: window)
+        onboardingWindowController = created
+        return created
+    }
+
     func windowWillClose(_ notification: Notification) {
-        saveWindowFrame(from: notification)
+        if notification.object as? NSWindow === windowController?.window {
+            saveWindowFrame(from: notification)
+        }
         cancelShortcutCapture()
     }
 
@@ -523,6 +612,10 @@ final class SettingsController: NSObject, ObservableObject, NSWindowDelegate {
     }
 
     func windowDidBecomeKey(_ notification: Notification) {
+        if notification.object as? NSWindow === onboardingWindowController?.window {
+            refreshPermissions()
+            return
+        }
         guard recentActivityPhase != .loading else { return }
         refreshRecentActivity()
     }
@@ -557,6 +650,181 @@ final class SettingsController: NSObject, ObservableObject, NSWindowDelegate {
         return event.charactersIgnoringModifiers?
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .lowercased() ?? ""
+    }
+}
+
+struct ModelPreparationStatusView: View {
+    let phase: ModelPreparationPhase
+    let modelName: String
+    let modelSizeMB: Int
+    let onRetry: () -> Void
+
+    var body: some View {
+        HStack(spacing: 10) {
+            switch phase {
+            case .preparing:
+                ProgressView()
+                    .controlSize(.small)
+                    .accessibilityLabel("Preparing the on-device transcription model")
+            case .ready:
+                Image(systemName: "checkmark.circle.fill")
+                    .foregroundStyle(Color(red: 0.12, green: 0.49, blue: 0.39))
+            case .unavailable:
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .foregroundStyle(.orange)
+            }
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                    .font(.subheadline.weight(.semibold))
+                Text(detail)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            Spacer()
+            if phase == .unavailable {
+                Button("Try Again", action: onRetry)
+                    .buttonStyle(.bordered)
+            }
+        }
+        .accessibilityElement(children: .contain)
+    }
+
+    private var title: String {
+        switch phase {
+        case .preparing: return "Preparing \(modelName)…"
+        case .ready: return "On-device model ready"
+        case .unavailable: return "Model unavailable"
+        }
+    }
+
+    private var detail: String {
+        switch phase {
+        case .preparing:
+            return "\(modelSizeMB) MB · Wordhand stays responsive while this finishes."
+        case .ready:
+            return "Transcription stays private on this Mac."
+        case .unavailable:
+            return "Check your connection and available storage, then retry."
+        }
+    }
+}
+
+struct OnboardingView: View {
+    @ObservedObject var controller: SettingsController
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 22) {
+            VStack(alignment: .leading, spacing: 8) {
+                Image(systemName: "waveform.circle.fill")
+                    .font(.system(size: 44))
+                    .foregroundStyle(Color(red: 0.12, green: 0.49, blue: 0.39))
+                Text("Welcome to Wordhand")
+                    .font(.largeTitle.weight(.semibold))
+                Text("Hold Control–Space, speak, then release.")
+                    .font(.title3)
+                Text(
+                    "Wordhand works across your Mac and keeps your voice, "
+                        + "transcripts, and corrections private."
+                )
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            }
+
+            VStack(alignment: .leading, spacing: 0) {
+                permissionRow(
+                    title: "Accessibility",
+                    detail: "Inserts finished text at your cursor.",
+                    granted: controller.permissionStatus.accessibilityGranted,
+                    buttonTitle: "Open Settings",
+                    action: controller.repairAccessibilityPermission
+                )
+                Divider()
+                permissionRow(
+                    title: "Input Monitoring",
+                    detail: "Detects Control–Space in every app.",
+                    granted: controller.permissionStatus.inputMonitoringGranted,
+                    buttonTitle: "Allow",
+                    action: controller.repairInputMonitoringPermission
+                )
+                Divider()
+                permissionRow(
+                    title: "Microphone",
+                    detail: "Records only while dictation is active.",
+                    granted: controller.permissionStatus.microphone == .granted,
+                    buttonTitle: controller.permissionStatus.microphone == .notDetermined
+                        ? "Allow" : "Open Settings",
+                    action: controller.repairMicrophonePermission
+                )
+                Divider()
+                ModelPreparationStatusView(
+                    phase: controller.modelPreparationPhase,
+                    modelName: controller.activeModel?.displayName ?? "transcription model",
+                    modelSizeMB: controller.activeModel?.sizeMB ?? 0,
+                    onRetry: controller.retryModelPreparation
+                )
+                .padding(.vertical, 12)
+            }
+            .padding(.horizontal, 16)
+            .background(
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .fill(Color(nsColor: .controlBackgroundColor))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .stroke(Color.primary.opacity(0.08))
+            )
+
+            HStack {
+                Text(
+                    controller.onboardingReadiness.canFinish
+                        ? "Wordhand is ready."
+                        : "Complete each item to start dictating."
+                )
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+                Spacer()
+                Button("Start Dictating") {
+                    controller.completeOnboarding()
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(!controller.onboardingReadiness.canFinish)
+            }
+        }
+        .padding(28)
+        .frame(width: 560, height: 560, alignment: .topLeading)
+        .background(Color(nsColor: .windowBackgroundColor))
+        .accessibilityIdentifier("wordhand-onboarding")
+    }
+
+    private func permissionRow(
+        title: String,
+        detail: String,
+        granted: Bool,
+        buttonTitle: String,
+        action: @escaping () -> Void
+    ) -> some View {
+        HStack(spacing: 10) {
+            Image(systemName: granted ? "checkmark.circle.fill" : "circle.dashed")
+                .foregroundStyle(
+                    granted
+                        ? Color(red: 0.12, green: 0.49, blue: 0.39)
+                        : Color.secondary
+                )
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                    .font(.subheadline.weight(.semibold))
+                Text(detail)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            Spacer()
+            if !granted {
+                Button(buttonTitle, action: action)
+                    .buttonStyle(.bordered)
+            }
+        }
+        .padding(.vertical, 12)
     }
 }
 
@@ -989,6 +1257,16 @@ private struct SettingsView: View {
                         .buttonStyle(.borderedProminent)
                         .controlSize(.small)
                     }
+                } else {
+                    Divider()
+                    ModelPreparationStatusView(
+                        phase: controller.modelPreparationPhase,
+                        modelName:
+                            controller.activeModel?.displayName
+                            ?? "transcription model",
+                        modelSizeMB: controller.activeModel?.sizeMB ?? 0,
+                        onRetry: controller.retryModelPreparation
+                    )
                 }
 
                 if let error = controller.relaunchError {

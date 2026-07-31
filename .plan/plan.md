@@ -50,7 +50,10 @@ order:
 6. [x] a native evidence-based diagnostics and quality view, using factual
    seven-day activity and exact local evidence counts rather than a health or
    accuracy score;
-7. fresh-Mac onboarding plus the signed, notarized, permission-stable updater.
+7. [ ] fresh-Mac onboarding plus the signed, notarized, permission-stable
+   updater; the compact readiness window and recoverable local-model
+   preparation are source-complete and isolated-verified, while a fresh-account
+   pass and the authenticated updater remain.
 
 The first slice stores ordered 16 kHz Float32 frames in owner-only `Pending
 Captures` files. A torn last frame is ignored while every earlier complete frame
@@ -192,6 +195,32 @@ existing Writing Style card without hiding the default.
 
 Receipt:
 `docs/verification/2026-07-30-application-style-routing.md`.
+
+Fresh bundled installs now open one compact welcome window that explains the
+Control-Space gesture, reports Accessibility, Input Monitoring, Microphone, and
+local-model readiness separately, and requires explicit actions for every
+permission. Merely presenting the window never triggers a system permission
+prompt, and startup does not attempt the global hotkey tap until Accessibility
+and Input Monitoring are ready. The completion marker is persisted only after
+all four checks are live; closing early leaves onboarding pending. Existing
+settings files default to the completed marker so an upgrade does not
+unexpectedly reopen onboarding.
+
+Local model warmup now has Preparing, Ready, and Unavailable states in both
+Welcome and Settings. A transient failure exposes one bounded `Try Again`
+action, and repeated clicks cannot start concurrent retries. Runtime still
+opens the complete cached model with network fallback only when needed; no
+audio or transcript content is transmitted.
+
+The release path remains deliberately separate. The current tagged workflow
+still publishes an unsigned command-line archive, the legacy curl installer
+does not authenticate the downloaded archive, and the app installer does not
+yet prove candidate/current bundle ID, Team ID, designated requirement, and
+installed path continuity before replacement. These are tracked shipping
+blockers, not part of the onboarding slice.
+
+Receipt:
+`docs/verification/2026-07-30-first-run-readiness.md`.
 
 The first deeper spoken-editing slice adds deterministic `command new line` and
 `command new paragraph` without widening into destructive selection or
