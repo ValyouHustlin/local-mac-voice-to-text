@@ -8,6 +8,7 @@ public enum HotkeyEvent: Equatable, Sendable {
 public enum DictationFailure: Equatable, Sendable {
     case capture(String)
     case transcription(String)
+    case preservedForRecovery(String)
     case history(String)
     case historyStatus(String)
     case insertion(String)
@@ -469,8 +470,60 @@ public final class DictationCoordinator {
                     "prompt_artifact_detected": String(
                         transcriptionDiagnostics.promptArtifactDetected
                     ),
+                    "empty_recovery":
+                        transcriptionDiagnostics
+                            .emptyTranscriptRecoveryOutcome.rawValue,
                 ]
             )
+
+            if raw.trimmingCharacters(
+                in: .whitespacesAndNewlines
+            ).isEmpty {
+                activeOperationID = nil
+                activeProcessingContext = nil
+                activeOperationStartedAt = nil
+                if EmptyTranscriptRecoveryPolicy.hasMeaningfulActivity(signal) {
+                    recordDiagnostic(
+                        severity: .error,
+                        name: "transcription.empty_preserved",
+                        dictationID: operationID,
+                        metrics: [
+                            "audio_seconds": audioDuration,
+                            "active_window_fraction":
+                                signal.activeWindowFraction,
+                        ]
+                    )
+                    state = .failed(.preservedForRecovery(
+                        "No text was recognized. "
+                            + "The recording is safe for recovery."
+                    ))
+                } else {
+                    do {
+                        try (capture as? any RecoveryManagedAudioCapturing)?
+                            .discardRecovery(id: operationID)
+                    } catch {
+                        recordDiagnostic(
+                            severity: .error,
+                            name: "capture_recovery.cleanup_failed",
+                            dictationID: operationID,
+                            attributes: [
+                                "reason": String(describing: error)
+                            ]
+                        )
+                        state = .failed(.capture(
+                            "Quiet recording cleanup failed: \(error)"
+                        ))
+                        return
+                    }
+                    recordDiagnostic(
+                        name: "transcription.empty_silence",
+                        dictationID: operationID,
+                        metrics: ["audio_seconds": audioDuration]
+                    )
+                    state = .idle
+                }
+                return
+            }
 
             state = .processing
             let processingContext = activeProcessingContext
@@ -511,16 +564,21 @@ public final class DictationCoordinator {
                 ]
             )
             guard activeOperationID == operationID else { return }
-            guard !text.isEmpty else {
+            guard !text.trimmingCharacters(
+                in: .whitespacesAndNewlines
+            ).isEmpty else {
                 activeOperationID = nil
                 activeProcessingContext = nil
                 activeOperationStartedAt = nil
                 recordDiagnostic(
-                    severity: .warning,
-                    name: "processing.empty",
+                    severity: .error,
+                    name: "processing.empty_preserved",
                     dictationID: operationID
                 )
-                state = .idle
+                state = .failed(.preservedForRecovery(
+                    "Formatting produced no text. "
+                        + "The recording is safe for recovery."
+                ))
                 return
             }
 
@@ -806,6 +864,11 @@ public final class DictationCoordinator {
         state = .idle
     }
 
+    public func surfacePreservedRecoveryFailure(_ message: String) {
+        guard state == .idle else { return }
+        state = .failed(.preservedForRecovery(message))
+    }
+
     private func process(
         _ text: String,
         context: TranscriptProcessingContext
@@ -868,6 +931,52 @@ public final class DictationCoordinator {
             return false
         }
         let transcriptionElapsed = now() - started
+        if raw.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            let signal = AudioSignalMetrics.measure(
+                recovered.samples,
+                sampleRate: recovered.sampleRate
+            )
+            if EmptyTranscriptRecoveryPolicy.hasMeaningfulActivity(signal) {
+                recordDiagnostic(
+                    severity: .error,
+                    name: "capture_recovery.empty_preserved",
+                    dictationID: recovered.id,
+                    metrics: [
+                        "audio_seconds":
+                            Double(recovered.samples.count)
+                                / Double(recovered.sampleRate),
+                        "active_window_fraction":
+                            signal.activeWindowFraction,
+                    ]
+                )
+                state = .failed(.preservedForRecovery(
+                    "No text was recognized. "
+                        + "The recording remains safe for recovery."
+                ))
+                return false
+            }
+            do {
+                try (capture as? any RecoveryManagedAudioCapturing)?
+                    .discardRecovery(id: recovered.id)
+            } catch {
+                recordDiagnostic(
+                    severity: .error,
+                    name: "capture_recovery.cleanup_failed",
+                    dictationID: recovered.id,
+                    attributes: ["reason": String(describing: error)]
+                )
+                state = .failed(.capture(
+                    "Quiet recovery cleanup failed: \(error)"
+                ))
+                return false
+            }
+            recordDiagnostic(
+                name: "capture_recovery.empty_silence",
+                dictationID: recovered.id
+            )
+            state = .idle
+            return true
+        }
         state = .processing
         let processingResult = await process(
             raw,
@@ -878,14 +987,19 @@ public final class DictationCoordinator {
             processingResult.notices,
             dictationID: recovered.id
         )
-        guard !text.isEmpty else {
+        guard !text.trimmingCharacters(
+            in: .whitespacesAndNewlines
+        ).isEmpty else {
             recordDiagnostic(
                 severity: .warning,
                 name: "capture_recovery.failed",
                 dictationID: recovered.id,
                 attributes: ["stage": "empty_processing"]
             )
-            state = .failed(.transcription("Recovered audio produced no text."))
+            state = .failed(.preservedForRecovery(
+                "Formatting produced no text. "
+                    + "The recording remains safe for recovery."
+            ))
             return false
         }
 

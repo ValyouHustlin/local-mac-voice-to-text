@@ -157,6 +157,10 @@ Verified by source inspection and dated receipts through 2026-07-30:
   Whisper cancellation, capture-duration integrity checking, selective
   prompt-free tail recovery with a full-buffer fallback, and rewrite validation
   that rejects dropped numbers, technical tokens, or negated constraints;
+- active-audio empty-decode recovery that performs one prompt-free complete-
+  buffer retry, visibly retains the crash journal when the retry still produces
+  no text, and discards only quiet no-speech captures instead of accumulating
+  phantom recovery work;
 - persistent custom dictionary with versioned, non-destructive editable
   defaults and immediate correction flow;
 - searchable SQLite transcript history with copy, reinsert, dictionary
@@ -821,6 +825,24 @@ replays orphaned samples through the same full-buffer transcriber and processor,
 saves the result once under the original UUID, and marks it not inserted because
 the former focus target is no longer trustworthy. A duplicate History UUID makes
 cleanup idempotent after a crash between commit and journal deletion.
+
+An empty decoder result is not a successful dictation when the complete capture
+contains meaningful activity. Wordhand measures the same content-free signal
+metrics already used by private diagnostics. An empty primary with at least ten
+percent active 50 ms windows and either 0.003 RMS or 0.02 peak performs exactly
+one prompt-free full-buffer retry. A nonempty primary remains authoritative and
+never enters this path. If the retry recovers text, that complete retry continues
+through the ordinary processor, History-before-insertion boundary, and insertion
+path. If it remains empty or the processor erases nonempty recognition output,
+Wordhand shows a visible failure and keeps the journal for restart recovery.
+Quiet captures skip the second decode and discard their journals so silence does
+not become permanent recovery clutter; a failed discard is reported as a
+failure rather than false success. Whitespace-only formatter output is empty
+for the same authority decision and cannot be inserted or committed. Restart
+recovery uses the same policy; active audio remains retryable, while confirmed
+quiet audio is retired. One preserved empty journal does not block later
+recoverable captures in the same ordered startup scan. Wordhand attempts each
+later item once, then resurfaces that at least one recording remains kept.
 
 The directory is always local and owner-only (`0700`, files `0600`). It is
 separate from opt-in Quality Lab retention because recovery is loss prevention,

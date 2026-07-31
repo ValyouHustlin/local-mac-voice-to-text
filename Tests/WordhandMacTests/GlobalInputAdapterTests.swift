@@ -79,6 +79,80 @@ struct GlobalInputAdapterTests {
 
     @Test
     @MainActor
+    func preservedOldestCaptureDoesNotBlockLaterRecovery() async throws {
+        let ids = [
+            UUID(uuidString: "00000000-0000-0000-0000-000000000001")!,
+            UUID(uuidString: "00000000-0000-0000-0000-000000000002")!,
+            UUID(uuidString: "00000000-0000-0000-0000-000000000003")!,
+        ]
+        let captures = ids.map {
+            RecoveredAudioCapture(
+                id: $0,
+                createdAt: Date(),
+                sampleRate: 16_000,
+                samples: [0.1]
+            )
+        }
+        var attempted: [UUID] = []
+        var discarded: [UUID] = []
+        var failure: DictationFailure?
+        var surfaced: String?
+
+        try await recoverPendingCapturesInOrder(
+            captures,
+            recover: { capture in
+                attempted.append(capture.id)
+                if capture.id == ids[0] {
+                    failure = .preservedForRecovery("oldest kept")
+                    return false
+                }
+                failure = nil
+                return true
+            },
+            currentFailure: { failure },
+            resetFailure: { failure = nil },
+            discard: { discarded.append($0) },
+            surfacePreservedFailure: { surfaced = $0 }
+        )
+
+        #expect(attempted == ids)
+        #expect(discarded == Array(ids.dropFirst()))
+        #expect(surfaced == "oldest kept")
+    }
+
+    @Test
+    @MainActor
+    func terminalRecoveryFailureStillStopsTheOrderedScan() async throws {
+        let captures = (1...3).map { offset in
+            RecoveredAudioCapture(
+                id: UUID(),
+                createdAt: Date(timeIntervalSince1970: Double(offset)),
+                sampleRate: 16_000,
+                samples: [0.1]
+            )
+        }
+        var attempted: [UUID] = []
+        var failure: DictationFailure?
+
+        try await recoverPendingCapturesInOrder(
+            captures,
+            recover: { capture in
+                attempted.append(capture.id)
+                failure = .transcription("model failed")
+                return false
+            },
+            currentFailure: { failure },
+            resetFailure: { failure = nil },
+            discard: { _ in },
+            surfacePreservedFailure: { _ in }
+        )
+
+        #expect(attempted == [captures[0].id])
+        #expect(failure == .transcription("model failed"))
+    }
+
+    @Test
+    @MainActor
     func audioCuesArePreparedOnceBeforeTheirFirstPlayback() throws {
         let factory = FakeAudioCueSoundFactory()
         let player = AudioCuePlayer(

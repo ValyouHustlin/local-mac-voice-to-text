@@ -163,6 +163,73 @@ actor WhisperKitTranscriber:
         let conditionedTerms = isVocabularyConditioned
             ? vocabulary.terms()
             : []
+        if primary.text.trimmingCharacters(
+            in: .whitespacesAndNewlines
+        ).isEmpty {
+            let signal = AudioSignalMetrics.measure(
+                audio,
+                sampleRate: Int(WhisperKit.sampleRate)
+            )
+            let emptyRecoveryAction = EmptyTranscriptRecoveryPolicy.action(
+                primaryText: primary.text,
+                signal: signal
+            )
+            let shouldRetry = emptyRecoveryAction == .retryPromptFree
+            if shouldRetry {
+                FileHandle.standardError.write(Data(
+                    "empty transcript recovery: decoding complete audio "
+                        .appending("without vocabulary prompt\n").utf8
+                ))
+            }
+            let fullRetryStarted = ProcessInfo.processInfo.systemUptime
+            do {
+                let recovery = try await EmptyTranscriptRecoveryPolicy.recover(
+                    primaryText: primary.text,
+                    signal: signal,
+                    promptFreeRetry: {
+                        try await self.decode(
+                            audio,
+                            pipeline: pipeline,
+                            options: Self.makeDecodingOptions(
+                                promptTokens: nil
+                            ),
+                            token: token
+                        ).text
+                    }
+                )
+                let fullRetryDecodeSeconds = shouldRetry
+                    ? ProcessInfo.processInfo.systemUptime - fullRetryStarted
+                    : 0
+                latestRunDiagnostics = TranscriptionRunDiagnostics(
+                    primaryWordCount: 0,
+                    finalWordCount: Self.wordCount(recovery.text),
+                    fullRetryPerformed: recovery.retryPerformed,
+                    emptyTranscriptRecoveryOutcome: recovery.outcome,
+                    primaryDecodeSeconds: primaryDecodeSeconds,
+                    fullRetryDecodeSeconds: fullRetryDecodeSeconds
+                )
+                return recovery.text
+            } catch {
+                let fullRetryDecodeSeconds =
+                    ProcessInfo.processInfo.systemUptime - fullRetryStarted
+                if token.isCancelled {
+                    throw error
+                }
+                FileHandle.standardError.write(Data(
+                    "empty transcript recovery failed; "
+                        .appending("preserving the captured audio\n").utf8
+                ))
+                latestRunDiagnostics = TranscriptionRunDiagnostics(
+                    primaryWordCount: 0,
+                    finalWordCount: 0,
+                    fullRetryPerformed: true,
+                    emptyTranscriptRecoveryOutcome: .retryFailed,
+                    primaryDecodeSeconds: primaryDecodeSeconds,
+                    fullRetryDecodeSeconds: fullRetryDecodeSeconds
+                )
+                return primary.text
+            }
+        }
         var integrityIssues = TranscriptionIntegrityGuard.issues(
             in: primary.text,
             conditionedTerms: conditionedTerms,

@@ -36,6 +36,8 @@ public struct TranscriptionRunDiagnostics: Codable, Equatable, Sendable {
     public var finalWordCount: Int
     public var fullRetryPerformed: Bool
     public var promptArtifactDetected: Bool
+    public var emptyTranscriptRecoveryOutcome:
+        EmptyTranscriptRecoveryOutcome
     public var primaryDecodeSeconds: TimeInterval
     public var tailAuditDecodeSeconds: TimeInterval
     public var fullRetryDecodeSeconds: TimeInterval
@@ -46,6 +48,8 @@ public struct TranscriptionRunDiagnostics: Codable, Equatable, Sendable {
         finalWordCount: Int = 0,
         fullRetryPerformed: Bool = false,
         promptArtifactDetected: Bool = false,
+        emptyTranscriptRecoveryOutcome:
+            EmptyTranscriptRecoveryOutcome = .notNeeded,
         primaryDecodeSeconds: TimeInterval = 0,
         tailAuditDecodeSeconds: TimeInterval = 0,
         fullRetryDecodeSeconds: TimeInterval = 0
@@ -55,6 +59,8 @@ public struct TranscriptionRunDiagnostics: Codable, Equatable, Sendable {
         self.finalWordCount = finalWordCount
         self.fullRetryPerformed = fullRetryPerformed
         self.promptArtifactDetected = promptArtifactDetected
+        self.emptyTranscriptRecoveryOutcome =
+            emptyTranscriptRecoveryOutcome
         self.primaryDecodeSeconds = primaryDecodeSeconds
         self.tailAuditDecodeSeconds = tailAuditDecodeSeconds
         self.fullRetryDecodeSeconds = fullRetryDecodeSeconds

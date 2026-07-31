@@ -156,6 +156,28 @@ recovery it avoided both retries and modeled 5.371 versus 6.561 seconds, but
 both candidate hashes differed from the deterministic 20-second authority.
 The oracle rejected the shortcut and runtime remains unchanged.
 
+Subsequent live metadata exposed a higher-priority loss case: one 27.79-second
+capture with 97.3% active audio, 0.0175 RMS, and a 0.224 peak produced zero
+primary and final words. The installed build returned to idle without History,
+Quality Lab, or insertion output. The source path now treats an empty active-
+audio decode as a failure rather than success. It performs one prompt-free
+complete-buffer retry; a recovered result continues through the authoritative
+History-before-insertion path. If the retry is still empty, or formatting erases
+nonempty recognition output, the menu reports that the recording was kept and
+the crash journal remains byte-exact for restart recovery. Quiet no-speech
+captures skip the retry and discard their journals. Cleanup failure remains
+visible, whitespace-only formatting cannot be inserted, and one repeatedly
+empty oldest journal no longer blocks later startup recoveries.
+
+The deterministic restart oracle reopens the real append journal after an empty
+decode and preserves exact Float32 beginning, ending, count, and bit patterns.
+A separate ordered-runner oracle preserves the failed oldest item, completes
+later recoveries, and only then resurfaces the kept-recording failure.
+A two-run cached Turbo replay of the protected 12.57-second English fixture kept
+both arms byte-identical and passed every beginning, ending, number, negation,
+technical-term, and dictionary-spelling check. The installed build remains
+unchanged, so natural empty-recovery behavior is not yet a live product claim.
+
 The first local self-learning slice is implemented without automatic behavior
 changes. Two distinct explicit corrections with their paired retained
 recordings can produce one conservative canonical-term recommendation in

@@ -701,6 +701,203 @@ struct DictationCoordinatorTests {
     }
 
     @Test
+    func activeAudioWithNoRecognizedTextFailsVisibleAndStaysRecoverable() async {
+        let capture = FakeRecoveryCapture(
+            samples: Array(repeating: 0.1, count: 16_000)
+        )
+        let history = FakeHistory()
+        let inserter = FakeInserter()
+        let coordinator = DictationCoordinator(
+            capture: capture,
+            transcriber: FakeTranscriber(result: ""),
+            processor: TranscriptProcessor(),
+            inserter: inserter,
+            history: history
+        )
+        var diagnostics: [OperationalDiagnosticEvent] = []
+        coordinator.onDiagnosticEvent = { diagnostics.append($0) }
+
+        await coordinator.handle(.pressed)
+        await coordinator.handle(.released)
+
+        #expect(
+            coordinator.state
+                == .failed(.preservedForRecovery(
+                    "No text was recognized. The recording is safe for recovery."
+                ))
+        )
+        #expect(history.saved.isEmpty)
+        #expect(inserter.insertions.isEmpty)
+        #expect(capture.committedIDs.isEmpty)
+        #expect(capture.discardedIDs.isEmpty)
+        #expect(
+            diagnostics.contains {
+                $0.name == "transcription.empty_preserved"
+            }
+        )
+    }
+
+    @Test
+    func recoveredEmptyPrimaryContinuesThroughHistoryAndInsertion()
+        async throws
+    {
+        let capture = FakeRecoveryCapture(samples: [0.1])
+        let history = FakeHistory()
+        let inserter = FakeInserter()
+        let coordinator = DictationCoordinator(
+            capture: capture,
+            transcriber: EmptyRecoveredDiagnosticTranscriber(),
+            processor: TranscriptProcessor(),
+            inserter: inserter,
+            history: history
+        )
+
+        await coordinator.handle(.pressed)
+        await coordinator.handle(.released)
+
+        let saved = try #require(history.saved.only)
+        #expect(saved.text == "Recovered beginning and exact ending.")
+        #expect(inserter.insertions == [saved.text])
+        #expect(capture.committedIDs == [saved.id])
+        #expect(capture.discardedIDs.isEmpty)
+        #expect(coordinator.state == .idle)
+    }
+
+    @Test
+    func emptyDecodePreservesExactBeginningAndEndingAcrossJournalReopen()
+        async throws
+    {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(
+                "wordhand-empty-recovery-\(UUID().uuidString)"
+            )
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let samples =
+            [Float(0.123)]
+            + Array(repeating: Float(0.1), count: 15_998)
+            + [Float(-0.234)]
+        let capture = JournalBackedFakeCapture(
+            samples: samples,
+            directory: directory
+        )
+        let coordinator = DictationCoordinator(
+            capture: capture,
+            transcriber: FakeTranscriber(result: ""),
+            processor: TranscriptProcessor(),
+            inserter: FakeInserter(),
+            history: FakeHistory()
+        )
+
+        await coordinator.handle(.pressed)
+        await coordinator.handle(.released)
+
+        let reopened = CrashSafeCaptureJournal(directoryURL: directory)
+        let recovered = try #require(
+            try reopened.recoverableCaptures().only
+        )
+        #expect(
+            recovered.samples.map(\.bitPattern)
+                == samples.map(\.bitPattern)
+        )
+        #expect(
+            recovered.samples.first?.bitPattern
+                == samples.first?.bitPattern
+        )
+        #expect(
+            recovered.samples.last?.bitPattern
+                == samples.last?.bitPattern
+        )
+    }
+
+    @Test
+    func quietAudioWithNoRecognizedTextReturnsIdleAndDiscardsJournal() async {
+        let capture = FakeRecoveryCapture(
+            samples: Array(repeating: 0.0001, count: 16_000)
+        )
+        let coordinator = DictationCoordinator(
+            capture: capture,
+            transcriber: FakeTranscriber(result: ""),
+            processor: TranscriptProcessor(),
+            inserter: FakeInserter()
+        )
+        var diagnostics: [OperationalDiagnosticEvent] = []
+        coordinator.onDiagnosticEvent = { diagnostics.append($0) }
+
+        await coordinator.handle(.pressed)
+        await coordinator.handle(.released)
+
+        #expect(coordinator.state == .idle)
+        #expect(capture.committedIDs.isEmpty)
+        #expect(capture.discardedIDs == capture.preparedIDs)
+        #expect(
+            diagnostics.contains {
+                $0.name == "transcription.empty_silence"
+            }
+        )
+    }
+
+    @Test
+    func quietAudioCleanupFailureStaysVisibleAndDoesNotClaimDiscard() async {
+        let capture = FakeRecoveryCapture(
+            samples: Array(repeating: 0.0001, count: 16_000),
+            discardError: FakeError.failure
+        )
+        let coordinator = DictationCoordinator(
+            capture: capture,
+            transcriber: FakeTranscriber(result: ""),
+            processor: TranscriptProcessor(),
+            inserter: FakeInserter()
+        )
+        var diagnostics: [OperationalDiagnosticEvent] = []
+        coordinator.onDiagnosticEvent = { diagnostics.append($0) }
+
+        await coordinator.handle(.pressed)
+        await coordinator.handle(.released)
+
+        #expect(
+            coordinator.state
+                == .failed(.capture(
+                    "Quiet recording cleanup failed: failure"
+                ))
+        )
+        #expect(capture.discardedIDs.isEmpty)
+        #expect(
+            diagnostics.contains {
+                $0.name == "capture_recovery.cleanup_failed"
+            }
+        )
+    }
+
+    @Test
+    func whitespaceOnlyFormattingFailsVisibleAndPreservesJournal() async {
+        let capture = FakeRecoveryCapture(samples: [0.1])
+        let history = FakeHistory()
+        let inserter = FakeInserter()
+        let coordinator = DictationCoordinator(
+            capture: capture,
+            transcriber: FakeTranscriber(result: "recognized words"),
+            processor: FixedProcessor(result: " \n "),
+            inserter: inserter,
+            history: history
+        )
+
+        await coordinator.handle(.pressed)
+        await coordinator.handle(.released)
+
+        #expect(
+            coordinator.state
+                == .failed(.preservedForRecovery(
+                    "Formatting produced no text. "
+                        + "The recording is safe for recovery."
+                ))
+        )
+        #expect(history.saved.isEmpty)
+        #expect(inserter.insertions.isEmpty)
+        #expect(capture.committedIDs.isEmpty)
+        #expect(capture.discardedIDs.isEmpty)
+    }
+
+    @Test
     func insertionFailureRemainsVisibleUntilReset() async {
         let coordinator = DictationCoordinator(
             capture: FakeCapture(samples: [0.1]),
@@ -977,6 +1174,121 @@ struct DictationCoordinatorTests {
     }
 
     @Test
+    func recoveredActiveAudioStaysRecoverableWhenTextIsStillEmpty() async {
+        let id = UUID()
+        let capture = FakeRecoveryCapture(samples: [])
+        let coordinator = DictationCoordinator(
+            capture: capture,
+            transcriber: FakeTranscriber(result: ""),
+            processor: TranscriptProcessor(),
+            inserter: FakeInserter(),
+            history: FakeHistory()
+        )
+
+        let handled = await coordinator.recover(RecoveredAudioCapture(
+            id: id,
+            createdAt: Date(),
+            sampleRate: 16_000,
+            samples: Array(repeating: 0.1, count: 16_000)
+        ))
+
+        #expect(!handled)
+        #expect(capture.discardedIDs.isEmpty)
+        #expect(
+            coordinator.state
+                == .failed(.preservedForRecovery(
+                    "No text was recognized. "
+                        + "The recording remains safe for recovery."
+                ))
+        )
+    }
+
+    @Test
+    func recoveredQuietAudioIsDiscardedInsteadOfRetryingForever() async {
+        let id = UUID()
+        let capture = FakeRecoveryCapture(samples: [])
+        let coordinator = DictationCoordinator(
+            capture: capture,
+            transcriber: FakeTranscriber(result: ""),
+            processor: TranscriptProcessor(),
+            inserter: FakeInserter(),
+            history: FakeHistory()
+        )
+
+        let handled = await coordinator.recover(RecoveredAudioCapture(
+            id: id,
+            createdAt: Date(),
+            sampleRate: 16_000,
+            samples: Array(repeating: 0.0001, count: 16_000)
+        ))
+
+        #expect(handled)
+        #expect(capture.discardedIDs == [id])
+        #expect(coordinator.state == .idle)
+    }
+
+    @Test
+    func recoveredQuietCleanupFailureDoesNotClaimSuccess() async {
+        let id = UUID()
+        let capture = FakeRecoveryCapture(
+            samples: [],
+            discardError: FakeError.failure
+        )
+        let coordinator = DictationCoordinator(
+            capture: capture,
+            transcriber: FakeTranscriber(result: ""),
+            processor: TranscriptProcessor(),
+            inserter: FakeInserter(),
+            history: FakeHistory()
+        )
+
+        let handled = await coordinator.recover(RecoveredAudioCapture(
+            id: id,
+            createdAt: Date(),
+            sampleRate: 16_000,
+            samples: Array(repeating: 0.0001, count: 16_000)
+        ))
+
+        #expect(!handled)
+        #expect(capture.discardedIDs.isEmpty)
+        #expect(
+            coordinator.state
+                == .failed(.capture(
+                    "Quiet recovery cleanup failed: failure"
+                ))
+        )
+    }
+
+    @Test
+    func recoveredWhitespaceFormattingPreservesJournal() async {
+        let capture = FakeRecoveryCapture(samples: [])
+        let coordinator = DictationCoordinator(
+            capture: capture,
+            transcriber: FakeTranscriber(result: "recognized words"),
+            processor: FixedProcessor(result: " \t "),
+            inserter: FakeInserter(),
+            history: FakeHistory()
+        )
+
+        let handled = await coordinator.recover(RecoveredAudioCapture(
+            id: UUID(),
+            createdAt: Date(),
+            sampleRate: 16_000,
+            samples: [0.1]
+        ))
+
+        #expect(!handled)
+        #expect(capture.discardedIDs.isEmpty)
+        #expect(
+            coordinator.state
+                == .failed(.preservedForRecovery(
+                    "Formatting produced no text. "
+                        + "The recording remains safe for recovery."
+                ))
+        )
+    }
+
+    @Test
     func recoveryJournalDeletesOnlyAfterHistoryCommit() async throws {
         let capture = FakeRecoveryCapture(samples: [0.1, 0.2])
         let history = FakeHistory()
@@ -1067,12 +1379,14 @@ private final class FailingRecoveryPreparationCapture:
 
 private final class FakeRecoveryCapture: RecoveryManagedAudioCapturing {
     private let samples: [Float]
+    private let discardError: Error?
     private(set) var preparedIDs: [UUID] = []
     private(set) var committedIDs: [UUID] = []
     private(set) var discardedIDs: [UUID] = []
 
-    init(samples: [Float]) {
+    init(samples: [Float], discardError: Error? = nil) {
         self.samples = samples
+        self.discardError = discardError
     }
 
     func prepareRecovery(id: UUID, createdAt: Date, sampleRate: Int) throws {
@@ -1090,7 +1404,48 @@ private final class FakeRecoveryCapture: RecoveryManagedAudioCapturing {
     }
 
     func discardRecovery(id: UUID) throws {
+        if let discardError {
+            throw discardError
+        }
         discardedIDs.append(id)
+    }
+}
+
+private final class JournalBackedFakeCapture:
+    RecoveryManagedAudioCapturing
+{
+    private let samples: [Float]
+    private let journal: CrashSafeCaptureJournal
+    private let writer: CrashSafeCaptureWriter
+
+    init(samples: [Float], directory: URL) {
+        self.samples = samples
+        journal = CrashSafeCaptureJournal(directoryURL: directory)
+        writer = CrashSafeCaptureWriter(journal: journal)
+    }
+
+    func prepareRecovery(id: UUID, createdAt: Date, sampleRate: Int) throws {
+        try writer.beginCapture(
+            id: id,
+            createdAt: createdAt,
+            sampleRate: sampleRate
+        )
+    }
+
+    func start() throws {}
+
+    func stop() async -> [Float] {
+        _ = writer.enqueue(samples)
+        try? await writer.seal()
+        return samples
+    }
+
+    func markRecoveryCommitted(id: UUID) throws {
+        try journal.discard(id: id)
+    }
+
+    func discardRecovery(id: UUID) throws {
+        try journal.discard(id: id)
     }
 }
 
@@ -1217,6 +1572,29 @@ private final class DiagnosticFakeTranscriber:
             primaryWordCount: 2,
             finalWordCount: 4,
             fullRetryPerformed: true
+        )
+    }
+}
+
+private final class EmptyRecoveredDiagnosticTranscriber:
+    Transcribing,
+    TranscriptionDiagnosticsProviding,
+    @unchecked Sendable
+{
+    let modelID = "empty-recovery-fake"
+
+    func warmUp() async throws {}
+
+    func transcribe(_ audio: [Float]) async throws -> String {
+        "Recovered beginning and exact ending."
+    }
+
+    func lastRunDiagnostics() async -> TranscriptionRunDiagnostics {
+        TranscriptionRunDiagnostics(
+            primaryWordCount: 0,
+            finalWordCount: 5,
+            fullRetryPerformed: true,
+            emptyTranscriptRecoveryOutcome: .recovered
         )
     }
 }
@@ -1527,6 +1905,21 @@ private final class ContextRecordingProcessor:
     ) async -> String {
         contexts.append(context)
         return text
+    }
+}
+
+private final class FixedProcessor:
+    TranscriptProcessing,
+    @unchecked Sendable
+{
+    private let result: String
+
+    init(result: String) {
+        self.result = result
+    }
+
+    func process(_ text: String, target: TranscriptTarget) async -> String {
+        result
     }
 }
 

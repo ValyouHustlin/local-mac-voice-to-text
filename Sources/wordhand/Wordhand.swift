@@ -440,11 +440,21 @@ struct Run: ParsableCommand {
         }
         let recoverPendingCaptures: @MainActor () async throws -> Void = {
             let pendingCaptures = try recoveryJournal.recoverableCaptures()
-            for pendingCapture in pendingCaptures {
-                let recovered = await coordinator.recover(pendingCapture)
-                guard recovered else { break }
-                try recoveryJournal.discard(id: pendingCapture.id)
-            }
+            try await recoverPendingCapturesInOrder(
+                pendingCaptures,
+                recover: { await coordinator.recover($0) },
+                currentFailure: {
+                    guard case .failed(let failure) = coordinator.state else {
+                        return nil
+                    }
+                    return failure
+                },
+                resetFailure: { coordinator.resetFailure() },
+                discard: { try recoveryJournal.discard(id: $0) },
+                surfacePreservedFailure: {
+                    coordinator.surfacePreservedRecoveryFailure($0)
+                }
+            )
         }
         let startModelWarmup: @MainActor () -> Void = {
             modelWarmupTask?.cancel()
@@ -794,6 +804,10 @@ struct Run: ParsableCommand {
                         menuBar.setFailure("inserted · history status needs attention")
                     case .insertion:
                         menuBar.setFailure("not inserted · saved in history")
+                    case .preservedForRecovery:
+                        menuBar.setFailure(
+                            "no text recognized · recording kept"
+                        )
                     case .capture, .transcription:
                         menuBar.setFailure("dictation failed · try again")
                     }
