@@ -58,6 +58,15 @@ injected clock sequence rather than patching failures one at a time.
 - `/bin/bash -n scripts/*.sh` and `git diff --check`: passed with no output.
 - Independent neutral review verdict: ship, with no correctness, privacy,
   compatibility, or claim finding at or above 80% confidence.
+- Source commit `65cf8be` was pushed to `origin/master`. GitHub CI run
+  `30606762014` passed its tests, packaging guards, and release build in 6
+  minutes 1 second.
+- A development candidate was built as version `0.1.0` build 25 with bundle
+  identifier `com.valyou.wordhand.dev`, signed by `Wordhand Local Signing`, and
+  passed strict signature verification. It was not installed or launched.
+- The installed app remained build 22, running as PID 72243; the process had
+  restarted through ordinary user activity before this checkpoint, not through
+  the verification work.
 
 ## Live read-only compatibility receipt
 
