@@ -11,6 +11,19 @@ public enum InsertionVerificationOutcome: String, Sendable {
     case failed
 }
 
+public enum InsertionPostAction: String, Codable, Sendable {
+    case none
+    case returnKey = "return_key"
+}
+
+public enum InsertionPostActionOutcome: String, Sendable {
+    case notRequested = "not_requested"
+    case performed
+    case skippedUnverified = "skipped_unverified"
+    case unsupportedMode = "unsupported_mode"
+    case failed
+}
+
 public struct InsertionRunDiagnostics: Equatable, Sendable {
     public var mode: InsertionMode
     public var verification: InsertionVerificationOutcome
@@ -18,6 +31,7 @@ public struct InsertionRunDiagnostics: Equatable, Sendable {
     public var checkpointAvailable: Bool
     public var secureInputBlocked: Bool
     public var undoAvailable: Bool
+    public var postActionOutcome: InsertionPostActionOutcome
 
     public init(
         mode: InsertionMode,
@@ -25,7 +39,8 @@ public struct InsertionRunDiagnostics: Equatable, Sendable {
         retryCount: Int = 0,
         checkpointAvailable: Bool = false,
         secureInputBlocked: Bool = false,
-        undoAvailable: Bool = false
+        undoAvailable: Bool = false,
+        postActionOutcome: InsertionPostActionOutcome = .notRequested
     ) {
         self.mode = mode
         self.verification = verification
@@ -33,11 +48,20 @@ public struct InsertionRunDiagnostics: Equatable, Sendable {
         self.checkpointAvailable = checkpointAvailable
         self.secureInputBlocked = secureInputBlocked
         self.undoAvailable = undoAvailable
+        self.postActionOutcome = postActionOutcome
     }
 }
 
 public protocol InsertionDiagnosticsProviding: Sendable {
     func lastInsertionDiagnostics() async -> InsertionRunDiagnostics
+}
+
+public protocol PostActionTextInserting: TextInserting {
+    func insert(
+        _ text: String,
+        mode: InsertionMode,
+        postAction: InsertionPostAction
+    ) async throws
 }
 
 public enum InsertionHistoryStatusPolicy {

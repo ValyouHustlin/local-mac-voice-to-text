@@ -69,6 +69,26 @@ order:
    provenance, authenticated public update feed, selected credentials, and attended
    install/update-survival receipt remain.
 
+The measured latency bottleneck changed the next product checkpoint. A
+selectable Parakeet Unified English 0.6B Core ML backend is source-complete
+behind the existing full-buffer authority boundary; Whisper Large v3 remains
+the accuracy-first default. On three checked-in 12.57–53.71-second recordings,
+paired against Aaron's current Whisper Base model, Parakeet passed every
+beginning, ending, number, and negation check and reduced median decode time
+from 0.334–1.245 seconds to 0.076–0.307 seconds (3.9–4.5×). It did not reproduce
+the exact `WhisperKit` and `Aaron Browne-Moore` spellings, so the stricter
+accuracy gate rejected it and it is not promoted as the default. Maximum
+processing now avoids the independently measured multi-second generative
+formatting stage and uses deterministic profile formatting.
+
+The same candidate adds an off-by-default `Press Return after confirmed
+insertion` setting. Return is a per-insertion post-action owned by the paste
+adapter and occurs exactly once only after Accessibility confirms delivery,
+including after one verified retry. It never fires for Unicode, Copy Only,
+unverified compatibility delivery, failed paste, or a changed target.
+
+Receipt: `docs/verification/2026-07-30-parakeet-fast-path.md`.
+
 The first slice stores ordered 16 kHz Float32 frames in owner-only `Pending
 Captures` files. A torn last frame is ignored while every earlier complete frame
 is recovered bit for bit. The normal stop path still transcribes the complete

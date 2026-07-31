@@ -61,6 +61,7 @@ struct SettingsTests {
             ]
         )
         #expect(settings.applicationFormattingRules.isEmpty)
+        #expect(!settings.submitAfterDictation)
         #expect(settings.completedOnboardingVersion == 0)
         #expect(OnboardingPresentationPolicy.shouldPresent(
             isBundledApplication: true,
@@ -115,6 +116,22 @@ struct SettingsTests {
             from: JSONEncoder().encode(completed)
         )
         #expect(roundTripped.completedOnboardingVersion == completed.completedOnboardingVersion)
+    }
+
+    @Test
+    func legacySettingsDefaultSubmitAfterDictationOff() throws {
+        let encoded = try JSONEncoder().encode(AppSettings())
+        var legacy = try #require(
+            JSONSerialization.jsonObject(with: encoded) as? [String: Any]
+        )
+        legacy.removeValue(forKey: "submitAfterDictation")
+
+        let decoded = try JSONDecoder().decode(
+            AppSettings.self,
+            from: JSONSerialization.data(withJSONObject: legacy)
+        )
+
+        #expect(!decoded.submitAfterDictation)
     }
 
     @Test
@@ -212,6 +229,7 @@ struct SettingsTests {
         ]
         expected.performanceMode = .maximum
         expected.insertionMode = .unicode
+        expected.submitAfterDictation = true
         expected.qualityAudioRetentionEnabled = true
         expected.qualityAudioRetentionDays = 14
         expected.qualityAudioMaximumBytes = 5_000_000_000

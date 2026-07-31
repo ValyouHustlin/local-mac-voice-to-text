@@ -151,6 +151,7 @@ public final class DictationCoordinator {
     private let inserter: TextInserting
     private let history: TranscriptRecording?
     private var insertionMode: InsertionMode
+    private var submitAfterDictation: Bool
     private var streamingEnabled: Bool
     private let language: String?
     private let audioSampleRate: Double
@@ -183,6 +184,7 @@ public final class DictationCoordinator {
         inserter: TextInserting,
         history: TranscriptRecording? = nil,
         insertionMode: InsertionMode = .unicode,
+        submitAfterDictation: Bool = false,
         streamingEnabled: Bool = false,
         language: String? = nil,
         audioSampleRate: Double = 16_000,
@@ -206,6 +208,7 @@ public final class DictationCoordinator {
         self.inserter = inserter
         self.history = history
         self.insertionMode = insertionMode
+        self.submitAfterDictation = submitAfterDictation
         self.streamingEnabled = streamingEnabled
         self.language = language
         self.audioSampleRate = audioSampleRate
@@ -666,7 +669,18 @@ public final class DictationCoordinator {
             state = .inserting
             let insertionStarted = now()
             do {
-                try await inserter.insert(text, mode: insertionMode)
+                if submitAfterDictation,
+                   let postActionInserter =
+                       inserter as? any PostActionTextInserting
+                {
+                    try await postActionInserter.insert(
+                        text,
+                        mode: insertionMode,
+                        postAction: .returnKey
+                    )
+                } else {
+                    try await inserter.insert(text, mode: insertionMode)
+                }
             } catch {
                 let insertionCompletedAt = now()
                 let insertionElapsed = max(
@@ -733,6 +747,8 @@ public final class DictationCoordinator {
                     "undo_available": String(
                         insertionDiagnostics.undoAvailable
                     ),
+                    "post_action":
+                        insertionDiagnostics.postActionOutcome.rawValue,
                 ]
             )
             for notice in processingResult.notices {
@@ -1125,6 +1141,10 @@ public final class DictationCoordinator {
 
     public func updateInsertionMode(_ insertionMode: InsertionMode) {
         self.insertionMode = insertionMode
+    }
+
+    public func updateSubmitAfterDictation(_ enabled: Bool) {
+        submitAfterDictation = enabled
     }
 
     public func updateStreamingEnabled(_ enabled: Bool) {

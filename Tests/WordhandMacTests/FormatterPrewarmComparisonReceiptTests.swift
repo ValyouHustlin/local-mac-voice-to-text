@@ -66,7 +66,7 @@ struct FormatterPrewarmComparisonReceiptTests {
             ),
             profile: settings.formattingProfile,
             applicationRules: settings.applicationFormattingRules,
-            performanceMode: .maximum,
+            performanceMode: .adaptive,
             rewriter: baselineRewriter
         )
         let candidate = AppAwareTranscriptProcessor(
@@ -75,7 +75,7 @@ struct FormatterPrewarmComparisonReceiptTests {
             ),
             profile: settings.formattingProfile,
             applicationRules: settings.applicationFormattingRules,
-            performanceMode: .maximum,
+            performanceMode: .adaptive,
             rewriter: candidateRewriter
         )
 

@@ -113,8 +113,10 @@ time-bounded, and attended.
 Verified by source inspection and dated receipts through 2026-07-30:
 
 - Swift Package Manager library, executable, and test targets for macOS 14+;
-- Argmax OSS/WhisperKit 1.0 transcription with four registered local Whisper
-  models; optimized Large v3 (626 MB) is the accuracy-first default;
+- selectable local Core ML transcription through either FluidAudio Parakeet
+  Unified English 0.6B or four Argmax OSS/WhisperKit 1.0 models; optimized
+  Whisper Large v3 (626 MB) remains the accuracy-first default and Parakeet is
+  the explicitly faster English option;
 - `AVAudioEngine` capture converted to 16 kHz mono Float32, using 1024-frame
   input buffers and an 80 ms post-release tail to retain final phonemes;
 - owner-only append journals for every active capture, with framed Float32
@@ -126,7 +128,8 @@ Verified by source inspection and dated receipts through 2026-07-30:
 - paste-first cursor insertion with rich clipboard restoration, copy-only mode,
   direct Unicode fallback, Secure Input detection, cursor acknowledgement,
   one safe retry after a proven no-op in editor surfaces with reliable cursor
-  reporting, and guarded undo of the last verified insertion;
+  reporting, guarded undo of the last verified insertion, and an opt-in Return
+  action that occurs exactly once only after confirmed paste delivery;
 - native recording overlay, branded menu bar control, Dock presence, and
   Settings window;
 - quiet local start/stop/cancel cues, an expressive eleven-bar waveform, a
@@ -141,8 +144,9 @@ Verified by source inspection and dated receipts through 2026-07-30:
   X click during the release-tail interval, because a one-shot explicit end
   intent replaces ambiguous UI-state inference;
 - four explicit writing profiles: Casual, Formatted, Professional, and AI
-  Communication; richer profiles use Apple's on-device system language model
-  and fall back to deterministic cleanup when unavailable;
+  Communication; Adaptive richer profiles use Apple's on-device system
+  language model and fall back to deterministic cleanup when unavailable,
+  while Maximum always uses immediate meaning-safe deterministic formatting;
 - deterministic spoken-repair handling for explicit phrases such as
   `wait, no`, `I meant`, `make that`, and `scratch that`, while preserving
   ordinary semantic uses of `no` and `I meant`;
@@ -154,9 +158,9 @@ Verified by source inspection and dated receipts through 2026-07-30:
   they occupy a complete punctuation-delimited clause between dictated
   content; unprefixed, leading, trailing, quoted, or structurally ambiguous
   uses remain literal;
-- Adaptive and Maximum processing modes; Maximum keeps the local formatter
-  prepared while both daily-runtime modes use authoritative full-buffer
-  transcription;
+- Adaptive and Maximum processing modes; Adaptive can prepare the richer local
+  formatter while Maximum uses immediate deterministic formatting, and both
+  daily-runtime modes use authoritative full-buffer transcription;
 - duplicate-process prevention, a 10-minute recording safety stop, active
   Whisper cancellation, capture-duration integrity checking, selective
   prompt-free tail recovery with a full-buffer fallback, and rewrite validation
@@ -355,10 +359,15 @@ modifier is released first. See
 `docs/verification/2026-07-28-settings-hotkeys.md` for the automated and live
 receipt plus the remaining three-target exit gate.
 
-Optimized Whisper Large v3 is the default for new installs and is active on
-Aaron's Mac. A repeatable `wordhand models benchmark` command measures model
-load, transcription latency, real-time factor, and exact output against the
-same local audio. Settings exposes model choice, with an explicit relaunch note.
+Optimized Whisper Large v3 remains the default for new installs. Settings also
+offers Parakeet Unified English 0.6B as an explicit fast option and preserves
+Whisper Base, Small, and Turbo fallbacks. A repeatable `wordhand models
+benchmark` command measures model load, transcription latency, real-time
+factor, and exact output against the same local audio. The separate
+`models backend-compare` gate binds identical audio to its checked-in fixture,
+alternates paired full-buffer order, and reports critical-meaning and stricter
+exact-accuracy results separately. Settings exposes model choice with an
+explicit relaunch note.
 The smaller 1024-frame microphone tap and 80 ms capture tail prioritize complete
 last words. On the local 11.00-second JFK fixture, Base transcribed in 0.742
 seconds and Large v3 in 1.025 seconds; both were correct, with Large producing
@@ -461,9 +470,10 @@ the same signed bundle. This preserves the stable application path and signing
 identity used by macOS privacy permissions.
 
 Explicit self-corrections are resolved deterministically before the selected
-writing style runs. Maximum processing mode prewarms the matching local
-Foundation Models session at startup and recording start, while bounding the
-prepared-session cache. The rolling Whisper engine remains available to the
+writing style runs. Adaptive processing may use and prewarm a bounded local
+Foundation Models session. Maximum skips generative rewriting and uses the
+immediate deterministic formatter so the selected writing profile cannot add
+seconds after a fast decode. The rolling Whisper engine remains available to the
 offline benchmark, where it decodes ordered audio every two seconds over a
 maximum 20-second working window and keeps two trailing segments revisable. It
 is disabled in the daily runtime because its composite cannot be trusted and
@@ -1162,7 +1172,9 @@ Paste insertion:
    cursor and proves it did not move; never retry from terminal cursor evidence;
 7. restore the previous pasteboard only if no third party changed it in the
    meantime;
-8. report a recoverable failure instead of silently discarding text.
+8. if the user enabled submit-after-dictation and the paste was explicitly
+   acknowledged, post exactly one Return key-down/key-up pair;
+9. report a recoverable failure instead of silently discarding text.
 
 A posted paste event is not sufficient evidence that the intended field
 received text. Wordhand captures the focused Accessibility element and selection
@@ -1180,7 +1192,9 @@ required.
 
 Direct Unicode insertion remains a fallback. Copy-only intentionally leaves the
 transcript on the clipboard. The last verified insertion keeps enough local
-state for an immediate undo/revert command.
+state for an immediate undo/revert command. Submit-after-dictation is off by
+default, unavailable outside Paste mode, and never fires for copied, Unicode,
+unverified, failed, or target-changed delivery.
 
 When secure input or an inaccessible target is detected, the app keeps the
 transcript in history, copies it if safe, and tells the user what happened.

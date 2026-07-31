@@ -305,7 +305,7 @@ struct Run: ParsableCommand {
         let dictionary = MainActor.assumeIsolated {
             DictionaryController(store: DictionaryStore(fileURL: dictionaryURL))
         }
-        let transcriber = WhisperKitTranscriber(
+        let transcriber = TranscriberFactory.make(
             model: chosenModel,
             vocabulary: dictionary.vocabulary
         )
@@ -428,6 +428,7 @@ struct Run: ParsableCommand {
                 inserter: inserter,
                 history: historyStore,
                 insertionMode: settings.insertionMode,
+                submitAfterDictation: settings.submitAfterDictation,
                 streamingEnabled: settings.performanceMode.enablesRollingTranscription,
                 language: chosenModel.languages.first,
                 audioSampleRate: AudioCapture.targetSampleRate,
@@ -476,7 +477,7 @@ struct Run: ParsableCommand {
                         )
                     }
                     try await recoverPendingCaptures()
-                    if settingsController.settings.performanceMode == .maximum {
+                    if settingsController.settings.performanceMode == .adaptive {
                         await processor.prepare(target: currentTranscriptTarget())
                     }
                     if let whisperKitID = chosenModel.whisperKitID {
@@ -485,6 +486,22 @@ struct Run: ParsableCommand {
                                 modelID: whisperKitID,
                                 downloadBase:
                                     WhisperModelStorage.defaultDownloadBase()
+                            )
+                        } catch {
+                            recordDiagnostic(OperationalDiagnosticEvent(
+                                severity: .warning,
+                                name: "model.quarantine_cleanup_failed",
+                                sessionID: appSessionID,
+                                attributes: [
+                                    "model_id": chosenModel.id,
+                                    "reason": String(describing: type(of: error)),
+                                ]
+                            ))
+                        }
+                    } else if chosenModel.engine == .parakeet {
+                        do {
+                            try ParakeetModelStorage.removeQuarantinedModels(
+                                modelID: chosenModel.id
                             )
                         } catch {
                             recordDiagnostic(OperationalDiagnosticEvent(
@@ -680,6 +697,9 @@ struct Run: ParsableCommand {
                 ))
                 monitor.updateBindings(updated.hotkeys)
                 coordinator.updateInsertionMode(updated.insertionMode)
+                coordinator.updateSubmitAfterDictation(
+                    updated.submitAfterDictation
+                )
                 coordinator.updateStreamingEnabled(
                     updated.performanceMode.enablesRollingTranscription
                 )
@@ -688,7 +708,7 @@ struct Run: ParsableCommand {
                     applicationRules: updated.applicationFormattingRules,
                     performanceMode: updated.performanceMode
                 )
-                if updated.performanceMode == .maximum {
+                if updated.performanceMode == .adaptive {
                     let target = currentTranscriptTarget()
                     Task {
                         await processor.prepare(target: target)
@@ -757,15 +777,25 @@ struct Run: ParsableCommand {
             }
             settingsController.onRetryModelPreparation = startModelWarmup
             settingsController.onRepairModelCache = {
-                guard let whisperKitID = chosenModel.whisperKitID else {
-                    settingsController.setModelPreparationPhase(.repairFailed)
-                    return
-                }
                 do {
-                    _ = try WhisperModelStorage.quarantineInvalidModel(
-                        modelID: whisperKitID,
-                        downloadBase: WhisperModelStorage.defaultDownloadBase()
-                    )
+                    switch chosenModel.engine {
+                    case .whisperKit:
+                        guard let whisperKitID = chosenModel.whisperKitID else {
+                            settingsController.setModelPreparationPhase(
+                                .repairFailed
+                            )
+                            return
+                        }
+                        _ = try WhisperModelStorage.quarantineInvalidModel(
+                            modelID: whisperKitID,
+                            downloadBase:
+                                WhisperModelStorage.defaultDownloadBase()
+                        )
+                    case .parakeet:
+                        _ = try ParakeetModelStorage.quarantineInvalidModel(
+                            modelID: chosenModel.id
+                        )
+                    }
                     recordDiagnostic(OperationalDiagnosticEvent(
                         severity: .info,
                         name: "model.cache_quarantined",
@@ -1323,6 +1353,7 @@ struct Models: ParsableCommand {
             List.self,
             Download.self,
             Benchmark.self,
+            BackendCompare.self,
             AuthorityCompare.self,
             TailWindowCompare.self,
         ]
@@ -1349,7 +1380,7 @@ struct Models: ParsableCommand {
                 print("unknown model: \(id)")
                 throw ExitCode(1)
             }
-            let t = WhisperKitTranscriber(model: m)
+            let t = TranscriberFactory.make(model: m)
 
             let sem = DispatchSemaphore(value: 0)
             var capturedError: Error?
@@ -1415,6 +1446,13 @@ struct Models: ParsableCommand {
                         + "--user-dictionary, or --vocabulary-terms."
                 )
             }
+            if selectedModel.engine == .parakeet, vocabularySelectionCount > 0 {
+                throw ValidationError(
+                    "\(selectedModel.id) does not support decode-time vocabulary "
+                        + "conditioning. Wordhand still applies explicit dictionary "
+                        + "replacements after transcription."
+                )
+            }
 
             let expandedPath = NSString(string: audioPath).expandingTildeInPath
             let audio = try AudioProcessor.loadAudioAsFloatArray(fromPath: expandedPath)
@@ -1453,7 +1491,7 @@ struct Models: ParsableCommand {
             } else {
                 vocabulary = DictionaryVocabularySource()
             }
-            let transcriber = WhisperKitTranscriber(
+            let transcriber = TranscriberFactory.make(
                 model: selectedModel,
                 vocabulary: vocabulary
             )
@@ -1470,14 +1508,22 @@ struct Models: ParsableCommand {
                     let transcript: String
                     var finalizationDuration: TimeInterval?
                     if streaming {
-                        await transcriber.beginStreaming(
+                        guard let streamingTranscriber =
+                            transcriber as? any StreamingTranscribing
+                        else {
+                            throw ValidationError(
+                                "\(selectedModel.id) does not expose the "
+                                    + "experimental rolling benchmark path."
+                            )
+                        }
+                        await streamingTranscriber.beginStreaming(
                             configuration: StreamingTranscriptionConfiguration()
                         )
                         let chunkSize = Int(AudioCapture.targetSampleRate / 2)
                         var chunkStart = 0
                         while chunkStart < audio.count {
                             let chunkEnd = min(chunkStart + chunkSize, audio.count)
-                            await transcriber.appendStreamingAudio(
+                            await streamingTranscriber.appendStreamingAudio(
                                 Array(audio[chunkStart..<chunkEnd])
                             )
                             chunkStart = chunkEnd
@@ -1488,7 +1534,7 @@ struct Models: ParsableCommand {
                                 try await Task.sleep(nanoseconds: 125_000_000)
                             }
                         }
-                        let streamingResult = try await transcriber.finishStreaming(
+                        let streamingResult = try await streamingTranscriber.finishStreaming(
                             finalAudio: audio
                         )
                         transcript = streamingResult.text

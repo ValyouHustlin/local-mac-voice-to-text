@@ -3,6 +3,15 @@ import Foundation
 public enum ModelRegistry {
     public static let shared: [TranscriptionModel] = [
         TranscriptionModel(
+            id: "parakeet-unified-en-0.6b",
+            displayName: "Parakeet Unified (Fast English)",
+            engine: .parakeet,
+            whisperKitID: nil,
+            sizeMB: 586,
+            languages: ["en"],
+            recommended: false
+        ),
+        TranscriptionModel(
             id: "whisper-base.en",
             displayName: "Whisper Base (English)",
             engine: .whisperKit,

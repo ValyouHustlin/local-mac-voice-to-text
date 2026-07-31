@@ -221,6 +221,7 @@ public struct AppSettings: Codable, Equatable, Sendable {
     public var schemaVersion: Int
     public var modelID: String
     public var insertionMode: InsertionMode
+    public var submitAfterDictation: Bool
     public var showOverlay: Bool
     public var soundEffectsEnabled: Bool
     public var formattingProfile: TranscriptFormattingProfile
@@ -237,6 +238,7 @@ public struct AppSettings: Codable, Equatable, Sendable {
         schemaVersion: Int = Self.currentSchemaVersion,
         modelID: String = "whisper-large-v3",
         insertionMode: InsertionMode = .paste,
+        submitAfterDictation: Bool = false,
         showOverlay: Bool = true,
         soundEffectsEnabled: Bool = true,
         formattingProfile: TranscriptFormattingProfile = .formatted,
@@ -254,6 +256,7 @@ public struct AppSettings: Codable, Equatable, Sendable {
         self.schemaVersion = schemaVersion
         self.modelID = modelID
         self.insertionMode = insertionMode
+        self.submitAfterDictation = submitAfterDictation
         self.showOverlay = showOverlay
         self.soundEffectsEnabled = soundEffectsEnabled
         self.formattingProfile = formattingProfile
@@ -271,6 +274,7 @@ public struct AppSettings: Codable, Equatable, Sendable {
         case schemaVersion
         case modelID
         case insertionMode
+        case submitAfterDictation
         case showOverlay
         case soundEffectsEnabled
         case formattingProfile
@@ -289,6 +293,10 @@ public struct AppSettings: Codable, Equatable, Sendable {
         schemaVersion = try container.decode(Int.self, forKey: .schemaVersion)
         modelID = try container.decode(String.self, forKey: .modelID)
         insertionMode = try container.decode(InsertionMode.self, forKey: .insertionMode)
+        submitAfterDictation = try container.decodeIfPresent(
+            Bool.self,
+            forKey: .submitAfterDictation
+        ) ?? false
         showOverlay = try container.decode(Bool.self, forKey: .showOverlay)
         soundEffectsEnabled = try container.decodeIfPresent(
             Bool.self,

@@ -7,6 +7,7 @@ import WordhandCore
 protocol TextEventPosting: Sendable {
     func postUnicode(_ text: String)
     func postPasteShortcut() throws
+    func postReturnKey() throws
 }
 
 struct TextInsertionCheckpoint: Equatable, Sendable {
@@ -56,6 +57,10 @@ struct CGTextEventPoster: TextEventPosting {
     func postPasteShortcut() throws {
         try TextInjector.postPasteShortcut()
     }
+
+    func postReturnKey() throws {
+        try TextInjector.postReturnKey()
+    }
 }
 
 /// Posts a string of text at the current cursor location by synthesizing
@@ -63,6 +68,22 @@ struct CGTextEventPoster: TextEventPosting {
 /// every text field on macOS; some Electron apps and secure password fields
 /// can drop characters (platform constraint).
 enum TextInjector {
+    static func postReturnKey() throws {
+        guard let down = CGEvent(
+            keyboardEventSource: nil,
+            virtualKey: 36,
+            keyDown: true
+        ), let up = CGEvent(
+            keyboardEventSource: nil,
+            virtualKey: 36,
+            keyDown: false
+        ) else {
+            throw TextInsertionError.returnEventCreationFailed
+        }
+        down.post(tap: .cgSessionEventTap)
+        up.post(tap: .cgSessionEventTap)
+    }
+
     /// Inject the given text at the current cursor location.
     /// Splits long strings into chunks because the underlying API has a
     /// per-event character limit (~20 chars).
@@ -96,7 +117,7 @@ enum TextInjector {
 }
 
 final class MacTextInserter:
-    TextInserting,
+    PostActionTextInserting,
     InsertionDiagnosticsProviding,
     @unchecked Sendable
 {
@@ -122,6 +143,14 @@ final class MacTextInserter:
     }
 
     func insert(_ text: String, mode: InsertionMode) async throws {
+        try await insert(text, mode: mode, postAction: .none)
+    }
+
+    func insert(
+        _ text: String,
+        mode: InsertionMode,
+        postAction: InsertionPostAction
+    ) async throws {
         guard !text.isEmpty else { return }
         clearUndo()
         setDiagnostics(InsertionRunDiagnostics(mode: mode))
@@ -148,7 +177,9 @@ final class MacTextInserter:
                     mode: mode,
                     verification: verification,
                     checkpointAvailable: checkpoint != nil,
-                    undoAvailable: canUndoLastInsertion
+                    undoAvailable: canUndoLastInsertion,
+                    postActionOutcome:
+                        postAction == .none ? .notRequested : .unsupportedMode
                 ))
             } catch {
                 setDiagnostics(InsertionRunDiagnostics(
@@ -179,7 +210,9 @@ final class MacTextInserter:
             }
             setDiagnostics(InsertionRunDiagnostics(
                 mode: mode,
-                verification: .copyOnly
+                verification: .copyOnly,
+                postActionOutcome:
+                    postAction == .none ? .notRequested : .unsupportedMode
             ))
 
         case .paste:
@@ -328,13 +361,57 @@ final class MacTextInserter:
                 ))
                 throw observationError
             }
+            let postActionOutcome = await performPostActionIfSafe(
+                postAction,
+                verification: verification,
+                checkpoint: checkpoint,
+                insertedUTF16Count: text.utf16.count
+            )
             setDiagnostics(InsertionRunDiagnostics(
                 mode: mode,
                 verification: verification,
                 retryCount: retryCount,
                 checkpointAvailable: checkpoint != nil,
-                undoAvailable: canUndoLastInsertion
+                undoAvailable: canUndoLastInsertion,
+                postActionOutcome: postActionOutcome
             ))
+        }
+    }
+
+    private func performPostActionIfSafe(
+        _ action: InsertionPostAction,
+        verification: InsertionVerificationOutcome,
+        checkpoint: TextInsertionCheckpoint?,
+        insertedUTF16Count: Int
+    ) async -> InsertionPostActionOutcome {
+        guard action != .none else { return .notRequested }
+        guard action == .returnKey else { return .unsupportedMode }
+        guard verification == .verified
+                || verification == .verifiedAfterRetry
+                || verification == .verifiedWithoutUndo
+              , let checkpoint
+        else {
+            return .skippedUnverified
+        }
+        return await MainActor.run {
+            // Clipboard restoration awaits the main actor after the first
+            // delivery check. Revalidate the exact AX element and expected
+            // selection without yielding before Return so a focus change
+            // cannot submit in another app or field.
+            switch observer.verify(
+                checkpoint,
+                insertedUTF16Count: insertedUTF16Count
+            ) {
+            case .verified, .verifiedWithoutUndo:
+                do {
+                    try eventPoster.postReturnKey()
+                    return .performed
+                } catch {
+                    return .failed
+                }
+            case .unchanged, .unavailable, .targetChanged:
+                return .skippedUnverified
+            }
         }
     }
 
@@ -404,6 +481,7 @@ enum TextInsertionError: LocalizedError {
     case secureInputEnabled
     case clipboardWriteFailed
     case pasteEventCreationFailed
+    case returnEventCreationFailed
     case deliveryNotConfirmed
     case insertionTargetChanged
     case nothingSafeToUndo
@@ -418,6 +496,8 @@ enum TextInsertionError: LocalizedError {
             return "Wordhand couldn’t place the transcript on the clipboard."
         case .pasteEventCreationFailed:
             return "Wordhand couldn’t create the Command-V event."
+        case .returnEventCreationFailed:
+            return "Wordhand inserted the transcript but couldn’t press Return."
         case .deliveryNotConfirmed:
             return "The target didn’t acknowledge the paste. The transcript is safe in History."
         case .insertionTargetChanged:

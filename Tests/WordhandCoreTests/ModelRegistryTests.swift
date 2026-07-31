@@ -25,4 +25,16 @@ struct ModelRegistryTests {
             }
         }
     }
+
+    @Test
+    func parakeetUnifiedIsSelectableWithoutPretendingToBeWhisper() throws {
+        let model = try #require(
+            ModelRegistry.find("parakeet-unified-en-0.6b")
+        )
+
+        #expect(model.engine == .parakeet)
+        #expect(model.whisperKitID == nil)
+        #expect(model.languages == ["en"])
+        #expect(!model.recommended)
+    }
 }

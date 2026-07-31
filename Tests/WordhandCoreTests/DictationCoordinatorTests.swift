@@ -232,6 +232,30 @@ struct DictationCoordinatorTests {
     }
 
     @Test
+    func submitSettingRoutesOneReturnPostActionWithoutRestarting() async {
+        let inserter = FakePostActionInserter()
+        let coordinator = DictationCoordinator(
+            capture: FakeCapture(samples: [0.1]),
+            transcriber: FakeTranscriber(result: "hello"),
+            processor: TranscriptProcessor(),
+            inserter: inserter,
+            insertionMode: .paste
+        )
+
+        coordinator.updateSubmitAfterDictation(true)
+        await coordinator.handle(.pressed)
+        await coordinator.handle(.released)
+
+        #expect(inserter.requests == [
+            FakePostActionInserter.Request(
+                text: "hello",
+                mode: .paste,
+                postAction: .returnKey
+            ),
+        ])
+    }
+
+    @Test
     func maximumPerformanceUsesStreamingResultInsteadOfBatchingAtRelease() async {
         let capture = FakeStreamingCapture(
             samples: [0.1, 0.2, 0.3],
@@ -2089,6 +2113,35 @@ private final class FakeDiagnosticInserter:
 
     func lastInsertionDiagnostics() async -> InsertionRunDiagnostics {
         diagnostics
+    }
+}
+
+private final class FakePostActionInserter:
+    PostActionTextInserting,
+    @unchecked Sendable
+{
+    struct Request: Equatable {
+        let text: String
+        let mode: InsertionMode
+        let postAction: InsertionPostAction
+    }
+
+    private(set) var requests: [Request] = []
+
+    func insert(_ text: String, mode: InsertionMode) async throws {
+        requests.append(Request(text: text, mode: mode, postAction: .none))
+    }
+
+    func insert(
+        _ text: String,
+        mode: InsertionMode,
+        postAction: InsertionPostAction
+    ) async throws {
+        requests.append(Request(
+            text: text,
+            mode: mode,
+            postAction: postAction
+        ))
     }
 }
 

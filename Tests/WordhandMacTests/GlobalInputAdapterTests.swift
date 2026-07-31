@@ -438,6 +438,151 @@ struct GlobalInputAdapterTests {
     }
 
     @Test
+    func verifiedPasteSubmitsExactlyOnceAfterInsertion() async throws {
+        let poster = FakeTextEventPoster()
+        let checkpoint = TextInsertionCheckpoint(
+            id: UUID(),
+            selection: NSRange(location: 0, length: 0)
+        )
+        let token = TextInsertionUndoToken(
+            checkpointID: checkpoint.id,
+            insertedRange: NSRange(location: 0, length: 5),
+            expectedSelection: NSRange(location: 5, length: 0)
+        )
+        let inserter = MacTextInserter(
+            eventPoster: poster,
+            observer: FakeTextInsertionObserver(
+                checkpoint: checkpoint,
+                results: [.verified(token), .verified(token)]
+            ),
+            secureInputEnabled: { false }
+        )
+
+        try await inserter.insert(
+            "hello",
+            mode: .paste,
+            postAction: .returnKey
+        )
+
+        #expect(poster.events == [.paste, .returnKey])
+        let diagnostics = await inserter.lastInsertionDiagnostics()
+        #expect(diagnostics.postActionOutcome == .performed)
+    }
+
+    @Test
+    func unverifiedPasteNeverSubmits() async throws {
+        let poster = FakeTextEventPoster()
+        let inserter = MacTextInserter(
+            eventPoster: poster,
+            observer: FakeTextInsertionObserver(results: [.unavailable]),
+            secureInputEnabled: { false }
+        )
+
+        try await inserter.insert(
+            "hello",
+            mode: .paste,
+            postAction: .returnKey
+        )
+
+        #expect(poster.events == [.paste])
+        let diagnostics = await inserter.lastInsertionDiagnostics()
+        #expect(diagnostics.postActionOutcome == .skippedUnverified)
+    }
+
+    @Test
+    func verifiedRetrySubmitsOnlyAfterTheSuccessfulRetry() async throws {
+        let poster = FakeTextEventPoster()
+        let checkpoint = TextInsertionCheckpoint(
+            id: UUID(),
+            selection: NSRange(location: 0, length: 0)
+        )
+        let token = TextInsertionUndoToken(
+            checkpointID: checkpoint.id,
+            insertedRange: NSRange(location: 0, length: 5),
+            expectedSelection: NSRange(location: 5, length: 0)
+        )
+        let inserter = MacTextInserter(
+            eventPoster: poster,
+            observer: FakeTextInsertionObserver(
+                checkpoint: checkpoint,
+                results: [.unchanged, .verified(token), .verified(token)]
+            ),
+            secureInputEnabled: { false }
+        )
+
+        try await inserter.insert(
+            "hello",
+            mode: .paste,
+            postAction: .returnKey
+        )
+
+        #expect(poster.events == [.paste, .paste, .returnKey])
+        let diagnostics = await inserter.lastInsertionDiagnostics()
+        #expect(diagnostics.postActionOutcome == .performed)
+    }
+
+    @Test
+    func focusChangeAfterPasteVerificationSuppressesReturn() async throws {
+        let poster = FakeTextEventPoster()
+        let checkpoint = TextInsertionCheckpoint(
+            id: UUID(),
+            selection: NSRange(location: 0, length: 0)
+        )
+        let token = TextInsertionUndoToken(
+            checkpointID: checkpoint.id,
+            insertedRange: NSRange(location: 0, length: 5),
+            expectedSelection: NSRange(location: 5, length: 0)
+        )
+        let inserter = MacTextInserter(
+            eventPoster: poster,
+            observer: FakeTextInsertionObserver(
+                checkpoint: checkpoint,
+                results: [.verified(token), .targetChanged]
+            ),
+            secureInputEnabled: { false }
+        )
+
+        try await inserter.insert(
+            "hello",
+            mode: .paste,
+            postAction: .returnKey
+        )
+
+        #expect(poster.events == [.paste])
+        let diagnostics = await inserter.lastInsertionDiagnostics()
+        #expect(diagnostics.postActionOutcome == .skippedUnverified)
+    }
+
+    @Test
+    func copyAndUnicodeNeverSubmit() async throws {
+        let pastePoster = FakeTextEventPoster()
+        let pasteInserter = MacTextInserter(
+            eventPoster: pastePoster,
+            observer: FakeTextInsertionObserver(results: [.unavailable]),
+            secureInputEnabled: { false }
+        )
+        try await pasteInserter.insert(
+            "hello",
+            mode: .copyOnly,
+            postAction: .returnKey
+        )
+        #expect(pastePoster.events.isEmpty)
+
+        let unicodePoster = FakeTextEventPoster()
+        let unicodeInserter = MacTextInserter(
+            eventPoster: unicodePoster,
+            observer: FakeTextInsertionObserver(results: [.unavailable]),
+            secureInputEnabled: { false }
+        )
+        try await unicodeInserter.insert(
+            "hello",
+            mode: .unicode,
+            postAction: .returnKey
+        )
+        #expect(unicodePoster.events == [.unicode])
+    }
+
+    @Test
     func terminalPasteDoesNotDuplicateWhenAccessibilityCursorIsUnchanged() async throws {
         let poster = FakeTextEventPoster()
         let observer = FakeTextInsertionObserver(
@@ -1656,6 +1801,30 @@ struct GlobalInputAdapterTests {
     }
 
     @Test
+    func maximumPerformanceUsesImmediateDeterministicFormatting() async {
+        let rewriter = RecordingLocalTranscriptRewriter(
+            responses: ["This response must not be used."]
+        )
+        let processor = AppAwareTranscriptProcessor(
+            dictionaryProcessor: MutableTranscriptProcessor(),
+            profile: .aiCommunication,
+            performanceMode: .maximum,
+            rewriter: rewriter
+        )
+
+        let output = await processor.process(
+            "Valyou needs fourteen point five and do not deploy Friday",
+            target: .unknown
+        )
+
+        #expect(output.contains("Valyou"))
+        #expect(output.contains("fourteen point five"))
+        #expect(output.lowercased().contains("do not deploy"))
+        #expect(await rewriter.recordedCalls().isEmpty)
+        #expect(await rewriter.recordedPrewarms().isEmpty)
+    }
+
+    @Test
     func applicationStyleRuleOverridesOnlyItsExactBundleIDAndUpdatesLive() async {
         let rewriter = RecordingLocalTranscriptRewriter(
             responses: [
@@ -2090,7 +2259,7 @@ struct GlobalInputAdapterTests {
     }
 
     @Test
-    func maximumPerformancePrewarmsTheSelectedStyle() async {
+    func adaptivePerformancePrewarmsTheSelectedStyle() async {
         let rewriter = RecordingLocalTranscriptRewriter(
             responses: ["AI-ready Valyou request with 3 requirements."]
         )
@@ -2104,7 +2273,7 @@ struct GlobalInputAdapterTests {
                     profile: .aiCommunication
                 ),
             ],
-            performanceMode: .maximum,
+            performanceMode: .adaptive,
             rewriter: rewriter
         )
         let target = TranscriptTarget(
@@ -2143,7 +2312,7 @@ struct GlobalInputAdapterTests {
         let processor = AppAwareTranscriptProcessor(
             dictionaryProcessor: MutableTranscriptProcessor(),
             profile: .aiCommunication,
-            performanceMode: .maximum,
+            performanceMode: .adaptive,
             rewriter: rewriter
         )
         let context = processor.context(for: TranscriptTarget(
@@ -2324,19 +2493,34 @@ private final class FakeHotkeyTapInstaller: HotkeyTapInstalling {
 }
 
 private final class FakeTextEventPoster: TextEventPosting, @unchecked Sendable {
+    enum Event: Equatable {
+        case unicode
+        case paste
+        case returnKey
+    }
+
     private let lock = NSLock()
     private(set) var unicodeTexts: [String] = []
     private(set) var pasteShortcutCount = 0
+    private(set) var events: [Event] = []
 
     func postUnicode(_ text: String) {
         lock.withLock {
             unicodeTexts.append(text)
+            events.append(.unicode)
         }
     }
 
     func postPasteShortcut() throws {
         lock.withLock {
             pasteShortcutCount += 1
+            events.append(.paste)
+        }
+    }
+
+    func postReturnKey() throws {
+        lock.withLock {
+            events.append(.returnKey)
         }
     }
 }

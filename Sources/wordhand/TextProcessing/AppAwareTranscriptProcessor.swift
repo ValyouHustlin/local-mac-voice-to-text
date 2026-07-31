@@ -83,7 +83,7 @@ final class AppAwareTranscriptProcessor:
         let fallback = resolvedConfiguration(for: context.target)
         let profile = context.formattingProfile ?? fallback.0.profile
         let performanceMode = context.performanceMode ?? fallback.1
-        guard performanceMode == .maximum else { return }
+        guard performanceMode == .adaptive else { return }
         guard let intent = TranscriptRewriteIntent(profile: profile) else {
             return
         }
@@ -129,32 +129,40 @@ final class AppAwareTranscriptProcessor:
         let layout = SpokenLayoutCommandEngine.protect(replacement.text)
         let selectedProfile = context.formattingProfile
             ?? resolvedProfile(for: context.target)
+        let selectedPerformanceMode = context.performanceMode
+            ?? resolvedConfiguration(for: context.target).1
 
         let formatted: String
         switch selectedProfile {
         case .casual:
             formatted = TranscriptProcessor.polish(layout.protectedText)
         case .formatted:
-            formatted = await rewrite(
-                layout.protectedText,
-                intent: .formatted,
-                target: context.target,
-                layout: layout
-            )
+            formatted = selectedPerformanceMode == .maximum
+                ? fallback(layout.protectedText, for: .formatted)
+                : await rewrite(
+                    layout.protectedText,
+                    intent: .formatted,
+                    target: context.target,
+                    layout: layout
+                )
         case .professional:
-            formatted = await rewrite(
-                layout.protectedText,
-                intent: .professional,
-                target: context.target,
-                layout: layout
-            )
+            formatted = selectedPerformanceMode == .maximum
+                ? fallback(layout.protectedText, for: .professional)
+                : await rewrite(
+                    layout.protectedText,
+                    intent: .professional,
+                    target: context.target,
+                    layout: layout
+                )
         case .aiCommunication:
-            formatted = await rewrite(
-                layout.protectedText,
-                intent: .aiCommunication,
-                target: context.target,
-                layout: layout
-            )
+            formatted = selectedPerformanceMode == .maximum
+                ? fallback(layout.protectedText, for: .aiCommunication)
+                : await rewrite(
+                    layout.protectedText,
+                    intent: .aiCommunication,
+                    target: context.target,
+                    layout: layout
+                )
         }
         return TranscriptProcessingResult(
             text: layout.render(formatted),

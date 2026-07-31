@@ -307,6 +307,10 @@ final class SettingsController: NSObject, ObservableObject, NSWindowDelegate {
         update { $0.insertionMode = insertionMode }
     }
 
+    func setSubmitAfterDictation(_ enabled: Bool) {
+        update { $0.submitAfterDictation = enabled }
+    }
+
     func setQualityAudioRetentionEnabled(_ enabled: Bool) {
         update { $0.qualityAudioRetentionEnabled = enabled }
     }
@@ -1228,6 +1232,22 @@ private struct SettingsView: View {
                     .labelsHidden()
                     .frame(width: 205)
                 }
+                Divider()
+                Toggle(
+                    "Press Return after confirmed insertion",
+                    isOn: Binding(
+                        get: { controller.settings.submitAfterDictation },
+                        set: { controller.setSubmitAfterDictation($0) }
+                    )
+                )
+                .disabled(controller.settings.insertionMode != .paste)
+                Text(
+                    "Optional. Return may send a message, submit a form, "
+                        + "or run a command. Wordhand skips it unless paste "
+                        + "delivery is confirmed."
+                )
+                .font(.caption)
+                .foregroundStyle(.secondary)
             }
         }
     }
@@ -1250,7 +1270,10 @@ private struct SettingsView: View {
                     VStack(alignment: .leading, spacing: 4) {
                         Text("Transcription model")
                             .font(.headline)
-                        Text("Large v3 is the accuracy-first choice for this Mac.")
+                        Text(
+                            "Parakeet is fastest for English. Whisper Large v3 "
+                                + "prioritizes accuracy and vocabulary hints."
+                        )
                             .font(.subheadline)
                             .foregroundStyle(.secondary)
                     }
@@ -1339,9 +1362,9 @@ private struct SettingsView: View {
     private var performanceDescription: String {
         switch controller.settings.performanceMode {
         case .adaptive:
-            return "Balances responsiveness and energy use. Models warm only when needed."
+            return "Uses the local writing model for richer restructuring."
         case .maximum:
-            return "Keeps local processing ready and prewarms formatting while you speak."
+            return "Inserts faster with immediate, meaning-safe cleanup."
         }
     }
 

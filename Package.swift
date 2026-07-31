@@ -42,6 +42,10 @@ let package = Package(
             from: "1.0.0"
         ),
         .package(
+            url: "https://github.com/FluidInference/FluidAudio.git",
+            exact: "0.15.5"
+        ),
+        .package(
             url: "https://github.com/swiftlang/swift-testing.git",
             revision: "swift-6.3.1-RELEASE"
         ),
@@ -61,6 +65,7 @@ let package = Package(
             dependencies: [
                 "WordhandCore",
                 .product(name: "ArgumentParser", package: "swift-argument-parser"),
+                .product(name: "FluidAudio", package: "FluidAudio"),
                 .product(name: "WhisperKit", package: "argmax-oss-swift"),
             ]
         ),

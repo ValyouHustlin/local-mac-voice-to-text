@@ -107,6 +107,12 @@ fi
 /usr/bin/ditto \
     "${REPO_DIR}/Sources/WordhandCore/Resources/default-vocabulary.json" \
     "${APP_PATH}/Contents/Resources/default-vocabulary.json"
+/usr/bin/ditto \
+    "${REPO_DIR}/.build/checkouts/FluidAudio/LICENSE" \
+    "${APP_PATH}/Contents/Resources/FluidAudio-LICENSE.txt"
+/usr/bin/ditto \
+    "${REPO_DIR}/.build/checkouts/FluidAudio/ThirdPartyLicenses" \
+    "${APP_PATH}/Contents/Resources/FluidAudio-ThirdPartyLicenses"
 
 ICON_WORK="$(/usr/bin/mktemp -d /tmp/wordhand-app-icon.XXXXXX)"
 trap '/bin/rm -rf "${ICON_WORK}"' EXIT
