@@ -5,6 +5,80 @@ import Testing
 @Suite
 struct CrashSafeCaptureJournalTests {
     @Test
+    func orderedWriterAcknowledgesOnlyPersistedContiguousFrames() async throws {
+        let fixture = TemporaryCaptureJournal()
+        defer { fixture.remove() }
+        let gate = BlockingAppendGate(blockedSequence: 1)
+        let writer = CrashSafeCaptureWriter(
+            journal: fixture.journal,
+            beforeAppend: { sequence in
+                gate.pauseIfNeeded(sequence)
+            }
+        )
+        let id = UUID()
+        try writer.beginCapture(
+            id: id,
+            createdAt: Date(timeIntervalSince1970: 1_700_000_000),
+            sampleRate: 16_000
+        )
+
+        let firstSequence = try #require(writer.enqueue([
+            Float(bitPattern: 0x8000_0000), 0.25,
+        ]))
+        let secondSequence = try #require(writer.enqueue([
+            0.5, Float(bitPattern: 0x3f7f_ffff),
+        ]))
+        #expect(firstSequence == 0)
+        #expect(secondSequence == 1)
+        #expect(writer.waitUntilAcknowledged(firstSequence, timeout: 1))
+        #expect(gate.waitUntilBlocked(timeout: 1))
+        #expect(writer.lastAcknowledgedSequence == firstSequence)
+
+        gate.release()
+        try await writer.seal()
+
+        #expect(writer.lastAcknowledgedSequence == secondSequence)
+        let reopened = CrashSafeCaptureJournal(directoryURL: fixture.directory)
+        let recovered = try #require(reopened.recoverableCaptures().only)
+        #expect(recovered.samples.map(\.bitPattern) == [
+            0x8000_0000, Float(0.25).bitPattern,
+            Float(0.5).bitPattern, 0x3f7f_ffff,
+        ])
+    }
+
+    @Test
+    func writerSealReportsALatchedAppendFailureAndNeverAcknowledgesPastIt() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("wordhand-writer-failure-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        var writeCount = 0
+        let journal = CrashSafeCaptureJournal(directoryURL: directory) {
+            handle,
+            data in
+            writeCount += 1
+            if writeCount == 2 {
+                throw FixtureWriteError.failed
+            }
+            try handle.write(contentsOf: data)
+        }
+        let writer = CrashSafeCaptureWriter(journal: journal)
+        let id = UUID()
+        try writer.beginCapture(id: id, createdAt: Date(), sampleRate: 16_000)
+        let firstSequence = try #require(writer.enqueue([0.1]))
+        _ = try #require(writer.enqueue([0.2]))
+        _ = try #require(writer.enqueue([0.3]))
+
+        await #expect(throws: FixtureWriteError.failed) {
+            try await writer.seal()
+        }
+        #expect(writer.lastAcknowledgedSequence == firstSequence)
+        #expect(try journal.recoverableCaptures().isEmpty)
+        #expect(FileManager.default.fileExists(
+            atPath: journal.unreadableAudioURL(for: id).path
+        ))
+    }
+
+    @Test
     func recoversEveryAcknowledgedSampleBitForBitAfterReopen() throws {
         let fixture = TemporaryCaptureJournal()
         defer { fixture.remove() }
@@ -315,4 +389,43 @@ private extension Collection {
 
 private enum FixtureWriteError: Error {
     case failed
+}
+
+private final class BlockingAppendGate: @unchecked Sendable {
+    private let condition = NSCondition()
+    private let blockedSequence: UInt64
+    private var isBlocked = false
+    private var isReleased = false
+
+    init(blockedSequence: UInt64) {
+        self.blockedSequence = blockedSequence
+    }
+
+    func pauseIfNeeded(_ sequence: UInt64) {
+        guard sequence == blockedSequence else { return }
+        condition.lock()
+        isBlocked = true
+        condition.broadcast()
+        while !isReleased {
+            condition.wait()
+        }
+        condition.unlock()
+    }
+
+    func waitUntilBlocked(timeout: TimeInterval) -> Bool {
+        condition.lock()
+        defer { condition.unlock() }
+        let deadline = Date().addingTimeInterval(timeout)
+        while !isBlocked {
+            guard condition.wait(until: deadline) else { return false }
+        }
+        return true
+    }
+
+    func release() {
+        condition.lock()
+        isReleased = true
+        condition.broadcast()
+        condition.unlock()
+    }
 }

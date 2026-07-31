@@ -484,6 +484,142 @@ struct DictationCoordinatorTests {
     }
 
     @Test
+    func lifecycleInterruptionWaitsForCaptureSealWithoutTranscribingOrInserting() async {
+        let capture = SuspendedCapture()
+        let transcriber = FakeTranscriber(result: "must remain recoverable")
+        let inserter = FakeInserter()
+        let coordinator = DictationCoordinator(
+            capture: capture,
+            transcriber: transcriber,
+            processor: TranscriptProcessor(),
+            inserter: inserter
+        )
+
+        await coordinator.handle(.pressed)
+        let result = LockedBoolean()
+        let interruption = Task {
+            let preserved = await coordinator.preserveCurrentCaptureForRecovery(
+                reason: .applicationQuit
+            )
+            result.set(preserved)
+        }
+        await capture.waitUntilStopStarted()
+
+        #expect(coordinator.state == .transcribing)
+        #expect(transcriber.callCount == 0)
+        capture.finishStop()
+
+        await interruption.value
+        #expect(result.value)
+        #expect(coordinator.state == .idle)
+        #expect(transcriber.callCount == 0)
+        #expect(inserter.insertions.isEmpty)
+    }
+
+    @Test
+    func lifecycleInterruptionDuringReleaseTailWaitsForTheExistingSeal() async {
+        let capture = SuspendedCapture()
+        let transcriber = FakeTranscriber(result: "must remain recoverable")
+        let inserter = FakeInserter()
+        let coordinator = DictationCoordinator(
+            capture: capture,
+            transcriber: transcriber,
+            processor: TranscriptProcessor(),
+            inserter: inserter
+        )
+
+        await coordinator.handle(.pressed)
+        let release = Task { await coordinator.handle(.released) }
+        await capture.waitUntilStopStarted()
+        let result = LockedBoolean()
+        let interruption = Task {
+            let preserved = await coordinator.preserveCurrentCaptureForRecovery(
+                reason: .systemSleep
+            )
+            result.set(preserved)
+        }
+        await Task.yield()
+        capture.finishStop()
+
+        await interruption.value
+        #expect(result.value)
+        await release.value
+        #expect(coordinator.state == .idle)
+        #expect(transcriber.callCount == 0)
+        #expect(inserter.insertions.isEmpty)
+    }
+
+    @Test
+    func lifecycleInterruptionRetainsThePreparedRecoveryJournal() async {
+        let capture = FakeRecoveryCapture(samples: [0.1, 0.2])
+        let coordinator = DictationCoordinator(
+            capture: capture,
+            transcriber: FakeTranscriber(result: "must remain recoverable"),
+            processor: TranscriptProcessor(),
+            inserter: FakeInserter()
+        )
+
+        await coordinator.handle(.pressed)
+        let preserved = await coordinator.preserveCurrentCaptureForRecovery(
+            reason: .applicationQuit
+        )
+
+        #expect(preserved)
+        #expect(capture.preparedIDs.count == 1)
+        #expect(capture.committedIDs.isEmpty)
+        #expect(capture.discardedIDs.isEmpty)
+    }
+
+    @Test
+    func lifecycleInterruptionWaitsForOldReleaseBeforeStartingRecovery() async throws {
+        let capture = FakeRecoveryCapture(samples: [0.1, 0.2])
+        let transcriber = SuspendedFirstTranscriber(recoveredResult: "recovered")
+        let history = FakeHistory()
+        let inserter = FakeInserter()
+        let coordinator = DictationCoordinator(
+            capture: capture,
+            transcriber: transcriber,
+            processor: TranscriptProcessor(),
+            inserter: inserter,
+            history: history
+        )
+
+        await coordinator.handle(.pressed)
+        let release = Task { await coordinator.handle(.released) }
+        await transcriber.waitUntilFirstStarted()
+        let interruptionFinished = LockedBoolean()
+        let interruption = Task {
+            let preserved = await coordinator.preserveCurrentCaptureForRecovery(
+                reason: .systemSleep
+            )
+            interruptionFinished.set(preserved)
+        }
+        while transcriber.cancelCount == 0 {
+            await Task.yield()
+        }
+
+        #expect(!interruptionFinished.value)
+        transcriber.finishFirst(with: "abandoned")
+        await release.value
+        await interruption.value
+        #expect(interruptionFinished.value)
+
+        let originalID = try #require(capture.preparedIDs.only)
+        let recovered = await coordinator.recover(RecoveredAudioCapture(
+            id: originalID,
+            createdAt: Date(timeIntervalSince1970: 1_700_000_000),
+            sampleRate: 16_000,
+            samples: [0.1, 0.2]
+        ))
+
+        #expect(recovered)
+        #expect(transcriber.callCount == 2)
+        #expect(history.saved.map(\.text) == ["recovered"])
+        #expect(inserter.insertions.isEmpty)
+        #expect(coordinator.state == .idle)
+    }
+
+    @Test
     func recordingLimitStopsAndProcessesInsteadOfGrowingForever() async {
         let sleeper = SuspendedSleep()
         let capture = FakeCapture(samples: [0.1, 0.2])
@@ -516,6 +652,35 @@ struct DictationCoordinatorTests {
         #expect(capture.stopCount == 1)
         #expect(inserter.insertions == ["limited recording"])
         #expect(!transcriber.wasCancelledDuringTranscription)
+    }
+
+    @Test
+    func cancellationJoinsTheRecordingLimitTaskBeforeStoppingCapture() async {
+        let sleeper = SuspendedSleep()
+        let capture = SuspendedCapture()
+        let coordinator = DictationCoordinator(
+            capture: capture,
+            transcriber: FakeTranscriber(result: "unused"),
+            processor: TranscriptProcessor(),
+            inserter: FakeInserter(),
+            maximumRecordingNanoseconds: 1,
+            sleep: { nanoseconds in
+                await sleeper.sleep(nanoseconds: nanoseconds)
+            }
+        )
+
+        await coordinator.handle(.pressed)
+        await sleeper.waitUntilStarted()
+        let cancellation = Task { await coordinator.cancelCurrent() }
+        await Task.yield()
+
+        #expect(!capture.hasStopStarted)
+        sleeper.finish()
+        await capture.waitUntilStopStarted()
+        capture.finishStop()
+        await cancellation.value
+
+        #expect(coordinator.state == .idle)
     }
 
     @Test
@@ -1064,6 +1229,10 @@ private final class SuspendedCapture: AudioCapturing, @unchecked Sendable {
     private var stopContinuation: CheckedContinuation<[Float], Never>?
     var onInputStopped: (@MainActor () -> Void)?
 
+    var hasStopStarted: Bool {
+        lock.withLock { stopStarted }
+    }
+
     func start() throws {
         lock.withLock {
             startCount += 1
@@ -1172,6 +1341,85 @@ private final class SuspendedTranscriber: Transcribing, @unchecked Sendable {
     func cancel() {
         lock.withLock {
             cancelCount += 1
+        }
+    }
+}
+
+private final class SuspendedFirstTranscriber:
+    Transcribing,
+    @unchecked Sendable
+{
+    let modelID = "suspended-first"
+    private let lock = NSLock()
+    private let recoveredResult: String
+    private var startedContinuation: CheckedContinuation<Void, Never>?
+    private var firstResultContinuation: CheckedContinuation<String, Never>?
+    private var firstDidStart = false
+    private var storedCallCount = 0
+    private var storedCancelCount = 0
+
+    var callCount: Int {
+        lock.withLock { storedCallCount }
+    }
+
+    var cancelCount: Int {
+        lock.withLock { storedCancelCount }
+    }
+
+    init(recoveredResult: String) {
+        self.recoveredResult = recoveredResult
+    }
+
+    func warmUp() async throws {}
+
+    func transcribe(_ audio: [Float]) async throws -> String {
+        let call = lock.withLock {
+            storedCallCount += 1
+            return storedCallCount
+        }
+        guard call == 1 else { return recoveredResult }
+        let started = lock.withLock {
+            firstDidStart = true
+            let continuation = startedContinuation
+            startedContinuation = nil
+            return continuation
+        }
+        started?.resume()
+        return await withCheckedContinuation { continuation in
+            lock.withLock {
+                firstResultContinuation = continuation
+            }
+        }
+    }
+
+    func waitUntilFirstStarted() async {
+        if lock.withLock({ firstDidStart }) { return }
+        await withCheckedContinuation { continuation in
+            let resumeNow = lock.withLock {
+                if firstDidStart {
+                    return true
+                }
+                startedContinuation = continuation
+                return false
+            }
+            if resumeNow {
+                continuation.resume()
+            }
+        }
+    }
+
+    func finishFirst(with result: String) {
+        let continuation = lock.withLock {
+            let continuation = firstResultContinuation
+            firstResultContinuation = nil
+            return continuation
+        }
+        continuation?.resume(returning: result)
+    }
+
+    func cancel() {
+        lock.withLock {
+            storedCancelCount += 1
         }
     }
 }
@@ -1285,6 +1533,21 @@ private final class ContextRecordingProcessor:
 private func makeClock(_ values: [TimeInterval]) -> () -> TimeInterval {
     var iterator = values.makeIterator()
     return { iterator.next() ?? values.last ?? 0 }
+}
+
+private final class LockedBoolean: @unchecked Sendable {
+    private let lock = NSLock()
+    private var stored = false
+
+    var value: Bool {
+        lock.withLock { stored }
+    }
+
+    func set(_ value: Bool) {
+        lock.withLock {
+            stored = value
+        }
+    }
 }
 
 private extension Collection {

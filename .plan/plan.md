@@ -18,10 +18,12 @@ contract and target boundaries.
 
 ## Desktop mastery sequence
 
-Status: crash-safe rolling capture is implemented and isolated-verification
-complete. An attended installed-app dictation receipt remains before this source
-checkpoint can be called daily-runtime verified. The next slice now has a
-checked-in retained-audio authority oracle; no live partial path is enabled.
+Status: crash-safe rolling capture is implemented, its real queued writer is
+covered by the process-death oracle, and standard Quit plus system-sleep
+interruptions now seal in-flight audio before recovery. An attended installed-
+app dictation/Quit/sleep receipt remains before this source checkpoint can be
+called daily-runtime verified. The next slice has a checked-in retained-audio
+authority oracle; no live partial path is enabled.
 
 Measured daily-use impact keeps the remaining English-first macOS work in this
 order:
@@ -54,9 +56,16 @@ is recovered bit for bit. The normal stop path still transcribes the complete
 in-memory buffer. A restart sends orphaned audio through that same authoritative
 full-buffer transcriber, saves it to History as not inserted, and deletes the
 journal only after the History commit succeeds. Explicit cancellation deletes
-its journal immediately.
+its journal immediately. The background writer now owns explicit contiguous
+frame acknowledgements and is the same implementation exercised by the
+`SIGKILL` fixture. Standard Quit defers termination until the capture queue is
+drained and synchronized. A system-sleep notification seals the same queue and
+recovers it without insertion once local transcription can continue. A shared
+one-shot capture-stop task prevents Quit or sleep from stopping the audio engine
+twice during the 80 ms release tail.
 
-Receipt: `docs/verification/2026-07-30-crash-safe-capture.md`.
+Receipts: `docs/verification/2026-07-30-crash-safe-capture.md` and
+`docs/verification/2026-07-30-crash-safe-capture-lifecycle.md`.
 
 The safe work-during-speech entry gate is now executable with `models
 authority-compare`. It verifies the retained audio identity, hashes the fixture

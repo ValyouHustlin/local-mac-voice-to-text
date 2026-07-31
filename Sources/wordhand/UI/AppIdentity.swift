@@ -86,13 +86,18 @@ enum AppIdentity {
 final class WordhandAppDelegate: NSObject, NSApplicationDelegate {
     private let onOpenPrimaryWindow: () -> Void
     private let onTerminate: () -> Void
+    private let terminationPreparation: DeferredTerminationPreparation?
 
     init(
         onOpenPrimaryWindow: @escaping () -> Void,
+        onPrepareToTerminate: (@MainActor () async -> Void)? = nil,
         onTerminate: @escaping () -> Void = {}
     ) {
         self.onOpenPrimaryWindow = onOpenPrimaryWindow
         self.onTerminate = onTerminate
+        self.terminationPreparation = onPrepareToTerminate.map {
+            DeferredTerminationPreparation(prepare: $0)
+        }
     }
 
     func applicationShouldHandleReopen(
@@ -105,6 +110,16 @@ final class WordhandAppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
         false
+    }
+
+    func applicationShouldTerminate(
+        _ sender: NSApplication
+    ) -> NSApplication.TerminateReply {
+        guard let terminationPreparation else { return .terminateNow }
+        terminationPreparation.begin {
+            sender.reply(toApplicationShouldTerminate: true)
+        }
+        return .terminateLater
     }
 
     func applicationWillTerminate(_ notification: Notification) {

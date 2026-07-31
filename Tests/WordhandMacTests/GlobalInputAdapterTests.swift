@@ -8,6 +8,76 @@ import WordhandCore
 struct GlobalInputAdapterTests {
     @Test
     @MainActor
+    func deferredTerminationRepliesOnlyAfterRecoverySealCompletes() async {
+        let gate = SuspendedRuntimeInterruption()
+        var completionCount = 0
+        let preparation = DeferredTerminationPreparation {
+            _ = await gate.preserve(.applicationQuit)
+        }
+
+        preparation.begin {
+            completionCount += 1
+        }
+        await gate.waitUntilPreserveStarted()
+        #expect(completionCount == 0)
+
+        await gate.finishPreserve(true)
+        while completionCount == 0 {
+            await Task.yield()
+        }
+        #expect(completionCount == 1)
+
+        preparation.begin {
+            completionCount += 1
+        }
+        #expect(completionCount == 1)
+    }
+
+    @Test
+    @MainActor
+    func systemSleepRecoveryRunsOnlyAfterCaptureIsPreserved() async {
+        let gate = SuspendedRuntimeInterruption()
+        let controller = RuntimeInterruptionController(
+            preserve: { reason in
+                await gate.preserve(reason)
+            },
+            recoverPending: {
+                await gate.recoverPending()
+            }
+        )
+
+        controller.systemWillSleep()
+        controller.systemWillSleep()
+        await gate.waitUntilPreserveStarted()
+        #expect(await gate.recoveryCount == 0)
+
+        await gate.finishPreserve(true)
+        await gate.waitUntilRecovered()
+        #expect(await gate.preserveReasons == [.systemSleep])
+        #expect(await gate.recoveryCount == 1)
+    }
+
+    @Test
+    @MainActor
+    func workspaceSleepObserverRoutesTheConfiguredNotificationOnce() {
+        let center = NotificationCenter()
+        let name = Notification.Name("wordhand.test.will-sleep")
+        var callCount = 0
+        let observer = SystemSleepObserver(
+            notificationCenter: center,
+            name: name
+        ) {
+            callCount += 1
+        }
+
+        center.post(name: name, object: nil)
+
+        #expect(callCount == 1)
+        withExtendedLifetime(observer) {}
+    }
+
+    @Test
+    @MainActor
     func audioCuesArePreparedOnceBeforeTheirFirstPlayback() throws {
         let factory = FakeAudioCueSoundFactory()
         let player = AudioCuePlayer(
@@ -1213,5 +1283,49 @@ private struct TemporarySettingsFixture {
 
     func remove() {
         try? FileManager.default.removeItem(at: directory)
+    }
+}
+
+private actor SuspendedRuntimeInterruption {
+    private var preserveStarted = false
+    private var preserveStartedWaiter: CheckedContinuation<Void, Never>?
+    private var preserveWaiter: CheckedContinuation<Bool, Never>?
+    private var recoveredWaiter: CheckedContinuation<Void, Never>?
+    private(set) var preserveReasons: [CaptureInterruptionReason] = []
+    private(set) var recoveryCount = 0
+
+    func preserve(_ reason: CaptureInterruptionReason) async -> Bool {
+        preserveReasons.append(reason)
+        preserveStarted = true
+        preserveStartedWaiter?.resume()
+        preserveStartedWaiter = nil
+        return await withCheckedContinuation { continuation in
+            preserveWaiter = continuation
+        }
+    }
+
+    func waitUntilPreserveStarted() async {
+        guard !preserveStarted else { return }
+        await withCheckedContinuation { continuation in
+            preserveStartedWaiter = continuation
+        }
+    }
+
+    func finishPreserve(_ result: Bool) {
+        preserveWaiter?.resume(returning: result)
+        preserveWaiter = nil
+    }
+
+    func recoverPending() {
+        recoveryCount += 1
+        recoveredWaiter?.resume()
+        recoveredWaiter = nil
+    }
+
+    func waitUntilRecovered() async {
+        guard recoveryCount == 0 else { return }
+        await withCheckedContinuation { continuation in
+            recoveredWaiter = continuation
+        }
     }
 }

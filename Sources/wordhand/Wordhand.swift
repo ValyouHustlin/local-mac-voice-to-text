@@ -45,6 +45,7 @@ struct CaptureRecoveryFixture: ParsableCommand {
     func run() throws {
         let directory = URL(fileURLWithPath: dataDirectory, isDirectory: true)
         let journal = CrashSafeCaptureJournal(directoryURL: directory)
+        let writer = CrashSafeCaptureWriter(journal: journal)
         let samples: [Float] = [
             Float(bitPattern: 0x8000_0000),
             0.1,
@@ -59,13 +60,17 @@ struct CaptureRecoveryFixture: ParsableCommand {
             guard let captureID = UUID(uuidString: id) else {
                 throw ValidationError("invalid fixture id")
             }
-            try journal.beginCapture(
+            try writer.beginCapture(
                 id: captureID,
                 createdAt: Date(timeIntervalSince1970: 1_700_000_000),
                 sampleRate: 16_000
             )
-            try journal.append(Array(samples.prefix(3)))
-            try journal.append(Array(samples.dropFirst(3)))
+            _ = writer.enqueue(Array(samples.prefix(3)))
+            guard let finalSequence = writer.enqueue(Array(samples.dropFirst(3))),
+                  writer.waitUntilAcknowledged(finalSequence, timeout: 5)
+            else {
+                throw ValidationError("fixture writer did not acknowledge its final chunk")
+            }
             print(Self.receipt(samples))
             fflush(stdout)
             while true {
@@ -412,21 +417,6 @@ struct Run: ParsableCommand {
         }
         var modelWarmupTask: Task<Void, Never>?
         var diagnosticsHeartbeatTask: Task<Void, Never>?
-        let appDelegate = MainActor.assumeIsolated {
-            WordhandAppDelegate(
-                onOpenPrimaryWindow: { settingsController.showSettings() },
-                onTerminate: {
-                    recordDiagnostic(OperationalDiagnosticEvent(
-                        severity: .info,
-                        name: "app.terminated",
-                        sessionID: appSessionID
-                    ))
-                    modelWarmupTask?.cancel()
-                    diagnosticsHeartbeatTask?.cancel()
-                    monitor.stop()
-                }
-            )
-        }
         let coordinator = MainActor.assumeIsolated {
             DictationCoordinator(
                 capture: capture,
@@ -445,6 +435,61 @@ struct Run: ParsableCommand {
                 diagnosticSessionID: appSessionID
             )
         }
+        let recoverPendingCaptures: @MainActor () async throws -> Void = {
+            let pendingCaptures = try recoveryJournal.recoverableCaptures()
+            for pendingCapture in pendingCaptures {
+                let recovered = await coordinator.recover(pendingCapture)
+                guard recovered else { break }
+                try recoveryJournal.discard(id: pendingCapture.id)
+            }
+        }
+        let interruptionController = MainActor.assumeIsolated {
+            RuntimeInterruptionController(
+                preserve: { reason in
+                    monitor.cancelActiveRecording()
+                    return await coordinator.preserveCurrentCaptureForRecovery(
+                        reason: reason
+                    )
+                },
+                recoverPending: {
+                    guard readiness.modelReady else { return }
+                    do {
+                        try await recoverPendingCaptures()
+                    } catch {
+                        recordDiagnostic(OperationalDiagnosticEvent(
+                            severity: .error,
+                            name: "capture_recovery.scan_failed",
+                            sessionID: appSessionID,
+                            attributes: ["reason": String(describing: error)]
+                        ))
+                    }
+                }
+            )
+        }
+        let sleepObserver = MainActor.assumeIsolated {
+            SystemSleepObserver {
+                interruptionController.systemWillSleep()
+            }
+        }
+        let appDelegate = MainActor.assumeIsolated {
+            WordhandAppDelegate(
+                onOpenPrimaryWindow: { settingsController.showSettings() },
+                onPrepareToTerminate: {
+                    monitor.stop()
+                    await interruptionController.prepareForApplicationQuit()
+                },
+                onTerminate: {
+                    recordDiagnostic(OperationalDiagnosticEvent(
+                        severity: .info,
+                        name: "app.terminated",
+                        sessionID: appSessionID
+                    ))
+                    modelWarmupTask?.cancel()
+                    diagnosticsHeartbeatTask?.cancel()
+                    monitor.stop()
+                }
+            )
+        }
         let startHotkeyMonitor = {
             try monitor.start { event in
                 Task { @MainActor in
@@ -455,6 +500,13 @@ struct Run: ParsableCommand {
         MainActor.assumeIsolated {
             app.delegate = appDelegate
             coordinator.onDiagnosticEvent = recordDiagnostic
+            capture.onRecoveryFailure = { _ in
+                recordDiagnostic(OperationalDiagnosticEvent(
+                    severity: .warning,
+                    name: "capture_recovery.protection_failed",
+                    sessionID: appSessionID
+                ))
+            }
             capture.onInputStopped = { [weak coordinator] in
                 guard
                     coordinator?.consumeRecordingEndIntent() == .finish
@@ -803,12 +855,7 @@ struct Run: ParsableCommand {
                         olderThan: quarantineCutoff
                     )
                 }
-                let pendingCaptures = try recoveryJournal.recoverableCaptures()
-                for pendingCapture in pendingCaptures {
-                    let recovered = await coordinator.recover(pendingCapture)
-                    guard recovered else { break }
-                    try recoveryJournal.discard(id: pendingCapture.id)
-                }
+                try await recoverPendingCaptures()
                 if settingsController.settings.performanceMode == .maximum {
                     await processor.prepare(target: currentTranscriptTarget())
                 }
@@ -936,6 +983,8 @@ struct Run: ParsableCommand {
             diagnosticsHeartbeatTask,
             sigterm,
             appDelegate,
+            sleepObserver,
+            interruptionController,
             diagnosticsStore
         )) {
             app.run()

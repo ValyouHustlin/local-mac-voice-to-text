@@ -16,21 +16,19 @@ final class AudioCapture: StreamingAudioCapturing, RecoveryManagedAudioCapturing
 
     private let engine = AVAudioEngine()
     private let recoveryJournal: CrashSafeCaptureJournal
+    private let recoveryWriter: CrashSafeCaptureWriter
     private var converter: AVAudioConverter?
     private var samples: [Float] = []
     private var streamingChunkHandler: (@Sendable ([Float]) -> Void)?
     private var isRecording = false
     private let lock = NSLock()
-    private let recoveryWriterQueue = DispatchQueue(
-        label: "com.valyou.wordhand.capture-recovery",
-        qos: .userInitiated
-    )
-    private let recoveryWrites = DispatchGroup()
     private var acceptsRecoveryChunks = false
 
     /// Called for every audio buffer with the buffer's RMS level (0…~1).
     /// Invoked on an arbitrary thread; hop to main if you touch UI.
     var onLevel: ((Float) -> Void)?
+    /// Reports that this recording continued in RAM without crash protection.
+    var onRecoveryFailure: (@MainActor @Sendable (String) -> Void)?
     /// Called after the input tap is stopped, before recovery writes drain.
     /// This keeps finish feedback independent from journal I/O latency.
     var onInputStopped: (@MainActor () -> Void)?
@@ -39,10 +37,11 @@ final class AudioCapture: StreamingAudioCapturing, RecoveryManagedAudioCapturing
         recoveryJournal: CrashSafeCaptureJournal = CrashSafeCaptureJournal()
     ) {
         self.recoveryJournal = recoveryJournal
+        self.recoveryWriter = CrashSafeCaptureWriter(journal: recoveryJournal)
     }
 
     func prepareRecovery(id: UUID, createdAt: Date, sampleRate: Int) throws {
-        try recoveryJournal.beginCapture(
+        try recoveryWriter.beginCapture(
             id: id,
             createdAt: createdAt,
             sampleRate: sampleRate
@@ -128,8 +127,11 @@ final class AudioCapture: StreamingAudioCapturing, RecoveryManagedAudioCapturing
             samples.removeAll(keepingCapacity: true)
             return captured
         }
-        await drainRecoveryWrites()
-        try? recoveryJournal.finishCapture()
+        do {
+            try await recoveryWriter.seal()
+        } catch {
+            await onRecoveryFailure?(String(describing: error))
+        }
         return captured
     }
 
@@ -169,16 +171,10 @@ final class AudioCapture: StreamingAudioCapturing, RecoveryManagedAudioCapturing
         let chunkHandler = lock.withLock {
             samples.append(contentsOf: chunk)
             if acceptsRecoveryChunks {
-                recoveryWrites.enter()
-                recoveryWriterQueue.async { [recoveryJournal, recoveryWrites] in
-                    defer { recoveryWrites.leave() }
-                    do {
-                        try recoveryJournal.append(chunk)
-                    } catch {
-                        FileHandle.standardError.write(Data(
-                            "capture recovery write failed: \(error)\n".utf8
-                        ))
-                    }
+                if recoveryWriter.enqueue(chunk) == nil {
+                    FileHandle.standardError.write(Data(
+                        "capture recovery is unavailable for this recording\n".utf8
+                    ))
                 }
             }
             return streamingChunkHandler
@@ -190,13 +186,6 @@ final class AudioCapture: StreamingAudioCapturing, RecoveryManagedAudioCapturing
         }
     }
 
-    private func drainRecoveryWrites() async {
-        await withCheckedContinuation { continuation in
-            recoveryWrites.notify(queue: recoveryWriterQueue) {
-                continuation.resume()
-            }
-        }
-    }
 }
 
 // MARK: - WAV writer (for debugging M3 captures)

@@ -27,6 +27,11 @@ public enum RecordingEndIntent: Equatable, Sendable {
     case cancel
 }
 
+public enum CaptureInterruptionReason: String, Equatable, Sendable {
+    case applicationQuit = "application_quit"
+    case systemSleep = "system_sleep"
+}
+
 public protocol AudioCapturing: AnyObject {
     func start() throws
     func stop() async -> [Float]
@@ -158,6 +163,8 @@ public final class DictationCoordinator {
     private let sleep: @Sendable (UInt64) async throws -> Void
     private var activeOperationID: UUID?
     private var isCaptureStopping = false
+    private var activeCaptureStopTask: Task<[Float], Never>?
+    private var activeReleaseFinalization: ReleaseFinalization?
     private var pendingRecordingEndIntent: RecordingEndIntent?
     private var recordingLimitTask: Task<Void, Never>?
     private var activeStreamingCapture: (any StreamingAudioCapturing)?
@@ -283,7 +290,7 @@ public final class DictationCoordinator {
                                 ?? "processor_default",
                     ]
                 )
-                scheduleRecordingLimit()
+                await scheduleRecordingLimit()
             } catch {
                 try? (capture as? any RecoveryManagedAudioCapturing)?
                     .discardRecovery(id: operationID)
@@ -303,16 +310,22 @@ public final class DictationCoordinator {
         case .released:
             guard state == .recording else { return }
             guard let operationID = activeOperationID else { return }
+            let releaseFinalization = ReleaseFinalization()
+            activeReleaseFinalization = releaseFinalization
+            defer {
+                releaseFinalization.complete()
+                if activeReleaseFinalization === releaseFinalization {
+                    activeReleaseFinalization = nil
+                }
+            }
             let recordingEndedAt = now()
             let recordingStartedAt = self.recordingStartedAt
             let operationStartedAt = activeOperationStartedAt
             self.recordingStartedAt = nil
-            cancelRecordingLimit()
+            await cancelRecordingLimit()
             pendingRecordingEndIntent = .finish
             state = .transcribing
-            isCaptureStopping = true
-            let samples = await capture.stop()
-            isCaptureStopping = false
+            let samples = await stopCaptureOnce()
             await finishStreamingAudioForwarding()
             guard activeOperationID == operationID else {
                 if activeOperationID == nil {
@@ -670,13 +683,13 @@ public final class DictationCoordinator {
         switch state {
         case .recording:
             let operationID = activeOperationID
-            cancelRecordingLimit()
+            await cancelRecordingLimit()
             recordingStartedAt = nil
             activeOperationID = nil
             activeProcessingContext = nil
             activeOperationStartedAt = nil
             await stopActiveStreaming()
-            _ = await capture.stop()
+            _ = await stopCaptureOnce()
             if let operationID {
                 try? (capture as? any RecoveryManagedAudioCapturing)?
                     .discardRecovery(id: operationID)
@@ -716,6 +729,60 @@ public final class DictationCoordinator {
         case .idle, .inserting, .failed:
             break
         }
+    }
+
+    /// Seals in-flight audio without transcription or insertion. The recovery
+    /// journal deliberately remains until the same UUID is restored to History.
+    @discardableResult
+    public func preserveCurrentCaptureForRecovery(
+        reason: CaptureInterruptionReason
+    ) async -> Bool {
+        guard let operationID = activeOperationID else { return false }
+        let interruptedState = state
+        let releaseFinalization = activeReleaseFinalization
+        switch interruptedState {
+        case .recording, .transcribing, .processing:
+            break
+        case .idle, .inserting, .failed:
+            return false
+        }
+
+        pendingRecordingEndIntent = .cancel
+        await cancelRecordingLimit()
+        recordingStartedAt = nil
+        activeOperationID = nil
+        activeProcessingContext = nil
+        activeOperationStartedAt = nil
+        await stopActiveStreaming()
+
+        switch interruptedState {
+        case .recording:
+            state = .transcribing
+            _ = await stopCaptureOnce()
+        case .transcribing:
+            if isCaptureStopping {
+                _ = await stopCaptureOnce()
+            } else {
+                await transcriber.cancel()
+            }
+        case .processing:
+            break
+        case .idle, .inserting, .failed:
+            return false
+        }
+
+        if let releaseFinalization {
+            await releaseFinalization.wait()
+        }
+        recordDiagnostic(
+            name: "capture_recovery.preserved",
+            dictationID: operationID,
+            attributes: ["reason": reason.rawValue]
+        )
+        if activeOperationID == nil {
+            state = .idle
+        }
+        return true
     }
 
     public func markCancellationIntent() {
@@ -762,6 +829,19 @@ public final class DictationCoordinator {
         return TranscriptProcessingResult(
             text: await processor.process(text, target: context.target)
         )
+    }
+
+    private func stopCaptureOnce() async -> [Float] {
+        if let activeCaptureStopTask {
+            return await activeCaptureStopTask.value
+        }
+        isCaptureStopping = true
+        let task = Task { await capture.stop() }
+        activeCaptureStopTask = task
+        let samples = await task.value
+        activeCaptureStopTask = nil
+        isCaptureStopping = false
+        return samples
     }
 
     /// Replays an orphaned audio journal through the same complete-buffer
@@ -897,8 +977,8 @@ public final class DictationCoordinator {
         streamingEnabled = enabled
     }
 
-    private func scheduleRecordingLimit() {
-        cancelRecordingLimit()
+    private func scheduleRecordingLimit() async {
+        await cancelRecordingLimit()
         guard let maximumRecordingNanoseconds else { return }
         let sleep = self.sleep
         recordingLimitTask = Task { [weak self] in
@@ -915,9 +995,11 @@ public final class DictationCoordinator {
         }
     }
 
-    private func cancelRecordingLimit() {
-        recordingLimitTask?.cancel()
+    private func cancelRecordingLimit() async {
+        guard let task = recordingLimitTask else { return }
         recordingLimitTask = nil
+        task.cancel()
+        await task.value
     }
 
     private func stopActiveStreaming() async {
@@ -973,5 +1055,27 @@ public final class DictationCoordinator {
             return await provider.lastInsertionDiagnostics()
         }
         return InsertionRunDiagnostics(mode: insertionMode)
+    }
+}
+
+@MainActor
+private final class ReleaseFinalization {
+    private var isComplete = false
+    private var waiter: CheckedContinuation<Void, Never>?
+
+    func wait() async {
+        guard !isComplete else { return }
+        await withCheckedContinuation { continuation in
+            precondition(waiter == nil)
+            waiter = continuation
+        }
+    }
+
+    func complete() {
+        guard !isComplete else { return }
+        isComplete = true
+        let waiter = waiter
+        self.waiter = nil
+        waiter?.resume()
     }
 }

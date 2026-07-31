@@ -743,11 +743,25 @@ process killed during the final write loses only that unacknowledged torn frame
 and cannot fabricate or duplicate audio.
 
 The audio callback only enqueues immutable chunks onto one ordered local writer;
-it performs no filesystem work. Release waits for that queue to drain before
-sealing the journal. A write error latches the session closed and quarantines
-its files instead of allowing a later frame to hide a missing middle. Startup
-scans exclude the currently active UUID. Unreadable files remain available for
-manual inspection for 30 days, then expire locally.
+it performs no filesystem work. The writer exposes the last contiguous frame it
+has actually appended, and the process-death fixture uses this same queue rather
+than bypassing it with direct journal calls. Release waits for that queue to
+drain before synchronizing and sealing the journal. A write error latches the
+session closed, quarantines its files instead of allowing a later frame to hide
+a missing middle, and records a private protection-failure diagnostic when the
+normal stop path observes it. Startup scans exclude the currently active UUID.
+Unreadable files remain available for manual inspection for 30 days, then
+expire locally.
+
+Standard application termination is deferred while any active capture stops,
+drains, synchronizes, and leaves its journal recoverable. The same coordinator
+operation handles a system-sleep notification. It never transcribes or inserts
+inside the interruption boundary; once execution can continue and the local
+model is ready, the ordinary recovery loop saves the audio to History without
+insertion. If a normal release is already inside its 80 ms tail, both paths
+await one shared capture-stop task rather than stopping the audio engine twice.
+Recording-limit timer cancellation is also joined before capture stop so its
+suspended task cannot outlive the state transition.
 
 The journal uses the coordinator's dictation UUID, which later becomes the
 History primary key. Normal capture deletes the journal only after History
