@@ -35,6 +35,10 @@ order:
    stop-to-final latency while preserving
    full-buffer authority until retained English fixtures prove beginnings,
    endings, numbers, negations, technical terms, and dictionary spellings;
+   a stable-prefix Foundation Models formatting candidate was also rejected
+   after two prepared-session probes changed output and slowed median
+   formatting by 6.5% and 10.6%, so production retains complete dynamic
+   meaning/layout instructions;
 3. [ ] local self-learning from explicit corrections and retained recordings
    that suggests improvements without silently changing behavior; the first
    canonical-vocabulary recommendation slice is implemented and isolated-

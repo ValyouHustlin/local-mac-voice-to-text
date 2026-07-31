@@ -944,6 +944,18 @@ one newline for `command new line` or two for `command new paragraph`, and
 capitalizes the first English letter after that break. Formatter-created
 whitespace elsewhere is returned unchanged.
 
+Maximum-mode formatter prewarming remains conservative. The production
+Foundation Models session keeps the complete per-dictation meaning-marker and
+layout-token constraints in its instructions even though that prevents a
+stable prewarm cache hit. A measured candidate moved those dynamic constraints
+behind one stable prewarmed prompt prefix. It reported prepared-session hits,
+but changed output and made the three-case probe slower in two independent
+prompt arrangements. The comparison oracle therefore pins the existing
+dynamic-instruction path as authoritative. Future prewarm changes must keep
+paired output byte-identical, preserve every validator and fallback, hit every
+eligible prepared first pass, improve median formatting latency by at least
+15%, and leave p95 no worse before runtime promotion.
+
 The raw model output may be retained inside the same local history record for
 debugging and future reprocessing. Nothing in this pipeline may call a remote
 model.

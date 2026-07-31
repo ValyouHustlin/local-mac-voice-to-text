@@ -992,7 +992,7 @@ struct GlobalInputAdapterTests {
         )
 
         controller.repairMicrophonePermission()
-        while permissions.microphoneRequestCount == 0 {
+        while controller.permissionStatus.microphone != .granted {
             await Task.yield()
         }
         #expect(controller.permissionStatus.microphone == .granted)
@@ -1249,7 +1249,11 @@ struct GlobalInputAdapterTests {
         #expect(!calls[0].text.localizedCaseInsensitiveContains(
             "command new paragraph"
         ))
-        #expect(calls[0].instructions.contains("Keep every token exactly once"))
+        #expect(
+            calls[0].dynamicConstraints.contains(
+                "Keep every token exactly once"
+            )
+        )
     }
 
     @Test
@@ -1516,6 +1520,58 @@ struct GlobalInputAdapterTests {
     }
 
     @Test
+    func stablePromptCandidateSeparatesDynamicConstraintsFromSessionKey() async {
+        let protected =
+            "I should not ship version 3. "
+            + "WORDHAND_LAYOUT_0_0 Keep the rollback."
+        let rewriter = RecordingLocalTranscriptRewriter(
+            responses: [protected]
+        )
+        let processor = AppAwareTranscriptProcessor(
+            dictionaryProcessor: MutableTranscriptProcessor(),
+            profile: .aiCommunication,
+            performanceMode: .maximum,
+            rewriter: rewriter
+        )
+        let context = processor.context(for: TranscriptTarget(
+            bundleIdentifier: "com.mitchellh.ghostty",
+            applicationName: "Ghostty"
+        ))
+
+        await processor.prepare(context: context)
+        let output = await processor.process(
+            "I should not ship version 3. "
+                + "Command new paragraph. Keep the rollback.",
+            context: context
+        )
+
+        let prewarms = await rewriter.recordedPrewarms()
+        let calls = await rewriter.recordedCalls()
+        #expect(prewarms.count == 1)
+        #expect(calls.count == 1)
+        #expect(prewarms[0] == calls[0].instructions)
+        #expect(
+            calls[0].dynamicConstraints.components(
+                separatedBy: "opaque WORDHAND_LAYOUT tokens"
+            ).count == 2
+        )
+        #expect(
+            calls[0].dynamicConstraints.components(
+                separatedBy: "meaning markers: i, should"
+            ).count == 2
+        )
+        #expect(output == "I should not ship version 3.\n\nKeep the rollback.")
+    }
+
+    @Test
+    func productionFormatterKeepsDynamicInstructionsAuthoritative() {
+        #expect(
+            FoundationModelTranscriptRewriter.defaultPreparationMode
+                == .legacyDynamicInstructions
+        )
+    }
+
+    @Test
     func unsafeProfessionalRewriteFallsBackWithoutDroppingConstraints() async {
         let rewriter = RecordingLocalTranscriptRewriter(
             responses: ["Ship it.", "Ship it."]
@@ -1710,6 +1766,8 @@ private actor RecordingLocalTranscriptRewriter: LocalTranscriptRewriting {
     struct Call: Sendable {
         var text: String
         var instructions: String
+        var promptPrefix: String
+        var dynamicConstraints: String
         var maximumResponseTokens: Int
         var timeoutSeconds: UInt64
     }
@@ -1722,23 +1780,27 @@ private actor RecordingLocalTranscriptRewriter: LocalTranscriptRewriting {
         self.responses = responses
     }
 
-    func prewarm(instructions: String) {
-        prewarms.append(instructions)
+    func prewarm(
+        sessionInstructions: String,
+        promptPrefix: String
+    ) {
+        prewarms.append(sessionInstructions)
     }
 
     func rewrite(
-        _ text: String,
-        instructions: String,
-        maximumResponseTokens: Int,
-        timeoutSeconds: UInt64
-    ) async throws -> String {
+        _ request: LocalTranscriptRewriteRequest
+    ) async throws -> LocalTranscriptRewriteResult {
         calls.append(Call(
-            text: text,
-            instructions: instructions,
-            maximumResponseTokens: maximumResponseTokens,
-            timeoutSeconds: timeoutSeconds
+            text: request.text,
+            instructions: request.sessionInstructions,
+            promptPrefix: request.promptPrefix,
+            dynamicConstraints: request.dynamicConstraints,
+            maximumResponseTokens: request.maximumResponseTokens,
+            timeoutSeconds: request.timeoutSeconds
         ))
-        return responses.removeFirst()
+        return LocalTranscriptRewriteResult(
+            text: responses.removeFirst()
+        )
     }
 
     func recordedCalls() -> [Call] {

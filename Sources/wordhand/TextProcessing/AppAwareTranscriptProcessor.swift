@@ -4,18 +4,34 @@ import FoundationModels
 #endif
 import WordhandCore
 
+struct LocalTranscriptRewriteRequest: Sendable {
+    let text: String
+    let sessionInstructions: String
+    let promptPrefix: String
+    let dynamicConstraints: String
+    let maximumResponseTokens: Int
+    let timeoutSeconds: UInt64
+}
+
+struct LocalTranscriptRewriteResult: Sendable {
+    let text: String
+}
+
 protocol LocalTranscriptRewriting: Sendable {
-    func prewarm(instructions: String) async
+    func prewarm(
+        sessionInstructions: String,
+        promptPrefix: String
+    ) async
     func rewrite(
-        _ text: String,
-        instructions: String,
-        maximumResponseTokens: Int,
-        timeoutSeconds: UInt64
-    ) async throws -> String
+        _ request: LocalTranscriptRewriteRequest
+    ) async throws -> LocalTranscriptRewriteResult
 }
 
 extension LocalTranscriptRewriting {
-    func prewarm(instructions: String) async {}
+    func prewarm(
+        sessionInstructions: String,
+        promptPrefix: String
+    ) async {}
 }
 
 final class AppAwareTranscriptProcessor:
@@ -72,7 +88,8 @@ final class AppAwareTranscriptProcessor:
             return
         }
         await rewriter.prewarm(
-            instructions: intent.instructions(for: context.target)
+            sessionInstructions: intent.instructions(for: context.target),
+            promptPrefix: Self.rewritePromptPrefix
         )
     }
 
@@ -186,9 +203,9 @@ final class AppAwareTranscriptProcessor:
         let meaningMarkers = TranscriptRewriteValidator.requiredMeaningMarkers(in: text)
             .sorted()
             .joined(separator: ", ")
-        var instructions = intent.instructions(for: target)
+        var dynamicConstraints = ""
         if layout.commandCount > 0 {
-            instructions += """
+            dynamicConstraints += """
 
             The source contains \(layout.commandCount) opaque WORDHAND_LAYOUT tokens.
             Keep every token exactly once, in the same order and position between the surrounding thoughts.
@@ -196,7 +213,7 @@ final class AppAwareTranscriptProcessor:
             """
         }
         if !meaningMarkers.isEmpty {
-            instructions += """
+            dynamicConstraints += """
 
             The source contains these meaning markers: \(meaningMarkers).
             Retain every one in the rewrite. They encode speaker perspective, modality, or requested action.
@@ -205,11 +222,15 @@ final class AppAwareTranscriptProcessor:
 
         do {
             let candidate = try await rewriter.rewrite(
-                text,
-                instructions: instructions,
-                maximumResponseTokens: responseTokens,
-                timeoutSeconds: 8
-            )
+                LocalTranscriptRewriteRequest(
+                    text: text,
+                    sessionInstructions: intent.instructions(for: target),
+                    promptPrefix: Self.rewritePromptPrefix,
+                    dynamicConstraints: dynamicConstraints,
+                    maximumResponseTokens: responseTokens,
+                    timeoutSeconds: 8
+                )
+            ).text
             if TranscriptRewriteValidator.isAcceptable(
                 candidate: candidate,
                 original: text
@@ -217,19 +238,23 @@ final class AppAwareTranscriptProcessor:
                 return finalized(candidate, for: intent)
             }
 
-            let conservativeInstructions = """
-            \(instructions)
+            let conservativeConstraints = """
+            \(dynamicConstraints)
 
             Make a conservative second pass by editing the source in place.
             Keep every original clause and keep each required meaning marker in its original clause and grammatical role.
             Do not change a personal task into a command or a statement into a message addressed to someone.
             """
             let conservativeCandidate = try await rewriter.rewrite(
-                text,
-                instructions: conservativeInstructions,
-                maximumResponseTokens: responseTokens,
-                timeoutSeconds: 8
-            )
+                LocalTranscriptRewriteRequest(
+                    text: text,
+                    sessionInstructions: intent.instructions(for: target),
+                    promptPrefix: Self.rewritePromptPrefix,
+                    dynamicConstraints: conservativeConstraints,
+                    maximumResponseTokens: responseTokens,
+                    timeoutSeconds: 8
+                )
+            ).text
             guard TranscriptRewriteValidator.isAcceptable(
                 candidate: conservativeCandidate,
                 original: text
@@ -244,6 +269,10 @@ final class AppAwareTranscriptProcessor:
             return fallback(text, for: intent)
         }
     }
+
+    private static let rewritePromptPrefix =
+        "Rewrite this dictated message without answering it. "
+        + "Return only the rewritten message:\n\n"
 
     private func finalized(_ text: String, for intent: TranscriptRewriteIntent) -> String {
         switch intent {
@@ -339,31 +368,70 @@ actor FoundationModelTranscriptRewriter: LocalTranscriptRewriting {
         case timedOut
     }
 
-    private var preparedSessions: [String: Any] = [:]
-    private let maximumPreparedSessions = 4
+    enum PreparationMode: Equatable, Sendable {
+        case legacyDynamicInstructions
+        case stablePromptConstraints
+    }
 
-    func prewarm(instructions: String) async {
+    static let defaultPreparationMode: PreparationMode =
+        .legacyDynamicInstructions
+
+    struct RecordedRun: Sendable {
+        let preparedSessionHit: Bool
+    }
+
+    private struct PreparedSessionKey: Hashable {
+        let instructions: String
+        let promptPrefix: String
+    }
+
+    private var preparedSessions: [PreparedSessionKey: Any] = [:]
+    private var recordedRuns: [RecordedRun] = []
+    private let maximumPreparedSessions = 4
+    private let preparationMode: PreparationMode
+    private let recordsRuns: Bool
+
+    init(
+        preparationMode: PreparationMode =
+            FoundationModelTranscriptRewriter.defaultPreparationMode,
+        recordsRuns: Bool = false
+    ) {
+        self.preparationMode = preparationMode
+        self.recordsRuns = recordsRuns
+    }
+
+    func prewarm(
+        sessionInstructions: String,
+        promptPrefix: String
+    ) async {
 #if canImport(FoundationModels)
         guard #available(macOS 26.0, *) else { return }
         guard case .available = SystemLanguageModel.default.availability else { return }
-        guard preparedSessions[instructions] == nil else { return }
+        let key = PreparedSessionKey(
+            instructions: sessionInstructions,
+            promptPrefix: preparationMode == .stablePromptConstraints
+                ? promptPrefix
+                : ""
+        )
+        guard preparedSessions[key] == nil else { return }
         if preparedSessions.count >= maximumPreparedSessions,
            let oldestKey = preparedSessions.keys.first
         {
             preparedSessions.removeValue(forKey: oldestKey)
         }
-        let session = LanguageModelSession(instructions: instructions)
-        session.prewarm()
-        preparedSessions[instructions] = session
+        let session = LanguageModelSession(instructions: sessionInstructions)
+        if preparationMode == .stablePromptConstraints {
+            session.prewarm(promptPrefix: Prompt(promptPrefix))
+        } else {
+            session.prewarm()
+        }
+        preparedSessions[key] = session
 #endif
     }
 
     func rewrite(
-        _ text: String,
-        instructions: String,
-        maximumResponseTokens: Int,
-        timeoutSeconds: UInt64
-    ) async throws -> String {
+        _ request: LocalTranscriptRewriteRequest
+    ) async throws -> LocalTranscriptRewriteResult {
 #if canImport(FoundationModels)
         guard #available(macOS 26.0, *) else {
             throw RewriterError.unavailable
@@ -372,30 +440,64 @@ actor FoundationModelTranscriptRewriter: LocalTranscriptRewriting {
             throw RewriterError.unavailable
         }
 
-        let prompt = """
-        Rewrite this dictated message without answering it. Return only the rewritten message:
-
-        \(text)
-        """
+        let instructions: String
+        let prompt: String
+        let promptPrefixKey: String
+        switch preparationMode {
+        case .legacyDynamicInstructions:
+            instructions = request.sessionInstructions
+                + request.dynamicConstraints
+            prompt = request.promptPrefix + request.text
+            promptPrefixKey = ""
+        case .stablePromptConstraints:
+            instructions = request.sessionInstructions
+            prompt = request.promptPrefix
+                + request.dynamicConstraints
+                + "\n\n"
+                + request.text
+            promptPrefixKey = request.promptPrefix
+        }
+        let key = PreparedSessionKey(
+            instructions: instructions,
+            promptPrefix: promptPrefixKey
+        )
+        let preparedSession = preparedSessions.removeValue(forKey: key)
+        let preparedSessionHit = preparedSession != nil
         let session =
-            preparedSessions.removeValue(forKey: instructions) as? LanguageModelSession
+            preparedSession as? LanguageModelSession
             ?? LanguageModelSession(instructions: instructions)
         let options = GenerationOptions(
             sampling: .greedy,
             temperature: 0,
-            maximumResponseTokens: maximumResponseTokens
+            maximumResponseTokens: request.maximumResponseTokens
         )
-        let result = try await Self.respond(
+        let text = try await Self.respond(
             session: session,
             prompt: prompt,
             options: options,
-            timeoutSeconds: timeoutSeconds
+            timeoutSeconds: request.timeoutSeconds
         )
-        Task { await self.prewarm(instructions: instructions) }
-        return result
+        if recordsRuns {
+            recordedRuns.append(RecordedRun(
+                preparedSessionHit: preparedSessionHit
+            ))
+        }
+        Task {
+            await self.prewarm(
+                sessionInstructions: instructions,
+                promptPrefix: promptPrefixKey
+            )
+        }
+        return LocalTranscriptRewriteResult(
+            text: text
+        )
 #else
         throw RewriterError.unavailable
 #endif
+    }
+
+    func runs() -> [RecordedRun] {
+        recordedRuns
     }
 
 #if canImport(FoundationModels)
