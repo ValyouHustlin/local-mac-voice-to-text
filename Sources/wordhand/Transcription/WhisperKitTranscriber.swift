@@ -11,6 +11,7 @@ actor WhisperKitTranscriber:
     let modelID: String
     private let model: TranscriptionModel
     private let vocabulary: DictionaryVocabularySource
+    private let downloadBase: URL
     private var pipeline: WhisperKit?
     private var warmupTask: Task<Void, Error>?
     private var cachedPromptTokenization: (prompt: String?, tokens: [Int]?)?
@@ -38,11 +39,14 @@ actor WhisperKitTranscriber:
 
     init(
         model: TranscriptionModel,
-        vocabulary: DictionaryVocabularySource = DictionaryVocabularySource()
+        vocabulary: DictionaryVocabularySource = DictionaryVocabularySource(),
+        downloadBase: URL? = nil
     ) {
         self.modelID = model.id
         self.model = model
         self.vocabulary = vocabulary
+        self.downloadBase =
+            downloadBase ?? WhisperModelStorage.defaultDownloadBase()
     }
 
     /// Loads the model into memory; downloads first if not already on disk.
@@ -68,13 +72,13 @@ actor WhisperKitTranscriber:
         let warmupStarted = ProcessInfo.processInfo.systemUptime
         FileHandle.standardError.write(Data("loading \(model.id)...\n".utf8))
         let task = Task {
-            let downloadBase = WhisperModelStorage.defaultDownloadBase()
-            let localModelFolder = WhisperModelStorage.localModelFolder(
+            let cacheState = WhisperModelStorage.cacheState(
                 modelID: whisperKitID,
                 downloadBase: downloadBase
             )
             let config: WhisperKitConfig
-            if let localModelFolder {
+            switch cacheState {
+            case .ready(let localModelFolder):
                 FileHandle.standardError.write(Data(
                     "using cached local model; network disabled\n".utf8
                 ))
@@ -88,7 +92,9 @@ actor WhisperKitTranscriber:
                     load: true,
                     download: false
                 )
-            } else {
+            case .invalid:
+                throw TranscriberError.cachedModelInvalid
+            case .missing:
                 if requireCachedModel {
                     throw TranscriberError.modelNotCached
                 }
@@ -1373,9 +1379,10 @@ private enum TailAuditWindowExperimentError: Error {
     case missingFullRetry
 }
 
-enum TranscriberError: Error {
+enum TranscriberError: Error, Equatable {
     case missingEngineID
     case modelNotCached
+    case cachedModelInvalid
     case notLoaded
 }
 

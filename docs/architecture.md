@@ -185,7 +185,9 @@ Verified by source inspection and dated receipts through 2026-07-30:
   without prompting automatically, reports local-model preparation separately,
   withholds global hotkey activation until its two permissions are ready,
   persists completion only after all four checks are ready, and exposes a
-  bounded retry after transient model-preparation failure;
+  bounded retry after transient model-preparation failure; an incomplete local
+  model cache is distinguished from a transient failure and can be explicitly
+  quarantined before Wordhand downloads a clean replacement;
 - a stable native application bundle with configurable persistent local code
   signing, isolated development and release identities, release-only native
   login-item registration, standard Applications-folder and Spotlight
@@ -240,7 +242,13 @@ cache is opened with downloading disabled, while a missing cache falls back to
 the explicit download path. A fresh bundled install opens one native Welcome
 window while preparation continues. It never triggers a permission prompt by
 presentation alone, and a failed model preparation remains recoverable through
-one visible retry action in Welcome and Settings. Existing settings files
+one visible retry action in Welcome and Settings. A structurally incomplete
+Core ML cache does not enter that same retry loop: Wordhand reports a specific
+repair state, and only an explicit `Repair Model` action atomically moves the
+selected model into an app-owned quarantine before the normal download path is
+allowed to run. The quarantined bytes remain until a replacement completes,
+then only that model's quarantine is removed. Other models and all user content
+remain untouched. Existing settings files
 migrate as already onboarded; a new install persists its onboarding version
 only when Accessibility, Input Monitoring, Microphone, and the local model are
 all ready. Settings, dictionary, history, and the data directory are hardened

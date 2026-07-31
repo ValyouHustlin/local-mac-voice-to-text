@@ -479,6 +479,25 @@ struct Run: ParsableCommand {
                     if settingsController.settings.performanceMode == .maximum {
                         await processor.prepare(target: currentTranscriptTarget())
                     }
+                    if let whisperKitID = chosenModel.whisperKitID {
+                        do {
+                            try WhisperModelStorage.removeQuarantinedModels(
+                                modelID: whisperKitID,
+                                downloadBase:
+                                    WhisperModelStorage.defaultDownloadBase()
+                            )
+                        } catch {
+                            recordDiagnostic(OperationalDiagnosticEvent(
+                                severity: .warning,
+                                name: "model.quarantine_cleanup_failed",
+                                sessionID: appSessionID,
+                                attributes: [
+                                    "model_id": chosenModel.id,
+                                    "reason": String(describing: type(of: error)),
+                                ]
+                            ))
+                        }
+                    }
                     readiness.modelReady = true
                     settingsController.setModelPreparationPhase(.ready)
                     if coordinator.state == .idle {
@@ -512,6 +531,17 @@ struct Run: ParsableCommand {
                     ))
                 } catch is CancellationError {
                     return
+                } catch TranscriberError.cachedModelInvalid {
+                    guard !Task.isCancelled else { return }
+                    readiness.modelReady = false
+                    settingsController.setModelPreparationPhase(.repairableCache)
+                    menuBar.setFailure("model needs repair · open Settings")
+                    recordDiagnostic(OperationalDiagnosticEvent(
+                        severity: .warning,
+                        name: "model.cache_invalid",
+                        sessionID: appSessionID,
+                        attributes: ["model_id": chosenModel.id]
+                    ))
                 } catch {
                     guard !Task.isCancelled else { return }
                     readiness.modelReady = false
@@ -721,6 +751,37 @@ struct Run: ParsableCommand {
                 }.value
             }
             settingsController.onRetryModelPreparation = startModelWarmup
+            settingsController.onRepairModelCache = {
+                guard let whisperKitID = chosenModel.whisperKitID else {
+                    settingsController.setModelPreparationPhase(.repairFailed)
+                    return
+                }
+                do {
+                    _ = try WhisperModelStorage.quarantineInvalidModel(
+                        modelID: whisperKitID,
+                        downloadBase: WhisperModelStorage.defaultDownloadBase()
+                    )
+                    recordDiagnostic(OperationalDiagnosticEvent(
+                        severity: .info,
+                        name: "model.cache_quarantined",
+                        sessionID: appSessionID,
+                        attributes: ["model_id": chosenModel.id]
+                    ))
+                    startModelWarmup()
+                } catch {
+                    settingsController.setModelPreparationPhase(.repairFailed)
+                    menuBar.setFailure("model repair could not start")
+                    recordDiagnostic(OperationalDiagnosticEvent(
+                        severity: .error,
+                        name: "model.cache_quarantine_failed",
+                        sessionID: appSessionID,
+                        attributes: [
+                            "model_id": chosenModel.id,
+                            "reason": String(describing: type(of: error)),
+                        ]
+                    ))
+                }
+            }
             settingsController.onPermissionsRefresh = { permissions in
                 recordDiagnostic(OperationalDiagnosticEvent(
                     severity: permissions.globalInputReady ? .info : .warning,

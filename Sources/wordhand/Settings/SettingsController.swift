@@ -13,6 +13,8 @@ enum ModelPreparationPhase: Equatable {
     case preparing
     case ready
     case unavailable
+    case repairableCache
+    case repairFailed
 }
 
 @MainActor
@@ -42,6 +44,7 @@ final class SettingsController: NSObject, ObservableObject, NSWindowDelegate {
     var onDiagnosticsReport: (() async throws -> String)?
     var onRecentActivitySnapshot: (() async throws -> WordhandHealthSnapshot)?
     var onRetryModelPreparation: (() -> Void)?
+    var onRepairModelCache: (() -> Void)?
 
     private let store: SettingsStore
     private let launchAtLoginManager: any LaunchAtLoginManaging
@@ -135,6 +138,17 @@ final class SettingsController: NSObject, ObservableObject, NSWindowDelegate {
         }
         modelPreparationPhase = .preparing
         onRetryModelPreparation()
+    }
+
+    func repairModelCache() {
+        guard modelPreparationPhase == .repairableCache
+                || modelPreparationPhase == .repairFailed,
+              let onRepairModelCache
+        else {
+            return
+        }
+        modelPreparationPhase = .preparing
+        onRepairModelCache()
     }
 
     func completeOnboarding() {
@@ -658,6 +672,7 @@ struct ModelPreparationStatusView: View {
     let modelName: String
     let modelSizeMB: Int
     let onRetry: () -> Void
+    let onRepair: () -> Void
 
     var body: some View {
         HStack(spacing: 10) {
@@ -669,7 +684,7 @@ struct ModelPreparationStatusView: View {
             case .ready:
                 Image(systemName: "checkmark.circle.fill")
                     .foregroundStyle(Color(red: 0.12, green: 0.49, blue: 0.39))
-            case .unavailable:
+            case .unavailable, .repairableCache, .repairFailed:
                 Image(systemName: "exclamationmark.triangle.fill")
                     .foregroundStyle(.orange)
             }
@@ -684,6 +699,12 @@ struct ModelPreparationStatusView: View {
             if phase == .unavailable {
                 Button("Try Again", action: onRetry)
                     .buttonStyle(.bordered)
+            } else if phase == .repairableCache {
+                Button("Repair Model", action: onRepair)
+                    .buttonStyle(.bordered)
+            } else if phase == .repairFailed {
+                Button("Try Repair Again", action: onRepair)
+                    .buttonStyle(.bordered)
             }
         }
         .accessibilityElement(children: .contain)
@@ -694,6 +715,8 @@ struct ModelPreparationStatusView: View {
         case .preparing: return "Preparing \(modelName)…"
         case .ready: return "On-device model ready"
         case .unavailable: return "Model unavailable"
+        case .repairableCache: return "Local model needs repair"
+        case .repairFailed: return "Model repair could not start"
         }
     }
 
@@ -705,6 +728,11 @@ struct ModelPreparationStatusView: View {
             return "Transcription stays private on this Mac."
         case .unavailable:
             return "Check your connection and available storage, then retry."
+        case .repairableCache:
+            return "Wordhand will preserve this copy and download a clean "
+                + "\(modelSizeMB) MB replacement."
+        case .repairFailed:
+            return "The incomplete copy is still safe. Check storage and try again."
         }
     }
 }
@@ -761,7 +789,8 @@ struct OnboardingView: View {
                     phase: controller.modelPreparationPhase,
                     modelName: controller.activeModel?.displayName ?? "transcription model",
                     modelSizeMB: controller.activeModel?.sizeMB ?? 0,
-                    onRetry: controller.retryModelPreparation
+                    onRetry: controller.retryModelPreparation,
+                    onRepair: controller.repairModelCache
                 )
                 .padding(.vertical, 12)
             }
@@ -1265,7 +1294,8 @@ private struct SettingsView: View {
                             controller.activeModel?.displayName
                             ?? "transcription model",
                         modelSizeMB: controller.activeModel?.sizeMB ?? 0,
-                        onRetry: controller.retryModelPreparation
+                        onRetry: controller.retryModelPreparation,
+                        onRepair: controller.repairModelCache
                     )
                 }
 

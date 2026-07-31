@@ -259,6 +259,20 @@ action, and repeated clicks cannot start concurrent retries. Runtime still
 opens the complete cached model with network fallback only when needed; no
 audio or transcript content is transmitted.
 
+Interrupted model downloads no longer enter an endless generic retry loop.
+Wordhand validates the selected Core ML cache's JSON and compiled-model
+structure before loading it. A structurally incomplete cache becomes one
+specific repair state; it is never moved automatically. One explicit
+`Repair Model` action atomically moves only that model into a hidden,
+app-owned quarantine and starts one clean replacement preparation. Collision
+or move failure preserves the original bytes and permits one bounded retry.
+Quarantined bytes survive failed replacement attempts and are removed only
+after the selected replacement is fully ready; another model's quarantine is
+never touched. The real retained English corpus reconfirmed that the installed
+Large v3 cache is accepted and remains network-disabled.
+
+Receipt: `docs/verification/2026-07-30-model-cache-repair.md`.
+
 The app replacement path now stages and authenticates the candidate before
 stopping Wordhand or moving the installed app. Both plist and signed bundle
 identifiers must match the channel. An update must also preserve the installed

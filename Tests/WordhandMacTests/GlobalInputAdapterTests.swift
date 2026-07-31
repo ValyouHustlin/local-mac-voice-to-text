@@ -979,6 +979,86 @@ struct GlobalInputAdapterTests {
 
     @Test
     @MainActor
+    func repairableModelStartsExactlyOneExplicitRepair() throws {
+        let fixture = try TemporarySettingsFixture()
+        defer { fixture.remove() }
+        let controller = SettingsController(
+            store: fixture.store,
+            settings: AppSettings(),
+            launchAtLoginManager: FakeLaunchAtLoginManager(state: .disabled),
+            permissionManager: FakePermissionManager()
+        )
+        var repairCount = 0
+        controller.onRepairModelCache = { repairCount += 1 }
+
+        controller.repairModelCache()
+        #expect(repairCount == 0)
+
+        controller.setModelPreparationPhase(.repairableCache)
+        controller.repairModelCache()
+        controller.repairModelCache()
+
+        #expect(repairCount == 1)
+        #expect(controller.modelPreparationPhase == .preparing)
+
+        controller.setModelPreparationPhase(.repairFailed)
+        controller.repairModelCache()
+        #expect(repairCount == 2)
+    }
+
+    @Test
+    @MainActor
+    func explicitModelRepairPreservesInvalidCacheAndStartsOneReplacement() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("wordhand-repair-flow-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let modelID = "test-model"
+        let modelFolder = directory
+            .appendingPathComponent("models/argmaxinc/whisperkit-coreml")
+            .appendingPathComponent(modelID)
+        try FileManager.default.createDirectory(
+            at: modelFolder,
+            withIntermediateDirectories: true
+        )
+        let original = Data("interrupted-download".utf8)
+        try original.write(
+            to: modelFolder.appendingPathComponent("config.json")
+        )
+        let fixture = try TemporarySettingsFixture()
+        defer { fixture.remove() }
+        let controller = SettingsController(
+            store: fixture.store,
+            settings: AppSettings(),
+            launchAtLoginManager: FakeLaunchAtLoginManager(state: .disabled),
+            permissionManager: FakePermissionManager()
+        )
+        var replacementCount = 0
+        var quarantined: URL?
+        controller.onRepairModelCache = {
+            quarantined = try? WhisperModelStorage.quarantineInvalidModel(
+                modelID: modelID,
+                downloadBase: directory
+            )
+            replacementCount += 1
+        }
+        controller.setModelPreparationPhase(.repairableCache)
+
+        controller.repairModelCache()
+        controller.repairModelCache()
+
+        let preserved = try #require(quarantined)
+        #expect(replacementCount == 1)
+        #expect(controller.modelPreparationPhase == .preparing)
+        #expect(!FileManager.default.fileExists(atPath: modelFolder.path))
+        #expect(
+            try Data(
+                contentsOf: preserved.appendingPathComponent("config.json")
+            ) == original
+        )
+    }
+
+    @Test
+    @MainActor
     func microphoneRepairRoutesPromptAndSettingsByCurrentState() async throws {
         let permissions = FakePermissionManager()
         permissions.currentStatus.microphone = .notDetermined
@@ -1034,7 +1114,13 @@ struct GlobalInputAdapterTests {
             launchAtLoginManager: FakeLaunchAtLoginManager(state: .disabled),
             permissionManager: permissions
         )
-        controller.setModelPreparationPhase(.unavailable)
+        controller.setModelPreparationPhase(
+            ProcessInfo.processInfo.environment[
+                "WORDHAND_ONBOARDING_RENDER_PHASE"
+            ] == "repairable"
+                ? .repairableCache
+                : .unavailable
+        )
         let root = OnboardingView(controller: controller)
         let view = NSHostingView(rootView: root)
         view.frame = NSRect(x: 0, y: 0, width: 560, height: 560)
@@ -1098,16 +1184,31 @@ struct GlobalInputAdapterTests {
             at: modelFolder,
             withIntermediateDirectories: true
         )
+        try Data("{}".utf8).write(
+            to: modelFolder.appendingPathComponent("config.json")
+        )
         for entry in [
-            "config.json",
             "MelSpectrogram.mlmodelc",
             "AudioEncoder.mlmodelc",
             "TextDecoder.mlmodelc",
         ] {
+            let compiledModel = modelFolder.appendingPathComponent(entry)
             try FileManager.default.createDirectory(
-                at: modelFolder.appendingPathComponent(entry),
+                at: compiledModel.appendingPathComponent("weights"),
                 withIntermediateDirectories: true
             )
+            try Data("{}".utf8).write(
+                to: compiledModel.appendingPathComponent("metadata.json")
+            )
+            for file in [
+                "model.mil",
+                "coremldata.bin",
+                "weights/weight.bin",
+            ] {
+                try Data([1]).write(
+                    to: compiledModel.appendingPathComponent(file)
+                )
+            }
         }
 
         #expect(
@@ -1125,6 +1226,202 @@ struct GlobalInputAdapterTests {
                 modelID: modelID,
                 downloadBase: directory
             ) == nil
+        )
+    }
+
+    @Test
+    func localWhisperModelRejectsEmptyCompiledComponents() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("wordhand-empty-model-tests-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let modelFolder = directory
+            .appendingPathComponent("models/argmaxinc/whisperkit-coreml")
+            .appendingPathComponent("test-model")
+        try FileManager.default.createDirectory(
+            at: modelFolder,
+            withIntermediateDirectories: true
+        )
+        for entry in [
+            "config.json",
+            "MelSpectrogram.mlmodelc",
+            "AudioEncoder.mlmodelc",
+            "TextDecoder.mlmodelc",
+        ] {
+            try FileManager.default.createDirectory(
+                at: modelFolder.appendingPathComponent(entry),
+                withIntermediateDirectories: true
+            )
+        }
+
+        #expect(
+            WhisperModelStorage.localModelFolder(
+                modelID: "test-model",
+                downloadBase: directory
+            ) == nil
+        )
+    }
+
+    @Test
+    func invalidWhisperModelIsQuarantinedOnceWithoutLosingItsBytes() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("wordhand-model-repair-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let modelID = "test-model"
+        let modelFolder = directory
+            .appendingPathComponent("models/argmaxinc/whisperkit-coreml")
+            .appendingPathComponent(modelID)
+        try FileManager.default.createDirectory(
+            at: modelFolder,
+            withIntermediateDirectories: true
+        )
+        let original = Data("partial-model-download".utf8)
+        try original.write(
+            to: modelFolder.appendingPathComponent("config.json")
+        )
+        let quarantineID = UUID(
+            uuidString: "5B9664F6-C651-4D92-981E-E0C4C1E8EA76"
+        )!
+
+        let quarantined = try WhisperModelStorage.quarantineInvalidModel(
+            modelID: modelID,
+            downloadBase: directory,
+            quarantineID: quarantineID
+        )
+
+        #expect(!FileManager.default.fileExists(atPath: modelFolder.path))
+        #expect(
+            try Data(
+                contentsOf: quarantined.appendingPathComponent("config.json")
+            ) == original
+        )
+        #expect(
+            throws: WhisperModelStorageError.cacheIsNotInvalid
+        ) {
+            try WhisperModelStorage.quarantineInvalidModel(
+                modelID: modelID,
+                downloadBase: directory
+            )
+        }
+    }
+
+    @Test
+    func successfulWhisperModelReplacementRemovesOnlyItsQuarantine() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("wordhand-model-cleanup-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let quarantineRoot = directory
+            .appendingPathComponent("models/argmaxinc/whisperkit-coreml")
+            .appendingPathComponent(".wordhand-quarantine")
+        let selected = quarantineRoot.appendingPathComponent("selected-model/one")
+        let other = quarantineRoot.appendingPathComponent("other-model/one")
+        try FileManager.default.createDirectory(
+            at: selected,
+            withIntermediateDirectories: true
+        )
+        try FileManager.default.createDirectory(
+            at: other,
+            withIntermediateDirectories: true
+        )
+
+        try WhisperModelStorage.removeQuarantinedModels(
+            modelID: "selected-model",
+            downloadBase: directory
+        )
+
+        #expect(!FileManager.default.fileExists(
+            atPath: selected.deletingLastPathComponent().path
+        ))
+        #expect(FileManager.default.fileExists(atPath: other.path))
+    }
+
+    @Test
+    func modelQuarantineCollisionAndUnsafeIDPreserveTheOriginalCache() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("wordhand-model-collision-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let modelID = "test-model"
+        let cacheRoot = directory
+            .appendingPathComponent("models/argmaxinc/whisperkit-coreml")
+        let modelFolder = cacheRoot.appendingPathComponent(modelID)
+        try FileManager.default.createDirectory(
+            at: modelFolder,
+            withIntermediateDirectories: true
+        )
+        let original = Data("partial".utf8)
+        try original.write(
+            to: modelFolder.appendingPathComponent("config.json")
+        )
+        let quarantineID = UUID(
+            uuidString: "EF6B9438-66CF-48DA-BDA1-37A885091463"
+        )!
+        try FileManager.default.createDirectory(
+            at: cacheRoot
+                .appendingPathComponent(".wordhand-quarantine")
+                .appendingPathComponent(modelID)
+                .appendingPathComponent(quarantineID.uuidString),
+            withIntermediateDirectories: true
+        )
+
+        #expect(
+            throws: WhisperModelStorageError.quarantineAlreadyExists
+        ) {
+            try WhisperModelStorage.quarantineInvalidModel(
+                modelID: modelID,
+                downloadBase: directory,
+                quarantineID: quarantineID
+            )
+        }
+        #expect(
+            try Data(
+                contentsOf: modelFolder.appendingPathComponent("config.json")
+            ) == original
+        )
+        #expect(throws: WhisperModelStorageError.unsafeModelID) {
+            try WhisperModelStorage.removeQuarantinedModels(
+                modelID: "..",
+                downloadBase: directory
+            )
+        }
+        #expect(FileManager.default.fileExists(atPath: modelFolder.path))
+    }
+
+    @Test
+    func transcriberClassifiesInvalidCacheWithoutDownloadingOrMutatingIt() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("wordhand-model-classification-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let modelID = "test-model"
+        let modelFolder = directory
+            .appendingPathComponent("models/argmaxinc/whisperkit-coreml")
+            .appendingPathComponent(modelID)
+        try FileManager.default.createDirectory(
+            at: modelFolder,
+            withIntermediateDirectories: true
+        )
+        let original = Data("interrupted".utf8)
+        try original.write(
+            to: modelFolder.appendingPathComponent("config.json")
+        )
+        let transcriber = WhisperKitTranscriber(
+            model: TranscriptionModel(
+                id: "test",
+                displayName: "Test",
+                engine: .whisperKit,
+                whisperKitID: modelID,
+                sizeMB: 1,
+                languages: ["en"],
+                recommended: false
+            ),
+            downloadBase: directory
+        )
+
+        await #expect(throws: TranscriberError.cachedModelInvalid) {
+            try await transcriber.warmUp()
+        }
+        #expect(
+            try Data(
+                contentsOf: modelFolder.appendingPathComponent("config.json")
+            ) == original
         )
     }
 
