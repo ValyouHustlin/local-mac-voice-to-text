@@ -66,6 +66,37 @@ struct TranscriptHistoryStoreTests {
     }
 
     @Test
+    func persistsDeliveryEvidenceWithoutBreakingOlderInsertedReaders() throws {
+        let fixture = try HistoryFixture()
+        let record = fixture.record(text: "Keep the delivery evidence.")
+        try fixture.store.save(record)
+
+        try fixture.store.updateStatus(
+            id: record.id,
+            status: .insertionPostedUnverified
+        )
+        #expect(
+            try fixture.store.records().first?.status
+                == .insertionPostedUnverified
+        )
+        #expect(
+            try rawInsertionStatus(
+                databaseURL: fixture.databaseURL,
+                id: record.id
+            ) == ("inserted", "wordhand:delivery_unverified:v1")
+        )
+
+        try fixture.store.updateStatus(id: record.id, status: .copied)
+        #expect(try fixture.store.records().first?.status == .copied)
+        #expect(
+            try rawInsertionStatus(
+                databaseURL: fixture.databaseURL,
+                id: record.id
+            ) == ("inserted", "wordhand:copied_only:v1")
+        )
+    }
+
+    @Test
     func storesCorrectedReferenceTextForQualityEvaluation() throws {
         let fixture = try HistoryFixture()
         let record = fixture.record(text: "Value ships whisper kid.")
@@ -323,6 +354,49 @@ struct TranscriptHistoryStoreTests {
         defer { sqlite3_finalize(statement) }
         #expect(sqlite3_step(statement) == SQLITE_ROW)
         #expect(sqlite3_column_int(statement, 0) == 99)
+    }
+
+    private func rawInsertionStatus(
+        databaseURL: URL,
+        id: UUID
+    ) throws -> (String, String?) {
+        var database: OpaquePointer?
+        guard sqlite3_open_v2(
+            databaseURL.path,
+            &database,
+            SQLITE_OPEN_READONLY,
+            nil
+        ) == SQLITE_OK else {
+            throw TranscriptHistoryError.database("Could not inspect history.")
+        }
+        defer { sqlite3_close(database) }
+        var statement: OpaquePointer?
+        guard sqlite3_prepare_v2(
+            database,
+            """
+            SELECT insertion_status, failure_reason
+            FROM transcripts
+            WHERE id = ?
+            """,
+            -1,
+            &statement,
+            nil
+        ) == SQLITE_OK else {
+            throw TranscriptHistoryError.database("Could not inspect status.")
+        }
+        defer { sqlite3_finalize(statement) }
+        let step = id.uuidString.withCString { pointer in
+            sqlite3_bind_text(statement, 1, pointer, -1, nil)
+            return sqlite3_step(statement)
+        }
+        guard step == SQLITE_ROW,
+              let statusBytes = sqlite3_column_text(statement, 0)
+        else {
+            throw TranscriptHistoryError.database("Missing status row.")
+        }
+        let status = String(cString: statusBytes)
+        let reason = sqlite3_column_text(statement, 1).map(String.init(cString:))
+        return (status, reason)
     }
 }
 

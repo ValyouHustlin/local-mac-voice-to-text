@@ -1039,11 +1039,38 @@ struct DictationCoordinatorTests {
         #expect(saved.target.applicationName == "TextEdit")
         #expect(history.updates.count == 1)
         #expect(history.updates[0].0 == saved.id)
-        #expect(history.updates[0].1 == .inserted)
+        #expect(history.updates[0].1 == .insertionPostedUnverified)
         #expect(qualitySample?.transcriptID == saved.id)
         #expect(qualitySample?.createdAt == createdAt)
         #expect(qualitySample?.samples.count == 32_000)
         #expect(qualitySample?.sampleRate == 16_000)
+    }
+
+    @Test
+    func successfulPostingUsesInserterEvidenceForHistoryStatus() async throws {
+        let history = FakeHistory()
+        let inserter = FakeDiagnosticInserter(
+            diagnostics: InsertionRunDiagnostics(
+                mode: .paste,
+                verification: .unavailable
+            )
+        )
+        let coordinator = DictationCoordinator(
+            capture: FakeCapture(samples: [0.1]),
+            transcriber: FakeTranscriber(result: "Keep this transcript"),
+            processor: TranscriptProcessor(),
+            inserter: inserter,
+            history: history,
+            insertionMode: .paste
+        )
+
+        await coordinator.handle(.pressed)
+        await coordinator.handle(.released)
+
+        #expect(inserter.insertions == ["Keep this transcript"])
+        #expect(history.updates.count == 1)
+        #expect(history.updates[0].1 == .insertionPostedUnverified)
+        #expect(coordinator.state == .idle)
     }
 
     @Test
@@ -1138,7 +1165,7 @@ struct DictationCoordinatorTests {
         #expect(notices.isEmpty)
         #expect(history.updates.count == 1)
         #expect(history.updates[0].0 == saved.id)
-        #expect(history.updates[0].1 == .inserted)
+        #expect(history.updates[0].1 == .insertionPostedUnverified)
     }
 
     @Test
@@ -1924,6 +1951,27 @@ private final class FakeInserter: TextInserting, @unchecked Sendable {
         if let error { throw error }
         insertions.append(text)
         modes.append(mode)
+    }
+}
+
+private final class FakeDiagnosticInserter:
+    TextInserting,
+    InsertionDiagnosticsProviding,
+    @unchecked Sendable
+{
+    private(set) var insertions: [String] = []
+    private let diagnostics: InsertionRunDiagnostics
+
+    init(diagnostics: InsertionRunDiagnostics) {
+        self.diagnostics = diagnostics
+    }
+
+    func insert(_ text: String, mode: InsertionMode) async throws {
+        insertions.append(text)
+    }
+
+    func lastInsertionDiagnostics() async -> InsertionRunDiagnostics {
+        diagnostics
     }
 }
 

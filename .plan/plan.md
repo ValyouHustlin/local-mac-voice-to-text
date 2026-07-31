@@ -518,6 +518,8 @@ destroying the user's clipboard.
   acknowledgement where Accessibility exposes a selection.
 - [x] Retry exactly once only after a reliable editor field proves the paste
   was a no-op; never retry from an unchanged terminal Accessibility cursor.
+- [x] Distinguish acknowledged insertion, unverified event posting, intentional
+  Copy Only, and failed insertion in History without breaking rollback reads.
 - [x] Add an immediate guarded undo/revert action for the last verified
   insertion; refuse if focus or the cursor changed.
 - [x] Test the clipboard ownership/race policy and live rich-content
@@ -558,6 +560,18 @@ receive exactly one paste while reliable editor surfaces keep their verified
 single retry. Build 13 is installed and fake-backed; the attended Ghostty
 receipt remains open. Receipt:
 `docs/verification/2026-07-29-terminal-paste-regression.md`.
+
+History now closes the event-posting truthfulness gap without changing
+insertion compatibility. Verified cursor evidence remains `Inserted`; browser,
+Electron, terminal, direct-Unicode, and custom fields that cannot confirm
+delivery become `Sent · unverified` with a short explanation that the
+transcript is safe; Copy Only becomes `Copied`; thrown insertion errors remain
+`Not inserted`. The new evidence survives restart while retaining the old
+`inserted` database value plus a versioned reason, so an older rollback build
+continues to read the row under its previous semantics. No schema migration,
+extra setting, retry, or clipboard behavior is introduced.
+
+Receipt: `docs/verification/2026-07-30-insertion-delivery-evidence.md`.
 
 ## P5: configurable hotkeys
 

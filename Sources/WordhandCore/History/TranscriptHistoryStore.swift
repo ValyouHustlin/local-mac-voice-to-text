@@ -406,6 +406,10 @@ public final class TranscriptHistoryStore: TranscriptRecording, @unchecked Senda
             return ("pending", nil)
         case .inserted:
             return ("inserted", nil)
+        case .insertionPostedUnverified:
+            return ("inserted", "wordhand:delivery_unverified:v1")
+        case .copied:
+            return ("inserted", "wordhand:copied_only:v1")
         case .insertionFailed(let reason):
             return ("insertion_failed", reason)
         }
@@ -418,6 +422,12 @@ public final class TranscriptHistoryStore: TranscriptRecording, @unchecked Senda
         case "pending":
             return .pendingInsertion
         case "inserted":
+            if reason == "wordhand:delivery_unverified:v1" {
+                return .insertionPostedUnverified
+            }
+            if reason == "wordhand:copied_only:v1" {
+                return .copied
+            }
             return .inserted
         case "insertion_failed":
             return .insertionFailed(reason ?? "Insertion failed.")

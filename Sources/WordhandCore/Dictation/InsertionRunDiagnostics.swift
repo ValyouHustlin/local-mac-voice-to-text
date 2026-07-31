@@ -39,3 +39,20 @@ public struct InsertionRunDiagnostics: Equatable, Sendable {
 public protocol InsertionDiagnosticsProviding: Sendable {
     func lastInsertionDiagnostics() async -> InsertionRunDiagnostics
 }
+
+public enum InsertionHistoryStatusPolicy {
+    public static func status(
+        for diagnostics: InsertionRunDiagnostics
+    ) -> TranscriptInsertionStatus {
+        if diagnostics.mode == .copyOnly {
+            return .copied
+        }
+        switch diagnostics.verification {
+        case .verified, .verifiedAfterRetry, .verifiedWithoutUndo:
+            return .inserted
+        case .notAttempted, .copyOnly, .unavailable, .unchangedWithoutRetry,
+             .failed:
+            return .insertionPostedUnverified
+        }
+    }
+}

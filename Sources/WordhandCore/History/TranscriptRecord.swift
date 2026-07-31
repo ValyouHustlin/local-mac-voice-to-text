@@ -15,6 +15,8 @@ public struct TranscriptTarget: Equatable, Sendable {
 public enum TranscriptInsertionStatus: Equatable, Sendable {
     case pendingInsertion
     case inserted
+    case insertionPostedUnverified
+    case copied
     case insertionFailed(String)
 }
 

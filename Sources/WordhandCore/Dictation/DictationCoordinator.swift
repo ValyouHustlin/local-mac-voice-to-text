@@ -680,6 +680,9 @@ public final class DictationCoordinator {
             }
             let insertionElapsed = now() - insertionStarted
             let insertionDiagnostics = await currentInsertionDiagnostics()
+            let insertionHistoryStatus = InsertionHistoryStatusPolicy.status(
+                for: insertionDiagnostics
+            )
             recordDiagnostic(
                 name: "insertion.completed",
                 dictationID: operationID,
@@ -704,7 +707,10 @@ public final class DictationCoordinator {
 
             if let history {
                 do {
-                    try history.updateStatus(id: record.id, status: .inserted)
+                    try history.updateStatus(
+                        id: record.id,
+                        status: insertionHistoryStatus
+                    )
                     onHistoryChange?()
                 } catch {
                     activeOperationID = nil

@@ -328,9 +328,11 @@ See `docs/verification/2026-07-28-decode-vocabulary.md`.
 
 P3 transcript history is implemented behind a local SQLite store. The
 coordinator saves processed and raw transcript text before attempting
-insertion, then records success or the recoverable failure reason. A native
-split history window supports Unicode-aware search, copy, reinsert, correction
-creation, delete, clear-all, metadata, and visible failure states.
+insertion, then records verified insertion, unverified event posting,
+intentional copy-only completion, or the recoverable failure reason as
+distinct evidence. A native split history window supports Unicode-aware
+search, copy, reinsert, correction creation, delete, clear-all, metadata, and
+visible delivery states.
 
 The app now has a regular Dock presence as well as its menu bar item. Clicking
 the Dock item with no visible windows opens Settings. Its minimal app icon pairs
@@ -383,7 +385,10 @@ therefore sends exactly one paste to known terminal applications and treats an
 unchanged selection there like an unsupported compatibility surface. A moved
 or changed target is still a recoverable failure. Fields that do not expose
 selection retain the same compatibility fallback and cannot be honestly marked
-as verified.
+as verified. History labels those successful event-posting fallbacks
+`Sent · unverified`, explains that the target did not confirm delivery, and
+keeps the transcript available. Only an acknowledged cursor change is labeled
+`Inserted`; Copy Only is labeled `Copied`.
 The previous clipboard is restored on both success and failure.
 Copy-only and direct Unicode remain selectable in Settings and update the
 running coordinator without relaunching. Secure Input is checked before
@@ -1142,10 +1147,12 @@ expected UTF-16 cursor advance as acknowledgement, retries a proven no-op once,
 and rejects a changed element or unexpected range. Known terminal applications
 receive one paste because their Accessibility cursor can stay unchanged after
 successful delivery. Some browser, Electron, terminal, and custom-canvas fields
-do not expose reliable selection; their compatibility fallback still means a
-history status of `inserted` records successful event posting, not verified
-field contents. A future history schema should distinguish those two outcomes
-explicitly.
+do not expose reliable selection. Their compatibility fallback remains
+available, but History records it as `Sent · unverified` rather than claiming
+field delivery. The evidence marker reuses the existing `inserted` storage
+value with a versioned reason so older rollback builds can still read the row
+under their previous event-posting semantics. No database migration is
+required.
 
 Direct Unicode insertion remains a fallback. Copy-only intentionally leaves the
 transcript on the clipboard. The last verified insertion keeps enough local

@@ -496,6 +496,9 @@ final class HistoryWindowController: NSWindowController, NSTableViewDataSource,
         statusImage.widthAnchor.constraint(equalToConstant: 14).isActive = true
         statusImage.heightAnchor.constraint(equalToConstant: 14).isActive = true
         statusLabel.font = .systemFont(ofSize: 12, weight: .semibold)
+        statusLabel.identifier = NSUserInterfaceItemIdentifier(
+            "HistoryStatusLabel"
+        )
         dateLabel.font = .systemFont(ofSize: 12, weight: .medium)
         dateLabel.textColor = .secondaryLabelColor
         dateLabel.alignment = .right
@@ -530,6 +533,9 @@ final class HistoryWindowController: NSWindowController, NSTableViewDataSource,
         failureLabel.font = .systemFont(ofSize: 12, weight: .medium)
         failureLabel.textColor = .systemOrange
         failureLabel.maximumNumberOfLines = 2
+        failureLabel.identifier = NSUserInterfaceItemIdentifier(
+            "HistoryDeliveryNoticeLabel"
+        )
         qualityLabel.font = .systemFont(ofSize: 12, weight: .medium)
         qualityLabel.textColor = .systemGreen
         qualityLabel.maximumNumberOfLines = 2
@@ -718,6 +724,11 @@ final class HistoryWindowController: NSWindowController, NSTableViewDataSource,
         if case .insertionFailed(let reason) = record.status {
             failureLabel.stringValue = "Saved safely. Insertion failed: \(reason)"
             failureLabel.isHidden = false
+        } else if record.status == .insertionPostedUnverified {
+            failureLabel.stringValue =
+                "Wordhand sent the text, but this field did not confirm delivery. "
+                + "The transcript is safe here."
+            failureLabel.isHidden = false
         } else {
             failureLabel.stringValue = ""
             failureLabel.isHidden = true
@@ -782,6 +793,10 @@ final class HistoryWindowController: NSWindowController, NSTableViewDataSource,
             return ("Pending", "clock.fill", .secondaryLabelColor)
         case .inserted:
             return ("Inserted", "checkmark.circle.fill", .systemGreen)
+        case .insertionPostedUnverified:
+            return ("Sent · unverified", "paperplane.circle.fill", .systemOrange)
+        case .copied:
+            return ("Copied", "doc.on.clipboard.fill", .systemBlue)
         case .insertionFailed:
             return ("Not inserted", "exclamationmark.circle.fill", .systemOrange)
         }
@@ -925,6 +940,14 @@ private final class HistoryRowView: NSTableCellView {
             status = ("clock.fill", .secondaryLabelColor, "Pending insertion")
         case .inserted:
             status = ("checkmark.circle.fill", .systemGreen, "Inserted")
+        case .insertionPostedUnverified:
+            status = (
+                "paperplane.circle.fill",
+                .systemOrange,
+                "Sent, delivery unverified"
+            )
+        case .copied:
+            status = ("doc.on.clipboard.fill", .systemBlue, "Copied")
         case .insertionFailed:
             status = ("exclamationmark.circle.fill", .systemOrange, "Not inserted")
         }

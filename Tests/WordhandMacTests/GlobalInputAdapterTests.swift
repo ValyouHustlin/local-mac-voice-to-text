@@ -224,6 +224,11 @@ struct GlobalInputAdapterTests {
 
         #expect(poster.unicodeTexts == ["local only"])
         #expect(poster.pasteShortcutCount == 0)
+        let diagnostics = await inserter.lastInsertionDiagnostics()
+        #expect(
+            InsertionHistoryStatusPolicy.status(for: diagnostics)
+                == .insertionPostedUnverified
+        )
     }
 
     @Test
@@ -256,6 +261,10 @@ struct GlobalInputAdapterTests {
         #expect(diagnostics.verification == .verifiedAfterRetry)
         #expect(diagnostics.retryCount == 1)
         #expect(diagnostics.checkpointAvailable)
+        #expect(
+            InsertionHistoryStatusPolicy.status(for: diagnostics)
+                == .inserted
+        )
         try inserter.undoLastInsertion()
         #expect(observer.undoTokens == [token])
         #expect(!inserter.canUndoLastInsertion)
@@ -282,6 +291,12 @@ struct GlobalInputAdapterTests {
 
         #expect(poster.pasteShortcutCount == 1)
         #expect(!inserter.canUndoLastInsertion)
+        let diagnostics = await inserter.lastInsertionDiagnostics()
+        #expect(diagnostics.verification == .unchangedWithoutRetry)
+        #expect(
+            InsertionHistoryStatusPolicy.status(for: diagnostics)
+                == .insertionPostedUnverified
+        )
     }
 
     @Test

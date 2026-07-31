@@ -106,6 +106,64 @@ struct VocabularySuggestionAcceptanceTests {
     }
 
     @Test
+    func historyRendersUnverifiedDeliveryWithoutClaimingInsertion() throws {
+        guard let receiptPath = ProcessInfo.processInfo.environment[
+            "WORDHAND_DELIVERY_STATUS_UI_RECEIPT"
+        ] else {
+            return
+        }
+        let fixture = try LearningFixture()
+        defer { fixture.remove() }
+        try fixture.history.save(TranscriptRecord(
+            createdAt: Date(timeIntervalSince1970: 300),
+            rawText: "Keep this transcript",
+            text: "Keep this transcript.",
+            modelID: "whisper-large-v3",
+            language: "en",
+            audioDuration: 2,
+            transcriptionDuration: 1,
+            insertionMode: .paste,
+            target: TranscriptTarget(
+                bundleIdentifier: "com.example.canvas",
+                applicationName: "Canvas Editor"
+            ),
+            status: .insertionPostedUnverified
+        ))
+
+        let windowController = HistoryWindowController(
+            history: fixture.historyController
+        )
+        windowController.reload()
+        let content = try #require(windowController.window?.contentView)
+        content.layoutSubtreeIfNeeded()
+        let status = try #require(
+            findView(
+                in: content,
+                identifier: "HistoryStatusLabel"
+            ) as? NSTextField
+        )
+        let notice = try #require(
+            findView(
+                in: content,
+                identifier: "HistoryDeliveryNoticeLabel"
+            ) as? NSTextField
+        )
+
+        #expect(status.stringValue == "Sent · unverified")
+        #expect(notice.stringValue.contains("did not confirm delivery"))
+        #expect(!notice.stringValue.contains("Inserted"))
+
+        let representation = try #require(
+            content.bitmapImageRepForCachingDisplay(in: content.bounds)
+        )
+        content.cacheDisplay(in: content.bounds, to: representation)
+        let png = try #require(
+            representation.representation(using: .png, properties: [:])
+        )
+        try png.write(to: URL(fileURLWithPath: receiptPath), options: .atomic)
+    }
+
+    @Test
     func staleAliasDoesNotMasqueradeAsCanonicalVocabulary() throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(
             "wordhand-learning-alias-\(UUID().uuidString)",
