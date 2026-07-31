@@ -1,6 +1,7 @@
 import ArgumentParser
 import Foundation
 import Testing
+import WordhandCore
 @testable import wordhand
 
 @Suite
@@ -144,5 +145,140 @@ struct QualityEvaluationCommandTests {
         #expect(throws: (any Error).self) {
             _ = try QualityProveVocabulary.readBoundedInput(handle)
         }
+    }
+
+    @Test
+    func tailWindowComparisonIsFixedBalancedCachedEvidence() throws {
+        let command = try Models.TailWindowCompare.parse([
+            "/tmp/retained.aiff",
+            "--fixture", "/tmp/completeness.json",
+            "--iterations", "4",
+            "--json",
+        ])
+
+        #expect(command.fixture == "/tmp/completeness.json")
+        #expect(!command.userDictionary)
+        #expect(command.iterations == 4)
+        #expect(command.json)
+        #expect(throws: (any Error).self) {
+            _ = try Models.TailWindowCompare.parse([
+                "/tmp/retained.aiff",
+                "--fixture", "/tmp/completeness.json",
+                "--user-dictionary",
+            ])
+        }
+        #expect(throws: (any Error).self) {
+            _ = try Models.TailWindowCompare.parse([
+                "/tmp/retained.aiff",
+                "--fixture", "/tmp/completeness.json",
+                "--iterations", "3",
+            ])
+        }
+    }
+
+    @Test
+    func tailWindowReportSchemaCannotLeakTranscriptEvidence() throws {
+        let run = TailAuditWindowRunEvidence(
+            iteration: 1,
+            order: "baseline-candidate",
+            baselineTranscriptSHA256: String(repeating: "a", count: 64),
+            candidateTranscriptSHA256: String(repeating: "a", count: 64),
+            baselineStopToFinalSeconds: 8,
+            candidateStopToFinalSeconds: 5,
+            baselineFullRetryPerformed: true,
+            candidateFullRetryPerformed: false,
+            baselineTailOutcome: .fullRetryRecovered,
+            candidateTailOutcome: .merged
+        )
+        let decision = TailAuditWindowComparisonOracle.evaluate(
+            baselineWindowSeconds: 20,
+            candidateWindowSeconds: 30,
+            protectedCompletenessPassed: true,
+            runs: [
+                run,
+                TailAuditWindowRunEvidence(
+                    iteration: 2,
+                    order: "candidate-baseline",
+                    baselineTranscriptSHA256:
+                        run.baselineTranscriptSHA256,
+                    candidateTranscriptSHA256:
+                        run.candidateTranscriptSHA256,
+                    baselineStopToFinalSeconds: 8,
+                    candidateStopToFinalSeconds: 5,
+                    baselineFullRetryPerformed: true,
+                    candidateFullRetryPerformed: false,
+                    baselineTailOutcome: .fullRetryRecovered,
+                    candidateTailOutcome: .merged
+                ),
+            ]
+        )
+        let report = TailWindowCompareReport(
+            schemaVersion: 1,
+            modelID: "whisper-large-v3",
+            baselineImplementationID: "tail-audit-window-20s-v1",
+            candidateImplementationID: "tail-audit-window-30s-v1",
+            decoderConfigurationID: "wordhand-english-default-v1",
+            audioSHA256: String(repeating: "b", count: 64),
+            fixtureSHA256: String(repeating: "c", count: 64),
+            vocabularySHA256: String(repeating: "d", count: 64),
+            sampleCount: 640_000,
+            sampleRate: 16_000,
+            audioDurationSeconds: 40,
+            baselineWindowSeconds: 20,
+            candidateWindowSeconds: 30,
+            iterations: 2,
+            protectedCompletenessPassed: true,
+            decision: decision,
+            runs: [
+                run,
+                TailAuditWindowRunEvidence(
+                    iteration: 2,
+                    order: "candidate-baseline",
+                    baselineTranscriptSHA256:
+                        run.baselineTranscriptSHA256,
+                    candidateTranscriptSHA256:
+                        run.candidateTranscriptSHA256,
+                    baselineStopToFinalSeconds: 8,
+                    candidateStopToFinalSeconds: 5,
+                    baselineFullRetryPerformed: true,
+                    candidateFullRetryPerformed: false,
+                    baselineTailOutcome: .fullRetryRecovered,
+                    candidateTailOutcome: .merged
+                ),
+            ]
+        )
+        let object = try #require(
+            JSONSerialization.jsonObject(
+                with: JSONEncoder().encode(report)
+            ) as? [String: Any]
+        )
+        let keys = allKeys(in: object)
+        #expect(
+            keys.isDisjoint(with: [
+                "transcript",
+                "reference",
+                "audioPath",
+                "vocabularyTerms",
+                "acceptedForms",
+                "matchedForm",
+                "fixtureID",
+            ])
+        )
+    }
+
+    private func allKeys(in value: Any) -> Set<String> {
+        if let dictionary = value as? [String: Any] {
+            return Set(dictionary.keys).union(
+                dictionary.values.reduce(into: Set<String>()) {
+                    $0.formUnion(allKeys(in: $1))
+                }
+            )
+        }
+        if let array = value as? [Any] {
+            return array.reduce(into: Set<String>()) {
+                $0.formUnion(allKeys(in: $1))
+            }
+        }
+        return []
     }
 }

@@ -141,6 +141,21 @@ remains offline-only.
 Safe work-during-speech is now deferred at the pinned engine boundary rather
 than left open to more splice/cache variants. Reopen it only for a decoder-native
 incremental API or a design with a predeclared, materially stronger oracle.
+
+Live metadata then showed 52 retained recordings but zero explicit corrected
+references, so pronunciation/model/configuration suggestions remain deferred
+instead of being inferred from synthetic yield. The stronger measured issue was
+12 full-retry tail recoveries averaging 63.35 seconds of audio and 7.75 seconds
+of transcription. `models tail-window-compare` now isolates a fixed 20s/30s
+tail-context experiment with shared primary and full-retry decodes, balanced
+audit order, transcript-free exact hashes, and the existing protected fixture
+gate. The 49.26-second fixture preserved exact text and all six protected
+categories, but 30 seconds eliminated no retries and worsened modeled median
+stop-to-final from 6.401 to 7.302 seconds. On the shortest real retained
+recovery it avoided both retries and modeled 5.371 versus 6.561 seconds, but
+both candidate hashes differed from the deterministic 20-second authority.
+The oracle rejected the shortcut and runtime remains unchanged.
+
 The first local self-learning slice is implemented without automatic behavior
 changes. Two distinct explicit corrections with their paired retained
 recordings can produce one conservative canonical-term recommendation in
@@ -187,7 +202,8 @@ Receipt:
 `docs/verification/2026-07-30-exact-inference-cache-candidate.md` and
 `docs/verification/2026-07-30-canonical-vocabulary-suggestions.md` and
 `docs/verification/2026-07-30-vocabulary-causal-replay.md` and
-`docs/verification/2026-07-30-pronunciation-alias-replay.md`.
+`docs/verification/2026-07-30-pronunciation-alias-replay.md` and
+`docs/verification/2026-07-30-tail-window-oracle.md`.
 
 Application-specific writing styles are now an optional extension of the one
 global default. Rules match exact bundle identifiers only. The target, resolved

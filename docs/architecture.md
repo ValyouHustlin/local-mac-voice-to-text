@@ -640,6 +640,24 @@ gates. See
 `docs/verification/2026-07-30-vocabulary-causal-replay.md` and
 `docs/verification/2026-07-30-pronunciation-alias-replay.md`.
 
+Tail-recovery latency experiments use a separate offline-only comparison path.
+`models tail-window-compare` fixes the daily-runtime authority at a 20-second
+prompt-free tail audit and tests only a 30-second candidate. Each balanced pair
+shares one conditioned primary decode and, when required, one prompt-free
+full-buffer decode; only tail-audit order alternates. Modeled stop-to-final is
+the sum of measured primary, audit, and applicable full-retry stages, preventing
+duplicate primary variation from masquerading as a window effect.
+
+The report may contain only model/implementation identifiers,
+audio/fixture/vocabulary hashes, sample identity, durations, retry outcomes,
+exact transcript hashes, and coded rejection reasons. It never contains
+transcript, reference, audio-path, vocabulary-term, prompt, or accepted-form
+content. A candidate cannot pass without deterministic byte-exact agreement
+with the 20-second authority, a bound protected fixture covering beginnings,
+endings, numbers, negations, technical terms, and dictionary spellings, fewer
+full retries, and a material median latency improvement. A private exact-hash
+comparison without protected reference truth is analysis evidence only.
+
 The authoritative decode has layered local integrity checks. First, the coordinator
 compares the monotonic recording-session duration with the number of captured
 16 kHz samples. If the audio buffer is more than 750 ms shorter than the

@@ -1239,7 +1239,13 @@ struct Doctor: ParsableCommand {
 struct Models: ParsableCommand {
     static let configuration = CommandConfiguration(
         abstract: "Manage transcription models.",
-        subcommands: [List.self, Download.self, Benchmark.self, AuthorityCompare.self]
+        subcommands: [
+            List.self,
+            Download.self,
+            Benchmark.self,
+            AuthorityCompare.self,
+            TailWindowCompare.self,
+        ]
     )
 
     struct List: ParsableCommand {

@@ -359,6 +359,207 @@ actor WhisperKitTranscriber:
         latestRunDiagnostics
     }
 
+    /// Offline-only comparison support. Both tail windows share the exact same
+    /// primary and prompt-free full-buffer decodes so audit width is the sole
+    /// changed variable. Daily runtime never calls this method.
+    func compareTailAuditWindows(
+        audio: [Float],
+        orderedWindowSeconds: [Int]
+    ) async throws -> TailAuditWindowExperimentPair {
+        if pipeline == nil {
+            try await warmUpRequiringCachedModel()
+        }
+        guard let pipeline else { throw TranscriberError.notLoaded }
+        guard orderedWindowSeconds.count == 2,
+              Set(orderedWindowSeconds) == [20, 30],
+              TranscriptionIntegrityGuard.needsIndependentTailAudit(
+                  audio: audio,
+                  sampleRate: Int(WhisperKit.sampleRate)
+              ),
+              audio.count > 30 * Int(WhisperKit.sampleRate)
+        else {
+            throw TailAuditWindowExperimentError.invalidInput
+        }
+
+        let token = TranscriptionCancellationToken()
+        cancellationToken = token
+        defer {
+            if cancellationToken === token {
+                cancellationToken = nil
+            }
+        }
+        let primaryOptions = decodingOptions(for: pipeline)
+        let primaryStarted = ProcessInfo.processInfo.systemUptime
+        let primary = try await decode(
+            audio,
+            pipeline: pipeline,
+            options: primaryOptions,
+            token: token
+        )
+        let primarySeconds =
+            ProcessInfo.processInfo.systemUptime - primaryStarted
+        let conditionedTerms =
+            primaryOptions.promptTokens?.isEmpty == false
+            ? vocabulary.terms()
+            : []
+        var issues = TranscriptionIntegrityGuard.issues(
+            in: primary.text,
+            conditionedTerms: conditionedTerms,
+            audio: audio,
+            sampleRate: Int(WhisperKit.sampleRate),
+            lastDecodedSecond: primary.lastSegmentEnd
+        )
+        issues.insert(.activeAudioAfterDecodedEnding)
+
+        var audits: [Int: TailAuditWindowDecodedArm] = [:]
+        for seconds in orderedWindowSeconds {
+            let started = ProcessInfo.processInfo.systemUptime
+            let decoded = try await decode(
+                Array(audio.suffix(seconds * Int(WhisperKit.sampleRate))),
+                pipeline: pipeline,
+                options: Self.makeDecodingOptions(promptTokens: nil),
+                token: token
+            )
+            audits[seconds] = TailAuditWindowDecodedArm(
+                text: decoded.text,
+                seconds: ProcessInfo.processInfo.systemUptime - started
+            )
+        }
+
+        let preliminary = try Dictionary(
+            uniqueKeysWithValues: orderedWindowSeconds.map { seconds in
+                guard let audit = audits[seconds] else {
+                    throw TailAuditWindowExperimentError.missingAudit
+                }
+                return (
+                    seconds,
+                    resolveTailAuditExperiment(
+                        primary: primary.text,
+                        audit: audit.text,
+                        fullRetry: nil,
+                        issues: issues,
+                        conditionedTerms: conditionedTerms
+                    )
+                )
+            }
+        )
+        let needsFullRetry = preliminary.values.contains {
+            if case .requiresFullRetry = $0 { return true }
+            return false
+        }
+        var fullRetry: DecodedTranscript?
+        var fullRetrySeconds: TimeInterval = 0
+        if needsFullRetry {
+            let started = ProcessInfo.processInfo.systemUptime
+            fullRetry = try await decode(
+                audio,
+                pipeline: pipeline,
+                options: Self.makeDecodingOptions(promptTokens: nil),
+                token: token
+            )
+            fullRetrySeconds =
+                ProcessInfo.processInfo.systemUptime - started
+        }
+
+        let arms = try Dictionary(
+            uniqueKeysWithValues: orderedWindowSeconds.map { seconds in
+                guard let audit = audits[seconds] else {
+                    throw TailAuditWindowExperimentError.missingAudit
+                }
+                let resolution = resolveTailAuditExperiment(
+                    primary: primary.text,
+                    audit: audit.text,
+                    fullRetry: fullRetry?.text,
+                    issues: issues,
+                    conditionedTerms: conditionedTerms
+                )
+                guard case let .complete(
+                    text,
+                    fullRetryPerformed,
+                    outcome
+                ) = resolution else {
+                    throw TailAuditWindowExperimentError.missingFullRetry
+                }
+                return (
+                    seconds,
+                    TailAuditWindowExperimentArm(
+                        transcript: text,
+                        auditDecodeSeconds: audit.seconds,
+                        modeledStopToFinalSeconds:
+                            primarySeconds
+                            + audit.seconds
+                            + (fullRetryPerformed ? fullRetrySeconds : 0),
+                        fullRetryPerformed: fullRetryPerformed,
+                        tailOutcome: outcome
+                    )
+                )
+            }
+        )
+        return TailAuditWindowExperimentPair(
+            primaryDecodeSeconds: primarySeconds,
+            fullRetryDecodeSeconds: fullRetrySeconds,
+            arms: arms
+        )
+    }
+
+    private func resolveTailAuditExperiment(
+        primary: String,
+        audit: String,
+        fullRetry: String?,
+        issues: Set<TranscriptionIntegrityIssue>,
+        conditionedTerms: [String]
+    ) -> TailAuditWindowExperimentResolution {
+        switch TranscriptionIntegrityGuard.reconcileTail(
+            primary: primary,
+            recovery: audit
+        ) {
+        case .merged(let merged):
+            let selected = TranscriptionIntegrityGuard.select(
+                primary: primary,
+                retry: merged,
+                issues: issues,
+                conditionedTerms: conditionedTerms
+            )
+            if selected != primary {
+                return .complete(
+                    text: selected,
+                    fullRetryPerformed: false,
+                    outcome: .merged
+                )
+            }
+        case .covered:
+            if issues == [.activeAudioAfterDecodedEnding] {
+                return .complete(
+                    text: primary,
+                    fullRetryPerformed: false,
+                    outcome: .verifiedCovered
+                )
+            }
+        case .requiresFullRetry:
+            break
+        }
+        guard let fullRetry else {
+            return .requiresFullRetry
+        }
+        let selected = TranscriptionIntegrityGuard.select(
+            primary: primary,
+            retry: fullRetry,
+            issues: issues,
+            conditionedTerms: conditionedTerms,
+            requireMateriallyLongerTail: true
+        )
+        return .complete(
+            text: selected,
+            fullRetryPerformed: true,
+            outcome: TailRecoveryOutcome.resolvingFullRetry(
+                tailIssueDetected: true,
+                auditVerifiedCovered: false,
+                auditFailed: false,
+                selectedDifferentTranscript: selected != primary
+            )
+        )
+    }
+
     func beginStreaming(
         configuration: StreamingTranscriptionConfiguration
     ) async {
@@ -1069,6 +1270,40 @@ actor WhisperKitTranscriber:
         streamingDecodeProvenance = nil
         streamingDecodeOptions = nil
     }
+}
+
+struct TailAuditWindowExperimentPair: Sendable {
+    let primaryDecodeSeconds: TimeInterval
+    let fullRetryDecodeSeconds: TimeInterval
+    let arms: [Int: TailAuditWindowExperimentArm]
+}
+
+struct TailAuditWindowExperimentArm: Sendable {
+    let transcript: String
+    let auditDecodeSeconds: TimeInterval
+    let modeledStopToFinalSeconds: TimeInterval
+    let fullRetryPerformed: Bool
+    let tailOutcome: TailRecoveryOutcome
+}
+
+private struct TailAuditWindowDecodedArm {
+    let text: String
+    let seconds: TimeInterval
+}
+
+private enum TailAuditWindowExperimentResolution {
+    case complete(
+        text: String,
+        fullRetryPerformed: Bool,
+        outcome: TailRecoveryOutcome
+    )
+    case requiresFullRetry
+}
+
+private enum TailAuditWindowExperimentError: Error {
+    case invalidInput
+    case missingAudit
+    case missingFullRetry
 }
 
 enum TranscriberError: Error {
